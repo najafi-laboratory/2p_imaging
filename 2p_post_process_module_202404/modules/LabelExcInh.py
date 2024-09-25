@@ -206,15 +206,15 @@ def anat(ax, mean_anat, masks, labeled_masks_img, unsure_masks_img, with_mask=Tr
     #Extra added Plotting unique ROIs
 
 def plot_misidentified_inhibitory_rois(ax, mean_anat, mean_func, masks_anat, masks_anat_corrected, labels, labels_corrected, title):
-    combined_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
-    combined_img[:, :, 0] = adjust_contrast(mean_func)
-    combined_img[:, :, 1] = adjust_contrast(mean_anat)
+    combined_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32') #create an empty array with same shape as mean_anat
+    combined_img[:, :, 0] = adjust_contrast(mean_func) #set red channel to mean_func
+    combined_img[:, :, 1] = adjust_contrast(mean_anat) #set green channel to mean_anat
     combined_img = adjust_contrast(combined_img)
 
     # Identify misidentified inhibitory ROIs
-    inhibitory_rois_without_correction = np.where(labels == 1)[0] + 1 #before correction all 1 turn to 2 
+    inhibitory_rois_without_correction = np.where(labels == 1)[0] +1 # find the indices of inhibitory ROIs
     inhibitory_rois_with_correction = np.where(labels_corrected == 1)[0] + 1
-    misidentified_rois = np.setdiff1d(inhibitory_rois_without_correction, inhibitory_rois_with_correction)
+    misidentified_rois = np.setdiff1d(inhibitory_rois_without_correction, inhibitory_rois_with_correction) #find the difference between the two arrays
 
     # Overlay contours around misidentified inhibitory ROIs and label them
     for roi_id in misidentified_rois:
@@ -229,8 +229,6 @@ def plot_misidentified_inhibitory_rois(ax, mean_anat, mean_func, masks_anat, mas
     ax.imshow(combined_img)
     ax.set_title(title)
     ax.axis('off')
-
-
 
 
 def run(ops, diameter):
@@ -297,7 +295,7 @@ def run(ops, diameter):
              unsure_masks_img_corr, with_mask=False, title='Corrected Anatomical Channel')
 
          # Plot  inhibitory ROIs that were identified before correction but not after correction
-        plot_misidentified_inhibitory_rois(ax[4], mean_anat, mean_func, masks_anat, masks_anat_corrected, labels, labels_corrected, 'Original Combined Anat & Func Channel- Identified Mislabeled Inhibitory ROIS ')
+        plot_misidentified_inhibitory_rois(ax[4], mean_anat, mean_func, masks_anat, masks_anat_corrected, labels, labels_corrected, 'Combined Anat & Func - Identified Mislabeled Inhibitory ROIS ')
 
         plt.rcParams['savefig.dpi'] = 1000
         plt.savefig('bleedthrough_channel_comparison.pdf')
