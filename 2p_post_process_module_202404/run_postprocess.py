@@ -66,7 +66,7 @@ if __name__ == "__main__":
          range_footprint] = get_qc_args(args)
         ops = read_ops(args.session_data_path)
     else:
-        session_data_path = '/Users/aryanahri/desktop/FN16_P_20240626_js_t'
+        session_data_path = '/home/esha/GTech/lab_work/FN14_P_20240530_2afc_t'
         ops = read_ops(session_data_path)
         range_skew = [-5, 5]
         max_connect = 1
