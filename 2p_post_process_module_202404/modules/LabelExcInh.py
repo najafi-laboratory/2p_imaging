@@ -203,32 +203,74 @@ def anat(ax, mean_anat, masks, labeled_masks_img, unsure_masks_img, with_mask=Tr
     adjust_layout(ax)
     ax.set_title(f'{title}')
 
-    #Extra added Plotting unique ROIs
+    #Plot for unique ROIs that were present before but not after
 
-def plot_misidentified_inhibitory_rois(ax, mean_anat, mean_func, masks_anat, masks_anat_corrected, labels, labels_corrected, title):
-    combined_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32') #create an empty array with same shape as mean_anat
-    combined_img[:, :, 0] = adjust_contrast(mean_func) #set red channel to mean_func
-    combined_img[:, :, 1] = adjust_contrast(mean_anat) #set green channel to mean_anat
-    combined_img = adjust_contrast(combined_img)
-
-    # Identify misidentified inhibitory ROIs
-    inhibitory_rois_without_correction = np.where(labels == 1)[0] +1 # find the indices of inhibitory ROIs
-    inhibitory_rois_with_correction = np.where(labels_corrected == 1)[0] + 1
-    misidentified_rois = np.setdiff1d(inhibitory_rois_without_correction, inhibitory_rois_with_correction) #find the difference between the two arrays
-
-    # Overlay contours around misidentified inhibitory ROIs and label them
+def plot_misidentified_inhibitory_rois_anat(ax, mean_anat, masks_anat, labels, labels_corrected, title):
+    """
+    Plot the inhibitory anatomical ROIs that were present before bleedthrough correction but not after.
+    This plot only includes the anatomical (red) channel.
+    """
+    # Create an empty image to show anatomical channel in red
+    anat_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
+    
+    # Set the red channel to the anatomical data (mean_anat)
+    anat_img[:, :, 0] = adjust_contrast(mean_anat)  
+    
+    # Identify inhibitory ROIs before and after correction
+    inhibitory_rois_before = np.where(labels == 1)[0] + 1  # ROIs labeled as inhibitory before correction
+    inhibitory_rois_after = np.where(labels_corrected == 1)[0] + 1  # ROIs labeled as inhibitory after correction
+    
+    # Find the inhibitory ROIs that are present before correction but missing after correction
+    misidentified_rois = np.setdiff1d(inhibitory_rois_before, inhibitory_rois_after)
+    
+    # Add a white boundary around each misidentified inhibitory ROI
     for roi_id in misidentified_rois:
-        x_all, y_all = np.where(masks_anat == roi_id)
+        # Find the boundary of the ROI
+        boundaries = find_boundaries(masks_anat == roi_id)
+        x_all, y_all = np.where(boundaries)
         for x, y in zip(x_all, y_all):
-            combined_img[x, y, :] = np.array([255, 255, 255])  # White color for misidentified inhibitory ROIs
+            anat_img[x, y, :] = np.array([255, 255, 255])  # White color for boundaries of misidentified inhibitory ROIs
 
-        # Label the ROIs
-        x_center, y_center = np.mean(np.where(masks_anat == roi_id), axis=1).astype(int)
-        ax.text(y_center, x_center, str(roi_id), color='white', fontsize=8, ha='center', va='center')
+    # Plot the result with only the red anatomical channel
+    ax.imshow(anat_img)
+    ax.set_title(title)
+    ax.axis('off')
 
+def plot_misidentified_inhibitory_rois_with_func(ax, mean_anat, mean_func, masks_anat, labels, labels_corrected, title):
+    """
+    Plot the inhibitory anatomical ROIs that were present before bleedthrough correction but not after,
+    while projecting the functional channel (green).
+    """
+    # Create a base image with both anatomical and functional channels
+    combined_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
+    
+    # Set the red channel to anatomical data (mean_anat)
+    combined_img[:, :, 0] = adjust_contrast(mean_anat)  
+    
+    # Set the green channel to functional data (mean_func)
+    combined_img[:, :, 1] = adjust_contrast(mean_func)  
+    
+    # Identify inhibitory ROIs before and after correction
+    inhibitory_rois_before = np.where(labels == 1)[0] + 1  # ROIs labeled as inhibitory before correction
+    inhibitory_rois_after = np.where(labels_corrected == 1)[0] + 1  # ROIs labeled as inhibitory after correction
+    
+    # Find the inhibitory ROIs that are present before correction but missing after correction
+    misidentified_rois = np.setdiff1d(inhibitory_rois_before, inhibitory_rois_after)
+    
+    # Add a white boundary around each misidentified inhibitory ROI
+    for roi_id in misidentified_rois:
+        # Find the boundary of the ROI
+        boundaries = find_boundaries(masks_anat == roi_id)
+        x_all, y_all = np.where(boundaries)
+        for x, y in zip(x_all, y_all):
+            combined_img[x, y, :] = np.array([255, 255, 255])  # White color for boundaries of misidentified inhibitory ROIs
+
+
+    # Plot the result with both red (anatomical) and green (functional) channels
     ax.imshow(combined_img)
     ax.set_title(title)
     ax.axis('off')
+
 
 
 def run(ops, diameter):
@@ -281,8 +323,8 @@ def run(ops, diameter):
         unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
         unsure_masks_img_corr = get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 0)
-#added change from 4 to 5 in subplots to create 5 subplots also changed from 15 to 25  
-        fig, ax = plt.subplots(1, 5, figsize=(25, 5))
+ 
+        fig, ax = plt.subplots(1, 4, figsize=(15, 5))
         anat(ax[0], mean_anat, masks_anat, labeled_masks_img_orig,
              unsure_masks_img_orig, with_mask=True, title='Original Anatomical Channel + Masks')
         anat(ax[1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
@@ -294,18 +336,20 @@ def run(ops, diameter):
         anat(ax[3], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
              unsure_masks_img_corr, with_mask=False, title='Corrected Anatomical Channel')
 
-         # Plot  inhibitory ROIs that were identified before correction but not after correction
-        plot_misidentified_inhibitory_rois(ax[4], mean_anat, mean_func, masks_anat, masks_anat_corrected, labels, labels_corrected, 'Combined Anat & Func - Identified Mislabeled Inhibitory ROIS ')
+        # Plot  inhibitory ROIs that were identified before correction but not after correction
+        # Plot 1: Anatomical ROIs only (no functional projection)
+        plot_misidentified_inhibitory_rois_anat(ax[2], mean_anat, masks_anat, labels, labels_corrected, 'Anat ROIs Before Correction (No Func)')
+        
+        # Plot 2: Anatomical ROIs with functional projection
+        plot_misidentified_inhibitory_rois_with_func(ax[3], mean_anat, mean_func, masks_anat, labels, labels_corrected, ' ROIs present before but not after + Func Projection')
 
-        plt.rcParams['savefig.dpi'] = 1000
-        plt.savefig('bleedthrough_channel_comparison.pdf')
-        plt.show()
-
+        
         
         plt.rcParams['savefig.dpi'] = 1000
         plt.savefig('bleedthrough_channel_comparison.pdf')
         plt.show()
 
+        
         mean_anat = mean_anat_corrected
         masks_anat = masks_anat_corrected
 
