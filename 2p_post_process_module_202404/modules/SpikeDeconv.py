@@ -128,7 +128,7 @@ def plot_for_neuron(timings, dff, spikes, convolved_spikes, neuron=5, tau=1.25):
 
     plt.rcParams['savefig.dpi'] = 1000
     plt.savefig(f'neuron_{neuron}__tau_{tau}_plot.pdf')
-    plt.show()
+    # plt.show()
 
 
 def spike_detect(ops, dff, tau=1.25):

@@ -20,6 +20,7 @@ from sklearn.linear_model import LinearRegression
 def normz(data):
     return (data - np.mean(data)) / (np.std(data) + 1e-5)
 
+
 def train_reg_model(ops, mean_anat, mean_func):
     # Debugging: Print the ops dictionary
     print("ops dictionary:", ops)
@@ -48,6 +49,7 @@ def train_reg_model(ops, mean_anat, mean_func):
     return slope, offset
 
 # run cellpose on one image for cell detection and save the results.
+
 
 def run_cellpose(
         ops, mean_anat,
@@ -147,7 +149,6 @@ def remove_green_bleedthrough(offset, slope, mean_func, mean_anat):
     # corrected functional channel = original functional channel - slope * original anatomical channel
     mean_anat_new = mean_anat - (slope * mean_func)
     return mean_anat_new
-
 
 
 # adjust layout for masks plot.
@@ -292,7 +293,8 @@ def run(ops, diameter):
         print('Found diameter as {}'.format(diameter))
 
         # function to remove green from red channel
-        slope, offset = train_reg_model(ops=ops, mean_anat=mean_anat, mean_func=mean_func)
+        slope, offset = train_reg_model(
+            ops=ops, mean_anat=mean_anat, mean_func=mean_func)
 
         mean_anat_corrected = remove_green_bleedthrough(
             offset, slope, mean_func, mean_anat)
@@ -330,11 +332,11 @@ def run(ops, diameter):
         anat(ax[1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
              unsure_masks_img_corr, with_mask=True, title='Corrected Anatomical Channel + Masks')
 
-        anat(ax[2], mean_anat, masks_anat, labeled_masks_img_orig,
-             unsure_masks_img_orig, with_mask=False, title='Original Anatomical Channel')
+        # anat(ax[2], mean_anat, masks_anat, labeled_masks_img_orig,
+        #      unsure_masks_img_orig, with_mask=False, title='Original Anatomical Channel')
 
-        anat(ax[3], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
-             unsure_masks_img_corr, with_mask=False, title='Corrected Anatomical Channel')
+        # anat(ax[3], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
+        #      unsure_masks_img_corr, with_mask=False, title='Corrected Anatomical Channel')
 
         # Plot  inhibitory ROIs that were identified before correction but not after correction
         # Plot 1: Anatomical ROIs only (no functional projection)
@@ -363,5 +365,3 @@ def run(ops, diameter):
             labels)
 
         print('Masks results saved')
-
-       
