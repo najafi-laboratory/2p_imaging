@@ -190,7 +190,10 @@ def adjust_contrast(org_img, lower_percentile=50, upper_percentile=99):
     return img
 
 
-def anat(ax, mean_anat, masks, labeled_masks_img, unsure_masks_img, with_mask=True, title='anatomy channel mean image'):
+def anat(
+        ax, mean_anat, masks, labeled_masks_img,
+        unsure_masks_img, with_mask=True, title='anatomy channel mean image'):
+
     anat_img = np.zeros(
         (mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
     anat_img[:, :, 0] = adjust_contrast(mean_anat)
