@@ -146,8 +146,8 @@ def save_masks(ops, masks_func, masks_anat, masks_anat_corrected, mean_func, max
 
 
 def remove_green_bleedthrough(offset, slope, mean_func, mean_anat):
-    # corrected functional channel = original functional channel - slope * original anatomical channel
-    mean_anat_new = mean_anat - (slope * mean_func)
+    # corrected anat channel = original anat channel - (slope * original anatomical channel)
+    mean_anat_new = mean_anat - (slope * mean_func + offset)
     return mean_anat_new
 
 
