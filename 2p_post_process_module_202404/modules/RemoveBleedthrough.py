@@ -44,6 +44,9 @@ def train_reg_model(mean_anat, mean_func, masks_anat):
         slopes.append(model.coef_[0][0])  # Extract single value
         offsets.append(model.intercept_[0])  # Extract single value
 
+    print(slopes)
+    print(offsets)
+
     # Return list of slopes, offsets, coordinates
     return slopes, offsets, coords
 
