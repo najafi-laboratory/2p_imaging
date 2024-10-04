@@ -13,38 +13,28 @@ from sklearn.linear_model import LinearRegression
 from .LabelExcInh import *
 
 
-def train_reg_model(ops, mean_anat, mean_func):
-    # Debugging: Print the ops dictionary
-    # print("ops dictionary:", ops)
-    # check if slope and offset already computed
-    if os.path.exists(os.path.join(ops['save_path0'], 'slope_offset.npy')):
-        slope, offset = np.load(os.path.join(
-            ops['save_path0'], 'slope_offset.npy'))
-    else:
-        # compute slope and offset
-        # fit func = slope * anat + offset
-        print("mean_anat.shape: ", mean_anat.shape)
-        print("mean_func.shape: ", mean_func.shape)
-        # flatten the arrays
-        mean_anat_flat = mean_anat.flatten()
-        mean_func_flat = mean_func.flatten().reshape(-1, 1)
-        reg_model = LinearRegression().fit(mean_func_flat, mean_anat_flat)
-        slope = reg_model.coef_[0]
-        offset = reg_model.intercept_
-        # save slope and offset
-        f = h5py.File(
-            os.path.join(ops['save_path0'], 'masks.h5'),
-            'w')
-
-        print(f"Slope and offset: {slope}, {offset}")
-
-        f['slope'] = slope
-        f['offset'] = offset
-        f.close()
-    return slope, offset
+def fit_reg_for_roi(mean_anat_pixel, mean_func_pixel):
+    pass
 
 
-def remove_green_bleedthrough(offset, slope, mean_func, mean_anat):
-    # corrected anat channel = original anat channel - (slope * original anatomical channel)
-    mean_anat_new = mean_anat - (slope * mean_func + offset)
-    return mean_anat_new
+def train_reg_model(ops, mean_anat, mean_func, labels):
+    # multivariate regression on ROIs
+    
+    # first, identify anat ROIs with labels --> r_i
+    # the same pixels in mean_func --> g_i
+    
+    # get list of pixel coordinates
+    # fit multivariate regression r_i = m_i * g_i + b_i
+
+    # return list of slopes, offsets, coordinates
+    pass
+
+
+def remove_green_bleedthrough(offsets, slopes, mean_func, mean_anat, coordinates):
+    # for each coordinate
+    # mean_anat_corrected = mean_anat
+    # mean_anat_corrected(coordinate) = (mean * mean_func(coordinate) + offset)
+
+
+    # return mean_anat_corrected
+    pass

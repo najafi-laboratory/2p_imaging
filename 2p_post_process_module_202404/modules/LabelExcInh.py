@@ -102,7 +102,7 @@ def get_label(
 
 # save channel img and masks results.
 
-def save_masks(ops, masks_func, masks_anat, masks_anat_corrected, mean_func, max_func, mean_anat, labels):
+def save_masks(ops, masks_func, masks_anat, masks_anat_corrected, mean_func, max_func, mean_anat, mean_anat_corrected, labels):
     f = h5py.File(
         os.path.join(ops['save_path0'], 'masks.h5'),
         'w')
@@ -114,6 +114,7 @@ def save_masks(ops, masks_func, masks_anat, masks_anat_corrected, mean_func, max
         f['mean_anat'] = mean_anat
         f['masks_anat'] = masks_anat
         f['masks_anat_corrected'] = masks_anat_corrected
+        f['meanImg_chan2_corrected'] = mean_anat_corrected
     f.close()
 
 
@@ -129,6 +130,10 @@ def get_labeled_masks_img(masks, labels, cate):
 
 
 def run(ops, diameter):
+
+    for key in ops.keys():
+        print(key)
+
     print('===============================================')
     print('===== two channel data roi identification =====')
     print('===============================================')
@@ -197,8 +202,13 @@ def run(ops, diameter):
 
         save_masks(
             ops,
-            masks_func, masks_anat, masks_anat_corrected, mean_func,
-            max_func, mean_anat,
+            masks_func,
+            masks_anat,
+            masks_anat_corrected,
+            mean_func,
+            max_func,
+            mean_anat,
+            mean_anat_corrected,
             labels)
 
         print('Masks results saved')
