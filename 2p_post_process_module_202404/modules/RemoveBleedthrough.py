@@ -13,29 +13,38 @@ from sklearn.linear_model import LinearRegression
 from .LabelExcInh import *
 
 
-def train_reg_model(ops, mean_anat, mean_func, labels):
+from sklearn.linear_model import LinearRegression
+import numpy as np
+
+
+def train_reg_model(mean_anat, mean_func, masks_anat):
     # multivariate regression on ROIs
 
-    coords = np.where(labels == 1)
+    coords = np.argwhere(masks_anat == 1)
 
     rows = coords[:, 0]
     cols = coords[:, 1]
     anat_roi_pixels = mean_anat[rows, cols]  # r_i
     func_roi_pixels = mean_func[rows, cols]  # g_i
 
-    anat_roi_pixels = np.array([np.array([p]) for p in anat_roi_pixels])
-    func_roi_pixels = np.array([np.array([p]) for p in func_roi_pixels])
+    # Initialize lists to store slopes and offsets for each variate
+    slopes = []
+    offsets = []
 
-    # fit multivariate regression r_i = m_i * g_i + b_i
-    model = LinearRegression()
+    # Perform regression for each variate (i.e., for each coordinate)
+    for i in range(len(anat_roi_pixels)):
+        anat_variate = anat_roi_pixels[i].reshape(-1, 1)  # Reshape for sklearn
+        func_variate = func_roi_pixels[i].reshape(-1, 1)
 
-    model.fit(func_roi_pixels, anat_roi_pixels)
+        # Create and fit the linear regression model
+        model = LinearRegression()
+        model.fit(func_variate, anat_variate)
 
-    # Get the slopes (coefficients) and intercepts for each variate in r
-    slopes = model.coef_.tolist()
-    offsets = model.intercept_.tolist()
+        # Store the slope and intercept for this variate
+        slopes.append(model.coef_[0][0])  # Extract single value
+        offsets.append(model.intercept_[0])  # Extract single value
 
-    # return list of slopes, offsets, coordinates
+    # Return list of slopes, offsets, coordinates
     return slopes, offsets, coords
 
 
