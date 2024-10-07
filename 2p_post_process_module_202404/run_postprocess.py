@@ -81,10 +81,10 @@ if __name__ == "__main__":
         run_qc=False)
     '''
 
-    QualControlDataIO.run(
+    F, F_chan2 = QualControlDataIO.run(
         ops,
         range_skew, max_connect, max_aspect, range_compact, range_footprint, stat_file_names=['stat'])
 
-    LabelExcInh.run(ops, diameter)
+    LabelExcInh.run(ops, diameter, F, F_chan2)
 
     DffTraces.run(ops)

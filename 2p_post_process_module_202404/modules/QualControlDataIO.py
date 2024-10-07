@@ -9,16 +9,21 @@ import skimage
 
 
 def read_raw(ops):
+    # green channel
     F = np.load(
         os.path.join(ops['save_path0'],
                      'suite2p', 'plane0', 'F.npy'), allow_pickle=True)
+    # red channel
+    F_chan2 = np.load(
+        os.path.join(ops['save_path0'],
+                     'suite2p', 'plane0', 'F_chan2.npy'), allow_pickle=True)
     Fneu = np.load(
         os.path.join(ops['save_path0'],
                      'suite2p', 'plane0', 'Fneu.npy'), allow_pickle=True)
     stat = np.load(
         os.path.join(ops['save_path0'],
                      'suite2p', 'plane0', 'stat.npy'), allow_pickle=True)
-    return [F, Fneu, stat]
+    return [F, F_chan2, Fneu, stat]
 
 
 # get metrics for ROIs.
@@ -79,7 +84,7 @@ def thres_stat(
 
 def reset_roi(
         bad_roi_id,
-        F, Fneu, stat
+        F, F_chan2, Fneu, stat
 ):
     # reset bad roi.
     for i in bad_roi_id:
@@ -90,20 +95,23 @@ def reset_roi(
     good_roi_id = np.where(np.sum(F, axis=1) != 0)[0]
     # keep good roi signals.
     fluo = F[good_roi_id, :]
+    fluo_chan2 = F_chan2[good_roi_id, :]
     neuropil = Fneu[good_roi_id, :]
     stat = stat[good_roi_id]
-    return fluo, neuropil, stat
+    return fluo, fluo_chan2, neuropil, stat
 
 
 # save results into npy files.
 
 def save_qc_results(
         ops,
-        fluo, neuropil, stat, masks, stat_file_name='stat'
+        fluo, fluo_chan2, neuropil, stat, masks, stat_file_name='stat'
 ):
     if not os.path.exists(os.path.join(ops['save_path0'], 'qc_results')):
         os.makedirs(os.path.join(ops['save_path0'], 'qc_results'))
     np.save(os.path.join(ops['save_path0'], 'qc_results', 'fluo.npy'), fluo)
+    np.save(os.path.join(ops['save_path0'],
+            'qc_results', 'fluo_chan2.npy'), fluo_chan2)
     np.save(os.path.join(ops['save_path0'],
             'qc_results', 'neuropil.npy'), neuropil)
     np.save(os.path.join(ops['save_path0'],
@@ -154,7 +162,7 @@ def run(
         max_aspect))
     print('Found range of campact as {}'.format(
         range_compact))
-    [F, Fneu, stat] = read_raw(ops)
+    [F, F_chan2, Fneu, stat] = read_raw(ops)
     print('Found {} ROIs from suite2p'.format(F.shape[0]))
     if run_qc:
         bad_roi_id = thres_stat(
@@ -163,10 +171,10 @@ def run(
         print('Found {} bad ROIs'.format(len(bad_roi_id)))
     else:
         bad_roi_id = []
-    fluo, neuropil, stat = reset_roi(bad_roi_id, F, Fneu, stat)
+    fluo, fluo_chan2, neuropil, stat = reset_roi(bad_roi_id, F, Fneu, stat)
     print('Saving {} ROIs after quality control'.format(fluo.shape[0]))
     masks = stat_to_masks(ops, stat)
 
     for name in stat_file_names:
-        save_qc_results(ops, fluo, neuropil, stat, masks, name)
+        save_qc_results(ops, fluo, fluo_chan2, neuropil, stat, masks, name)
     save_move_offset(ops)

@@ -20,6 +20,8 @@ import numpy as np
 def train_reg_model(mean_anat, mean_func, masks_anat):
     # multivariate regression on ROIs
 
+    
+
     coords = np.argwhere(masks_anat == 1)
 
     rows = coords[:, 0]

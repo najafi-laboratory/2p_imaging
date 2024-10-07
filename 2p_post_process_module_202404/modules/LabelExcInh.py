@@ -26,7 +26,7 @@ def normz(data):
 def run_cellpose(
         ops, mean_anat,
         diameter,
-        flow_threshold=0.5,
+        flow_threshold=0.5
 ):
     if not os.path.exists(os.path.join(ops['save_path0'], 'cellpose')):
         os.makedirs(os.path.join(ops['save_path0'], 'cellpose'))
