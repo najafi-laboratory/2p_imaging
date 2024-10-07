@@ -160,12 +160,12 @@ def run(ops, diameter):
 
         # function to remove green from red channel
         print("Fitting linear model to correct green channel bleedthrough")
-        slopes, offsets, coords = train_reg_model(
+        slope, offset, coords = train_reg_model(
             mean_anat=mean_anat, mean_func=mean_func, masks_anat=masks_anat)
 
         print("Correcting red channel")
-        mean_anat_corrected = remove_green_bleedthrough(offsets=np.zeros_like(
-            offsets), slopes=slopes, mean_func=mean_func, mean_anat=mean_anat, coordinates=coords)
+        mean_anat_corrected = remove_green_bleedthrough(
+            offset=0, slope=slope, mean_func=mean_func, mean_anat=mean_anat, coordinates=coords)
 
         print('computing corrected mask')
         masks_anat_corrected = run_cellpose(ops, mean_anat_corrected, diameter)
