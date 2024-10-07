@@ -43,8 +43,7 @@ def run(
         ops,
         norm=True,
         plotting_neurons=[5],
-        taus=[0.05, 0.10, 0.15, 0.20, 0.25, 0.30,
-              0.35, 0.40, 0.45, 0.50, 0.55, 0.6],
+        taus=[0.35],
         plot_with_smoothed=False,
         plot_without_smoothed=True):
 
