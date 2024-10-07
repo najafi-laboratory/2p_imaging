@@ -180,13 +180,52 @@ def run(ops, diameter):
             masks_anat_corrected, labels_corrected, 1)
 
         unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
+
         unsure_masks_img_corr = get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 0)
+
+        print(
+            f"Anat before: {len(np.argwhere(masks_anat == 1))}, Anat after: {len(np.argwhere(masks_anat_corrected == 1))}")
+        print(
+            f"Unsure before: {len(np.argwhere(unsure_masks_img_orig == 1))}, Unsure after: {len(np.argwhere(unsure_masks_img_orig == 1))}")
+
+        print(unsure_masks_img_orig[unsure_masks_img_orig != 0])
 
         mean_anat = mean_anat_corrected
         masks_anat = masks_anat_corrected
 
         main_channel_comparison_image(
+            'Unsure',
+            labels,
+            labels_corrected,
+            mean_anat,
+            mean_anat_corrected,
+            masks_anat,
+            masks_anat_corrected,
+            labeled_masks_img_orig,
+            labeled_masks_img_corr,
+            unsure_masks_img_orig,
+            unsure_masks_img_corr,
+            True,
+            mean_func)
+
+        main_channel_comparison_image(
+            'Labeled',
+            labels,
+            labels_corrected,
+            mean_anat,
+            mean_anat_corrected,
+            masks_anat,
+            masks_anat_corrected,
+            labeled_masks_img_orig,
+            labeled_masks_img_corr,
+            unsure_masks_img_orig,
+            unsure_masks_img_corr,
+            True,
+            mean_func)
+
+        main_channel_comparison_image(
+            'Anat',
             labels,
             labels_corrected,
             mean_anat,
