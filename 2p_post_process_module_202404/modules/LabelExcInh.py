@@ -129,11 +129,25 @@ def get_labeled_masks_img(masks, labels, cate):
     return labeled_masks_img
 
 
+def read_fluos(ops):
+    path = ops['save_path0']
+
+    fluo = np.load(
+        os.path.join(path, 'qc_results', 'fluo.npy'),
+        allow_pickle=True
+    )
+    print("fluo shape: ", fluo.shape)
+
+    fluo_chan2 = np.load(
+        os.path.join(path, 'qc_results', 'fluo_chan2.npy'),
+        allow_pickle=True
+    )
+    print("fluo chan2 shape: ", fluo_chan2.shape)
+
+    return fluo, fluo_chan2
+
+
 def run(ops, diameter):
-
-    for key in ops.keys():
-        print(key)
-
     print('===============================================')
     print('===== two channel data roi identification =====')
     print('===============================================')
@@ -157,39 +171,44 @@ def run(ops, diameter):
 
         print('Computing labels for each ROI on uncorrected red channel')
         labels = get_label(masks_func, masks_anat)
+        labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1)
 
-        #  fluo and fluo_chan2 
-        fluo = ops['fluo']  
-        fluo_chan2 = ops['fluo_chan2'] 
+        # print(labels[labels != 0])
+        print(np.intersect1d(masks_anat[masks_anat != 0], masks_anat[masks_anat != 1]))
+        # print(labeled_masks_img_orig[labeled_masks_img_orig != 0])
+        #  fluo and fluo_chan2
+        fluo, fluo_chan2=read_fluos(ops)
         # function to remove green from red channel
         print("Fitting linear model to correct green channel bleedthrough")
-        slope, offset, coords = train_reg_model(fluo, fluo_chan2, masks_anat)
-           # mean_anat=mean_anat, mean_func=mean_func, masks_anat=masks_anat
+        slope, offset, coords=train_reg_model(fluo, fluo_chan2, masks_anat)
+        # mean_anat=mean_anat, mean_func=mean_func, masks_anat=masks_anat
 
         print("Correcting red channel")
-        Fchan2_corrected = Fchan2_corrected_anat(fluo, fluo_chan2, slope, offset, masks_anat)
-        #mean_anat_corrected = remove_green_bleedthrough(
-            #offset=0, slope=slope, mean_func=mean_func, mean_anat=mean_anat, coordinates=coords)
-        
+        Fchan2_corrected=Fchan2_corrected_anat(
+            fluo, fluo_chan2, slope, offset, masks_anat)
+        # mean_anat_corrected = remove_green_bleedthrough(
+        # offset=0, slope=slope, mean_func=mean_func, mean_anat=mean_anat, coordinates=coords)
+
         print('Computing corrected mean anatomical image')
-        mean_anat_corrected = Fchan2_corrected_mean(Fchan2_corrected, masks_anat)
+        mean_anat_corrected=Fchan2_corrected_mean(
+            Fchan2_corrected, masks_anat)
 
         print('computing corrected mask')
-        masks_anat_corrected = run_cellpose(ops, mean_anat_corrected, diameter)
-        
+        masks_anat_corrected=run_cellpose(ops, mean_anat_corrected, diameter)
+
         print("corrected number of ROIs: ", len(
             np.argwhere(masks_anat_corrected == 1)))
 
         print('Computing corrected labels for each ROI')
-        labels_corrected = get_label(masks_func, masks_anat_corrected)
+        labels_corrected=get_label(masks_func, masks_anat_corrected)
 
-        labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1)
-        labeled_masks_img_corr = get_labeled_masks_img(
+        print(labeled_masks_img_orig[labeled_masks_img_orig != 0])
+        labeled_masks_img_corr=get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 1)
 
-        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
+        unsure_masks_img_orig=get_labeled_masks_img(masks_anat, labels, 0)
 
-        unsure_masks_img_corr = get_labeled_masks_img(
+        unsure_masks_img_corr=get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 0)
 
         print(
@@ -199,8 +218,8 @@ def run(ops, diameter):
 
         print(unsure_masks_img_orig[unsure_masks_img_orig != 0])
 
-        mean_anat = mean_anat_corrected
-        masks_anat = masks_anat_corrected
+        mean_anat=mean_anat_corrected
+        masks_anat=masks_anat_corrected
 
         main_channel_comparison_image(
             'Unsure',

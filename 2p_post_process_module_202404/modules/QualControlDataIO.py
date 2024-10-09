@@ -140,9 +140,9 @@ def save_move_offset(ops):
     f['xoff'] = xoff
     f['yoff'] = yoff
     f.close()
-
-
+    
 # main function for quality control.
+
 
 def run(
         ops,
@@ -171,11 +171,11 @@ def run(
         print('Found {} bad ROIs'.format(len(bad_roi_id)))
     else:
         bad_roi_id = []
-    fluo, fluo_chan2, neuropil, stat = reset_roi(bad_roi_id, F, F_chan2, Fneu, stat)
+    fluo, fluo_chan2, neuropil, stat = reset_roi(
+        bad_roi_id, F, F_chan2, Fneu, stat)
     print('Saving {} ROIs after quality control'.format(fluo.shape[0]))
     masks = stat_to_masks(ops, stat)
 
     for name in stat_file_names:
         save_qc_results(ops, fluo, fluo_chan2, neuropil, stat, masks, name)
     save_move_offset(ops)
-  
