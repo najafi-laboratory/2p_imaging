@@ -158,17 +158,25 @@ def run(ops, diameter):
         print('Computing labels for each ROI on uncorrected red channel')
         labels = get_label(masks_func, masks_anat)
 
+        #  fluo and fluo_chan2 
+        fluo = ops['fluo']  
+        fluo_chan2 = ops['fluo_chan2'] 
         # function to remove green from red channel
         print("Fitting linear model to correct green channel bleedthrough")
-        slope, offset, coords = train_reg_model(
-            mean_anat=mean_anat, mean_func=mean_func, masks_anat=masks_anat)
+        slope, offset, coords = train_reg_model(fluo, fluo_chan2, masks_anat)
+           # mean_anat=mean_anat, mean_func=mean_func, masks_anat=masks_anat
 
         print("Correcting red channel")
-        mean_anat_corrected = remove_green_bleedthrough(
-            offset=0, slope=slope, mean_func=mean_func, mean_anat=mean_anat, coordinates=coords)
+        Fchan2_corrected = Fchan2_corrected_anat(fluo, fluo_chan2, slope, offset, masks_anat)
+        #mean_anat_corrected = remove_green_bleedthrough(
+            #offset=0, slope=slope, mean_func=mean_func, mean_anat=mean_anat, coordinates=coords)
+        
+        print('Computing corrected mean anatomical image')
+        mean_anat_corrected = Fchan2_corrected_mean(Fchan2_corrected, masks_anat)
 
         print('computing corrected mask')
         masks_anat_corrected = run_cellpose(ops, mean_anat_corrected, diameter)
+        
         print("corrected number of ROIs: ", len(
             np.argwhere(masks_anat_corrected == 1)))
 

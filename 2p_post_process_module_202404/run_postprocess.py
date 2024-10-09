@@ -66,8 +66,8 @@ if __name__ == "__main__":
          range_footprint] = get_qc_args(args)
         ops = read_ops(args.session_data_path)
     else:
-        # session_data_path = '/home/esha/GTech/lab_work/FN14_P_20240530_2afc_t'
-        session_data_path = '/Users/aryanahri/desktop/FN16_P_20240701_js_t'
+        session_data_path = '/home/esha/GTech/lab_work/FN14_P_20240530_2afc_t'
+        #session_data_path = '/Users/aryanahri/desktop/FN16_P_20240701_js_t'
         ops = read_ops(session_data_path)
         range_skew = [-5, 5]
         max_connect = 1
@@ -81,10 +81,10 @@ if __name__ == "__main__":
         run_qc=False)
     '''
 
-    F, F_chan2 = QualControlDataIO.run(
-        ops,
+    QualControlDataIO.run(
+        ops, 
         range_skew, max_connect, max_aspect, range_compact, range_footprint, stat_file_names=['stat'])
 
-    LabelExcInh.run(ops, diameter, F, F_chan2)
+    LabelExcInh.run(ops, diameter)
 
     DffTraces.run(ops)
