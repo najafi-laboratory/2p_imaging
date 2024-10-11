@@ -27,91 +27,48 @@ def objective(params, X, y):
 
 
 def train_reg_model(fluo, fluo_chan2):
-    # print("mask shape: ", masks_anat.shape)
-    # coords = np.argwhere(masks_anat > 0)
-    # rows = coords[:, 0]
-    # cols = coords[:, 1]
-    # func_roi_pixels = fluo[rows, cols]  # g_i
-    # anat_roi_pixels = fluo_chan2[rows, cols]  # r_i
-
-    # # Reshape data for regression
-    # func_roi_pixels = func_roi_pixels.reshape(-1, 1)
-    # anat_roi_pixels = anat_roi_pixels.reshape(-1, 1)
-
-    # model = LinearRegression()
-    # model.fit(func_roi_pixels, anat_roi_pixels)
-
-    # slope = model.coef_
-    # offset = model.intercept_
-    # print("slope shape: ", slope.shape)
-    # print("offset shape: ", offset.shape)
-
-    # r_sq = model.score(func_roi_pixels, anat_roi_pixels)
-
-    # print(f"slope: {slope}, offset: {offset}")
-    # print(f"R2: {r_sq}")
-
-    # return slope, offset, coords
-
-    # Initial guess: slope = 1, intercepts = 0 for each neuron
-    # initial_params = np.zeros(fluo.shape[0] + 1)
-    # initial_params[0] = 1  # Initial slope guess
-
-    # # Perform optimization to fit the model
-    # result = minimize(objective, initial_params, args=(fluo, fluo_chan2))
-
-    # # Extract the fitted parameters
-    # fitted_slope = result.x[0]
-    # fitted_intercepts = result.x[1:]
-
-    # print(f"Fitted slope: {fitted_slope}")
-    # print(f"Fitted intercepts: {fitted_intercepts}")
+    fluo_means = np.mean(fluo, -1)
+    fluo_chan2_means = np.mean(fluo_chan2, -1)
 
     # return fitted_slope
     num_neurons = fluo.shape[0]
-    slopes = []
-    intercepts = []
+    # slopes = []
+    # intercepts = []
 
     # Fit a separate linear regression for each neuron
-    for i in range(num_neurons):
-        X = fluo[i, :].reshape(-1, 1)  # Reshape to (sequence_length, 1)
-        y = fluo_chan2[i, :]
+    # for i in range(num_neurons):
+    #     X = fluo[i, :].reshape(-1, 1)  # Reshape to (sequence_length, 1)
+    #     y = fluo_chan2[i, :]
 
-        # Create and fit the linear regression model
-        model = LinearRegression()
-        model.fit(X, y)
+    #     # Create and fit the linear regression model
+    #     model = LinearRegression()
+    #     model.fit(X, y)
 
-        # Append the slope and intercept for this neuron
-        slopes.append(model.coef_[0])
-        intercepts.append(model.intercept_)
+    #     # Append the slope and intercept for this neuron
+    #     slopes.append(model.coef_[0])
+    #     intercepts.append(model.intercept_)
 
-    return slopes, intercepts
+    X = fluo_means.reshape(-1, 1)
+    y = fluo_chan2_means.reshape(-1, 1)
+    model = LinearRegression()
 
+    model.fit(X, y)
+    slope = model.coef_
+    offset = model.intercept_
 
-def Fchan2_corrected_anat(fluo, fluo_chan2, slopes, offsets, masks_anat):
-    Fchan2_corrected = fluo_chan2.copy()
-
-    for t in range(fluo.shape[0]):
-        Fchan2_corrected[t] = fluo_chan2[t] - \
-            (slopes[t] * fluo[t] + offsets[t])
-
-    Fchan2_means = np.mean(Fchan2_corrected, -1)
-
-    return Fchan2_corrected, Fchan2_means
+    return slope, offset, fluo_means, fluo_chan2_means
 
 
-# def Fchan2_corrected_mean(Fchan2_corrected, masks_anat):
-#     unique_rois = np.unique(masks_anat)[1:]  # Exclude background (0)
-#     mean_anat_corrected = np.zeros(
-#         (Fchan2_corrected.shape[0], len(unique_rois)))
+def Fchan2_corrected_anat(fluo_means, fluo_chan2_means, slopes, offsets):
+    Fchan2_corrected_means = fluo_chan2_means.copy()
 
-#     for i, roi in enumerate(unique_rois):
-#         roi_coords = np.argwhere(masks_anat == roi)
-#         for t in range(Fchan2_corrected.shape[0]):
-#             mean_anat_corrected[i] = np.mean(
-#                 Fchan2_corrected[roi_coords[:, 0], roi_coords[:, 1]])
+    for t in range(len(fluo_means)):
+        Fchan2_corrected_means[t] = fluo_chan2_means[t] - \
+            (slopes * fluo_means[t] + offsets)
 
-#     return mean_anat_corrected
+    # Fchan2_means = np.mean(Fchan2_corrected, -1)
+
+    return Fchan2_corrected_means
 
 
 def update_mean_anat(mean_anat, corrected_means, masks_anat):

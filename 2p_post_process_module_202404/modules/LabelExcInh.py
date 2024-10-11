@@ -157,49 +157,64 @@ def run(ops, diameter):
         print('Running Cellpose on anatomical channel mean image')
         print(f'Found diameter as {diameter}')
 
+        # UNCORRECTED MASKS AND LABELS
+
         print('Computing masks for uncorrected red channel')
         masks_anat = run_cellpose(ops, mean_anat, diameter)
-        print("Original number of ROIs: ", len(np.argwhere(masks_anat == 1)))
 
         print('Computing labels for each ROI on uncorrected red channel')
         labels = get_label(masks_func, masks_anat)
+
+        print('Computing labeled masks on uncorrected red channel')
         labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1)
+
+        print('Computing unsure masks on uncorrected red channel')
+        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
 
         # Fluorescence data
         fluo, fluo_chan2 = read_fluos(ops)
 
         print("Fitting linear model to correct green channel bleedthrough")
-        slopes, offsets = train_reg_model(fluo, fluo_chan2)
+        slope, offset, fluo_means, fluo_chan2_means = train_reg_model(
+            fluo, fluo_chan2)
 
         print("Correcting red channel")
-        Fchan2_corrected, Fchan2_means = Fchan2_corrected_anat(
-            fluo, fluo_chan2, slopes, np.zeros_like(offsets), masks_anat)
+        Fchan2_corrected_means = Fchan2_corrected_anat(
+            fluo_means, fluo_chan2_means, slope, 0)
+
         mean_anat_corrected = update_mean_anat(
-            mean_anat, Fchan2_means, masks_anat)
+            mean_anat, Fchan2_corrected_means, masks_anat)
+
+        # CORRECTED MASKS AND LABELS
 
         print('Computing corrected mask')
         masks_anat_corrected = run_cellpose(ops, mean_anat_corrected, diameter)
-        print("Corrected number of ROIs: ", len(
-            np.argwhere(masks_anat_corrected == 1)))
 
         print('Computing corrected labels for each ROI')
         labels_corrected = get_label(masks_func, masks_anat_corrected)
 
+        print('Computing labeled masks on corrected red channel')
         labeled_masks_img_corr = get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 1)
-        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
+
+        print('Computing unsure masks on corrected red channel')
         unsure_masks_img_corr = get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 0)
 
+        print("Corrected number of ROIs: ", len(
+            np.argwhere(masks_anat_corrected != 0)))
+
         print(
-            f"Anat before: {len(np.argwhere(masks_anat == 1))}, Anat after: {len(np.argwhere(masks_anat_corrected == 1))}")
+            f"Anat before: {len(np.argwhere(masks_anat != 0))}, Anat after: {len(np.argwhere(masks_anat_corrected != 0))}")
         print(
-            f"Unsure before: {len(np.argwhere(unsure_masks_img_orig == 1))}, Unsure after: {len(np.argwhere(unsure_masks_img_orig == 1))}")
+            f"Unsure before: {len(np.argwhere(unsure_masks_img_orig != 0))}, Unsure after: {len(np.argwhere(unsure_masks_img_orig != 0))}")
 
         main_channel_comparison_image('Unsure', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                       labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
+
         main_channel_comparison_image('Labeled', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                       labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
+
         main_channel_comparison_image('Anat', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                       labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
 
