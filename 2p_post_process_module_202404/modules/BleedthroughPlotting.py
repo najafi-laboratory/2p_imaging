@@ -156,11 +156,11 @@ def main_channel_comparison_image(
 
     This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
     """
-    fig, ax = plt.subplots(4, 2, figsize=(25, 10))
-    anat(ax[0][0], mean_anat, masks_anat, labeled_masks_img_orig,
+    fig, ax = plt.subplots(1, 2, figsize=(25, 10))
+    anat(ax[0], mean_anat, masks_anat, labeled_masks_img_orig,
          unsure_masks_img_orig, with_mask=True, title='Orig. Anat. + Mask')
 
-    anat(ax[0][1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
+    anat(ax[1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
          unsure_masks_img_corr, with_mask=True, title='Corr. Anat. + Mask')
 
     orig, corr = None, None
@@ -180,63 +180,63 @@ def main_channel_comparison_image(
 
     # 1. Plot the ROIs present before the correction but not after.
     #    I.e., the ROIs that were misidentified.
-    misidentified_rois = np.setdiff1d(
-        rois_before, rois_after)
+    # misidentified_rois = np.setdiff1d(
+    #     rois_before, rois_after)
 
-    roi_comparison_image(
-        ax[1][0], mean_anat,
-        masks_anat, labels,
-        labels_corrected, rois=misidentified_rois,
-        title='Anat ROIs ONLY Before Corr (No Func)',
-        mean_func=None)
-    roi_comparison_image(
-        ax[1][1], mean_anat,
-        masks_anat, labels,
-        labels_corrected,
-        rois=misidentified_rois,
-        title='Anat ROIs ONLY Before Corr (With Func)',
-        mean_func=mean_func)
+    # roi_comparison_image(
+    #     ax[0], mean_anat,
+    #     masks_anat, labels,
+    #     labels_corrected, rois=misidentified_rois,
+    #     title='Anat ROIs ONLY Before Corr (No Func)',
+    #     mean_func=None)
+    # roi_comparison_image(
+    #     ax[1], mean_anat,
+    #     masks_anat, labels,
+    #     labels_corrected,
+    #     rois=misidentified_rois,
+    #     title='Anat ROIs ONLY Before Corr (With Func)',
+    #     mean_func=mean_func)
 
-    # 2. Plot the ROIs present both before and after the correction.
-    #    These are the ROIs that were correctly identified.
-    correct_rois = np.intersect1d(
-        rois_before, rois_after)
+    # # 2. Plot the ROIs present both before and after the correction.
+    # #    These are the ROIs that were correctly identified.
+    # correct_rois = np.intersect1d(
+    #     rois_before, rois_after)
 
-    roi_comparison_image(
-        ax[2][0], mean_anat,
-        masks_anat, labels,
-        labels_corrected, rois=correct_rois,
-        title='Anat ROIs Before AND After Corr (No Func)',
-        mean_func=None)
-    roi_comparison_image(
-        ax[2][1], mean_anat,
-        masks_anat, labels,
-        labels_corrected, rois=correct_rois,
-        title='Anat ROIs Before AND After Corr (With Func)',
-        mean_func=mean_func)
+    # roi_comparison_image(
+    #     ax[2][0], mean_anat,
+    #     masks_anat, labels,
+    #     labels_corrected, rois=correct_rois,
+    #     title='Anat ROIs Before AND After Corr (No Func)',
+    #     mean_func=None)
+    # roi_comparison_image(
+    #     ax[2][1], mean_anat,
+    #     masks_anat, labels,
+    #     labels_corrected, rois=correct_rois,
+    #     title='Anat ROIs Before AND After Corr (With Func)',
+    #     mean_func=mean_func)
 
-    # 3. Plot the ROIs present after the correction but not before.
-    #    These are the ROIs that were missed originally.
-    missed_rois = np.setdiff1d(
-        rois_after, rois_before)
+    # # 3. Plot the ROIs present after the correction but not before.
+    # #    These are the ROIs that were missed originally.
+    # missed_rois = np.setdiff1d(
+    #     rois_after, rois_before)
 
-    roi_comparison_image(
-        ax[3][0], mean_anat,
-        masks_anat, labels,
-        labels_corrected, rois=missed_rois,
-        title='Anat ROIs ONLY After Corr (No Func)',
-        mean_func=None)
-    roi_comparison_image(
-        ax[3][1], mean_anat,
-        masks_anat, labels,
-        labels_corrected, rois=missed_rois,
-        title='Anat ROIs ONLY After Corr (With Func)',
-        mean_func=mean_func)
+    # roi_comparison_image(
+    #     ax[3][0], mean_anat,
+    #     masks_anat, labels,
+    #     labels_corrected, rois=missed_rois,
+    #     title='Anat ROIs ONLY After Corr (No Func)',
+    #     mean_func=None)
+    # roi_comparison_image(
+    #     ax[3][1], mean_anat,
+    #     masks_anat, labels,
+    #     labels_corrected, rois=missed_rois,
+    #     title='Anat ROIs ONLY After Corr (With Func)',
+    #     mean_func=mean_func)
 
-    plt.title(f'{comp_mask_type}_bleedthrough_channel_comparison')
+    # plt.title(f'{comp_mask_type}_bleedthrough_channel_comparison')
     plt.rcParams['savefig.dpi'] = 1000
     plt.savefig(f'{comp_mask_type}_bleedthrough_channel_comparison.pdf')
-    # plt.show()
+    # # plt.show()
 
 
 def plot_anat_intensities(original_anat_channel, corrected_anat_channel):

@@ -9,10 +9,19 @@ from modules import LabelExcInh
 from modules import DffTraces
 COMMANDLINE_MODE = False
 
-
 # parse arg input to number list.
 
+
 def get_qc_args(args):
+    """
+    Parse quality control arguments from the command line arguments.
+
+    Args:
+        args (argparse.Namespace): Command line arguments containing quality control parameters.
+
+    Returns:
+        list: A list containing the parsed quality control parameters as NumPy arrays.
+    """
     range_skew = args.range_skew.split(',')
     range_skew = np.array(range_skew, dtype='float32')
     max_connect = np.array(args.max_connect, dtype='float32')
@@ -27,10 +36,19 @@ def get_qc_args(args):
             range_compact,
             range_footprint]
 
-
 # read saved ops.npy given a folder in ./results.
 
+
 def read_ops(session_data_path):
+    """
+    Read the saved ops.npy file from the given session data path.
+
+    Args:
+        session_data_path (str): Path to the folder containing Suite2p results.
+
+    Returns:
+        dict: A dictionary containing the loaded ops data.
+    """
     print('Processing {}'.format(session_data_path))
     ops = np.load(
         os.path.join(session_data_path, 'suite2p', 'plane0', 'ops.npy'),
@@ -80,6 +98,8 @@ if __name__ == "__main__":
         ops, range_skew, max_connect, max_aspect, range_compact, range_footprint,
         run_qc=False)
     '''
+
+    print(ops.keys())
 
     QualControlDataIO.run(
         ops,

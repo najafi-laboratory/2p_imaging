@@ -47,7 +47,7 @@ def run_cellpose(ops, mean_anat, diameter, flow_threshold=0.5):
 # Read and cut masks in ops
 
 
-def get_mask(ops):
+def get_mask(ops, mean_anat_corr=None):
     masks_npy = np.load(os.path.join(
         ops['save_path0'], 'qc_results', 'masks.npy'), allow_pickle=True)
     x1, x2 = ops['xrange']
@@ -59,6 +59,11 @@ def get_mask(ops):
 
     mean_anat = ops['meanImg_chan2'][y1:y2,
                                      x1:x2] if ops['nchannels'] == 2 else None
+    if mean_anat_corr is not None:
+        mean_anat_corr = mean_anat_corr[y1:y2,
+                                        x1:x2] if ops['nchannels'] == 2 else None
+
+        return mean_anat_corr
 
     return masks_func, mean_func, max_func, mean_anat
 
@@ -175,15 +180,20 @@ def run(ops, diameter):
         fluo, fluo_chan2 = read_fluos(ops)
 
         print("Fitting linear model to correct green channel bleedthrough")
-        slope, offset, fluo_means, fluo_chan2_means = train_reg_model(
-            fluo, fluo_chan2)
+        # slope, offset, fluo_means, fluo_chan2_means = train_reg_model(
+        #     fluo, fluo_chan2)
 
         print("Correcting red channel")
-        Fchan2_corrected_means = Fchan2_corrected_anat(
-            fluo_means, fluo_chan2_means, slope, 0)
+        # Fchan2_corrected_means = Fchan2_corrected_anat(
+        #     fluo_means, fluo_chan2_means, slope, 0)
 
-        mean_anat_corrected = update_mean_anat(
-            mean_anat, Fchan2_corrected_means, masks_anat)
+        # mean_anat_corrected = update_mean_anat(
+        #     mean_anat, Fchan2_corrected_means, masks_anat)
+        # mean_anat_corrected = mean_anat.copy()
+
+        mean_anat_corrected = correct_bleedthrough(
+            ops['Ly'], ops['Lx'], nblks=12, mimg=ops['meanImg'], mimg2=ops['meanImg_chan2'])
+        mean_anat_corrected = get_mask(ops, mean_anat_corr=mean_anat_corrected)
 
         # CORRECTED MASKS AND LABELS
 
@@ -205,15 +215,15 @@ def run(ops, diameter):
             np.argwhere(masks_anat_corrected != 0)))
 
         print(
-            f"Anat before: {len(np.argwhere(masks_anat != 0))}, Anat after: {len(np.argwhere(masks_anat_corrected != 0))}")
-        print(
-            f"Unsure before: {len(np.argwhere(unsure_masks_img_orig != 0))}, Unsure after: {len(np.argwhere(unsure_masks_img_orig != 0))}")
+            f"Anat before: {len(np.unique(masks_anat)) - 1}, Anat after: {len(np.unique(masks_anat_corrected)) - 1}")
+        # print(
+        #     f"Unsure before: {len(np.argwhere(unsure_masks_img_orig != 0))}, Unsure after: {len(np.argwhere(unsure_masks_img_orig != 0))}")
 
-        main_channel_comparison_image('Unsure', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
-                                      labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
+        # main_channel_comparison_image('Unsure', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
+        #                               labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
 
-        main_channel_comparison_image('Labeled', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
-                                      labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
+        # main_channel_comparison_image('Labeled', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
+        #                               labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
 
         main_channel_comparison_image('Anat', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                       labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
