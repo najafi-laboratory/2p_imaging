@@ -234,7 +234,10 @@ def run(ops, diameter):
                                       labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
 
         removed_neurons_comparison_image('Anat', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
-                                         labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
+                                         None, labeled_masks_img_corr, None, unsure_masks_img_corr, True, mean_func)
+
+        new_neurons_comparison_image('Anat', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
+                                     labeled_masks_img_orig, None, unsure_masks_img_orig, None, True, mean_func)
 
         print(
             f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')

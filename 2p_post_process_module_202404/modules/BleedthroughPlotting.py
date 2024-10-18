@@ -82,7 +82,11 @@ def anat(ax, mean_anat, masks, labeled_masks_img, unsure_masks_img, with_mask=Tr
         (mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
     anat_img[:, :, 0] = adjust_contrast(mean_anat)
     anat_img = adjust_contrast(anat_img)
-    iter_lst = [(masks, [255, 255, 255])]
+
+    iter_lst = []
+
+    if masks is not None:
+        iter_lst.append((masks, [255, 255, 255]))
 
     if labeled_masks_img is not None:
         iter_lst.append((labeled_masks_img[:, :, 0], [255, 255, 0]))
@@ -215,6 +219,30 @@ def identify_removed_neurons(masks_anat, masks_anat_corrected):
     return only_in_anat
 
 
+def identify_new_neurons(masks_anat, masks_anat_corrected):
+    # Label each connected component in both masks
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, num_features_corrected = label(
+        masks_anat_corrected)
+
+    # Create a set to track neurons present only in corrected mask
+    only_in_corrected = set()
+
+    # Iterate through each labeled region in the corrected mask
+    for i in range(1, num_features_corrected + 1):
+        # Create a mask for the current neuron in corrected mask
+        neuron_mask = (labeled_anat_corrected == i)
+
+        # Check if any pixels overlap in the uncorrected mask
+        overlap = np.any(neuron_mask & (labeled_anat > 0))
+
+        # If there is no overlap, it means this neuron is new after correction
+        if not overlap:
+            only_in_corrected.add(i)
+
+    return only_in_corrected
+
+
 def isolate_neurons(mask, neuron_indices):
     # Label each connected component in the mask
     labeled_mask, num_features = label(mask)
@@ -272,11 +300,60 @@ def removed_neurons_comparison_image(
 
     # Generate the figure
     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-    anat(ax[0], mean_anat=mean_anat, masks=removed_neurons_mask, labeled_masks_img=None,
-         unsure_masks_img=None, with_mask=True, title='Orig+removed')
+    anat(ax[0], mean_anat=mean_anat, masks=removed_neurons_mask, labeled_masks_img=unsure_masks_img_corr,
+         unsure_masks_img=unsure_masks_img_orig, with_mask=True, title='Orig+removed')
 
     anat(ax[1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
          unsure_masks_img_corr, with_mask=True, title='Corr. Anat. + Mask')
     plt.rcParams['savefig.dpi'] = 1000
     plt.savefig(f'removed_neurons_bleedthrough_channel_comparison.pdf')
+    # # plt.show()
+
+
+def new_neurons_comparison_image(
+        comp_mask_type,
+        labels,
+        labels_corrected,
+        mean_anat,
+        mean_anat_corrected,
+        masks_anat,
+        masks_anat_corrected,
+        labeled_masks_img_orig,
+        labeled_masks_img_corr,
+        unsure_masks_img_orig,
+        unsure_masks_img_corr,
+        with_mask,
+        mean_func):
+    """
+    Generates a figure with comparisons of the original and corrected anatomical channel images with masks, including removed neurons.
+
+    Parameters:
+    - mean_anat (numpy array): The mean anatomical image data.
+    - masks_anat (numpy array): The masks for anatomical ROIs.
+    - labeled_masks_img_orig (numpy array): The labeled masks image for original visualization.
+    - unsure_masks_img_orig (numpy array): The unsure masks image for original visualization.
+    - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
+    - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
+
+    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+    """
+    # Identify removed neurons
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, num_features_corrected = label(
+        masks_anat_corrected)
+
+    new_neurons = list(identify_new_neurons(
+        masks_anat, masks_anat_corrected))
+    # Isolate removed neurons
+    new_neurons_mask = isolate_neurons(masks_anat, new_neurons)
+
+    # Generate the figure
+    fig, ax = plt.subplots(1, 2, figsize=(25, 10))
+    anat(ax[0], mean_anat=mean_anat, masks=masks_anat, labeled_masks_img=unsure_masks_img_orig,
+         unsure_masks_img=unsure_masks_img_orig, with_mask=True, title='Orig')
+
+    anat(ax[1], mean_anat_corrected, new_neurons_mask, labeled_masks_img_corr,
+         unsure_masks_img_corr, with_mask=True, title='Corr. Anat. New')
+    plt.rcParams['savefig.dpi'] = 1000
+    plt.savefig(f'new_neurons_bleedthrough_channel_comparison.pdf')
     # # plt.show()
