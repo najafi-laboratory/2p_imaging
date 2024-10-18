@@ -10,6 +10,8 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 from skimage.segmentation import find_boundaries
 from sklearn.linear_model import LinearRegression
+import matplotlib.colors as mcolors
+
 
 from .RemoveBleedthrough import *
 from .BleedthroughPlotting import *
@@ -200,6 +202,9 @@ def run(ops, diameter):
         print('Computing corrected mask')
         masks_anat_corrected = run_cellpose(ops, mean_anat_corrected, diameter)
 
+        # np.savetxt('masks_anat.csv', masks_anat, delimiter=',')
+        # np.savetxt('masks_anat_corr.csv', masks_anat_corrected, delimiter=',')
+
         print('Computing corrected labels for each ROI')
         labels_corrected = get_label(masks_func, masks_anat_corrected)
 
@@ -228,7 +233,8 @@ def run(ops, diameter):
         main_channel_comparison_image('Anat', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                       labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
 
-        plot_anat_intensities(mean_anat, mean_anat_corrected)
+        removed_neurons_comparison_image('Anat', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
+                                         labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, True, mean_func)
 
         print(
             f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')
