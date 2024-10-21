@@ -357,3 +357,138 @@ def new_neurons_comparison_image(
     plt.rcParams['savefig.dpi'] = 1000
     plt.savefig(f'new_neurons_bleedthrough_channel_comparison.pdf')
     # # plt.show()
+
+
+def common_neurons_comparison_image(
+        comp_mask_type,
+        labels,
+        labels_corrected,
+        mean_anat,
+        mean_anat_corrected,
+        masks_anat,
+        masks_anat_corrected,
+        labeled_masks_img_orig,
+        labeled_masks_img_corr,
+        unsure_masks_img_orig,
+        unsure_masks_img_corr,
+        with_mask,
+        mean_func):
+
+    """
+    Generating image with anat neurons present throughout before and after bleedthrough correction
+     """
+
+    # Identify neurons that are present in both original and corrected masks
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, num_features_corrected = label(masks_anat_corrected)
+
+    common_neurons = set()
+
+    # Iterate through each labeled region in the original mask
+    for i in range(1, num_features_anat + 1):
+        # Create a mask for the current neuron in the original mask
+        neuron_mask = (labeled_anat == i)
+
+        # Check if this neuron overlaps in the corrected mask
+        overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
+
+        # If there is overlap, it means this neuron is present in both
+        if overlap:
+            common_neurons.add(i)
+
+    # Isolate common neurons
+    common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
+
+    # Generate the figure
+    fig, ax = plt.subplots(1, 2, figsize=(25, 10))
+
+    # Plot the original anatomical image with common neurons with boundary
+    anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=labeled_masks_img_orig,
+         unsure_masks_img=unsure_masks_img_orig, with_mask=with_mask, title='Common Neurons (Original)')
+    # Plot the corrected anatomical image with common neurons with boundary
+    anat(ax[1], mean_anat_corrected, common_neurons_mask, labeled_masks_img=labeled_masks_img_corr,
+         unsure_masks_img=unsure_masks_img_corr, with_mask=with_mask, title='Common Neurons (Corrected)')
+
+    plt.rcParams['savefig.dpi'] = 1000
+    plt.savefig(f'common_neurons_comparison.pdf')
+    plt.show()
+
+# Functional Channel included 
+
+
+def common_neurons_with_func(
+        comp_mask_type,
+        labels,
+        labels_corrected,
+        mean_anat,
+        mean_anat_corrected,
+        masks_anat,
+        masks_anat_corrected,
+        labeled_masks_img_orig,
+        labeled_masks_img_corr,
+        unsure_masks_img_orig,
+        unsure_masks_img_corr,
+        with_mask,
+        mean_func):
+    """
+    Generates a plot with comparisons of the original and corrected anatomical channel images with masks, including functional neurons projection.
+    """
+    # Identify neurons that are present in both original and corrected masks
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, num_features_corrected = label(masks_anat_corrected)
+
+    common_neurons = set()
+
+    # Iterate through each labeled region in the original mask
+    for i in range(1, num_features_anat + 1):
+        # Create a mask for the current neuron in the original mask
+        neuron_mask = (labeled_anat == i)
+
+        # Check if this neuron overlaps in the corrected mask
+        overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
+
+        # If there is overlap, it means this neuron is present in both
+        if overlap:
+            common_neurons.add(i)
+
+    # Isolate common neurons
+    common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
+
+    # Generate the figure
+    fig, ax = plt.subplots(1, 3, figsize=(30, 10))
+
+    # Plot the original anatomical image with common neurons highlighted
+    anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=labeled_masks_img_orig,
+         unsure_masks_img=unsure_masks_img_orig, with_mask=with_mask, title='Common Neurons (Original)')
+
+    # Plot the corrected anatomical image with common neurons highlighted
+    anat(ax[1], mean_anat_corrected, common_neurons_mask, labeled_masks_img=labeled_masks_img_corr,
+         unsure_masks_img=unsure_masks_img_corr, with_mask=with_mask, title='Common Neurons (Corrected)')
+
+    # Prepare composite image for the corrected anatomical image with functional data
+    corr_func_img = prep_img(mean_anat_corrected, mean_func)
+
+    # Overlay the masks and boundaries on corr_func_img
+    if with_mask:
+        iter_lst_corr = []
+
+        if common_neurons_mask is not None:
+            iter_lst_corr.append((common_neurons_mask, [255, 255, 255]))
+
+        if labeled_masks_img_corr is not None:
+            iter_lst_corr.append((labeled_masks_img_corr[:, :, 0], [255, 255, 0]))
+
+        if unsure_masks_img_corr is not None:
+            iter_lst_corr.append((unsure_masks_img_corr[:, :, 0], [0, 196, 255]))
+
+        for mask, color in iter_lst_corr:
+            x_all, y_all = np.where(find_boundaries(mask))
+            corr_func_img[x_all, y_all, :] = np.array(color)
+
+    ax[2].imshow(corr_func_img)
+    adjust_layout(ax[2])
+    ax[2].set_title('Common Neurons with Func (Corrected)')
+
+    plt.rcParams['savefig.dpi'] = 1000
+    plt.savefig(f'common_neurons_with_func_comparison.pdf')
+    plt.show()
