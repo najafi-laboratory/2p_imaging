@@ -43,7 +43,7 @@ def run(
         ops,
         norm=True,
         plotting_neurons=[5],
-        taus=[0.35],
+        taus=[0.10, 0.35, 0.5],
         plot_with_smoothed=False,
         plot_without_smoothed=True):
 
@@ -83,6 +83,7 @@ def run(
                              neurons=np.arange(dff.shape[0]))
     else:
         # if we just specify one tau value
+        tau = taus[0]
         neurons = np.arange(dff.shape[0])
         smoothed, spikes = SpikeDeconv.run(
             ops,

@@ -94,4 +94,5 @@ if __name__ == "__main__":
 
     LabelExcInh.run(ops, diameter)
 
-    DffTraces.run(ops, correct_pmt=True)
+    # DffTraces.run(ops, correct_pmt=True)
+    DffTraces.run(ops)
