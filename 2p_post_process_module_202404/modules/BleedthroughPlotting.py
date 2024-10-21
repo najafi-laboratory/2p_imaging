@@ -932,22 +932,22 @@ def plot_combined_inhibitory_rois(mean_func, mean_anat, mean_anat_corrected, lab
 #     - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
 #     - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
 
-#     This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
-#     """
-#     # Identify removed neurons
-#     labeled_anat, num_features_anat = label(masks_anat)
-#     labeled_anat_corrected, num_features_corrected = label(
-#         masks_anat_corrected)
+    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+    """
+    # Identify removed neurons
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, num_features_corrected = label(
+        masks_anat_corrected)
 
-#     common_neurons = list(identify_common_neurons(
-#         masks_anat, masks_anat_corrected))
-#     # Isolate removed neurons
-#     common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
+    common_neurons = list(identify_common_neurons(
+        masks_anat, masks_anat_corrected))
+    # Isolate removed neurons
+    common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
 
-#     # Generate the figure
-#     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-#     anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=unsure_masks_img_orig,
-#          unsure_masks_img=unsure_masks_img_orig, with_mask=True, title='Orig')
+    # Generate the figure
+    fig, ax = plt.subplots(1, 2, figsize=(25, 10))
+    anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=None,
+         unsure_masks_img=None, with_mask=True, title='Orig')
 
 #     anat(ax[1], mean_anat_corrected, common_neurons_mask, labeled_masks_img_corr,
 #          unsure_masks_img_corr, with_mask=True, title='Corr. Anat. New')
