@@ -136,8 +136,9 @@ def plot_for_neuron_without_smoothed(timings, dff, spikes, neuron=5, tau=1.25):
     axs[2].set_title(f'Traces + Original')
     axs[2].legend()
 
-    plt.rcParams['savefig.dpi'] = 1000
+    # plt.rcParams['savefig.dpi'] = 1000
     plt.savefig(f'plot_results/neuron_{neuron}__tau_{tau}_plot.pdf')
+    plt.show()
 
 
 def plot_for_neuron_with_smoothed(timings, dff, spikes, convolved_spikes, neuron=5, tau=1.25):
