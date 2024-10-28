@@ -108,10 +108,12 @@ def correct_bleedthrough(Ly, Lx, nblks, mimg, mimg2):
             x2 = mimg2[np.ix_(ny, nx)].flatten()
             # predict chan2 from chan1
             a = (x * x2).sum() / (x * x).sum()
+            print(a)
             weights[iy, ix] = a
     mask /= mask.sum(axis=-1).sum(axis=-1)[:, :, np.newaxis, np.newaxis]
     mask *= weights
     mask *= mimg[:, :, np.newaxis, np.newaxis]
     mimg2 -= mask.sum(axis=-1).sum(axis=-1)
+    print(mask.sum(axis=-1).sum(axis=-1))
     mimg2 = np.maximum(0, mimg2)
     return mimg2
