@@ -7,6 +7,7 @@ from scipy.ndimage import gaussian_filter
 from modules import SpikeDeconv
 
 from .SpikeAnalysis import analyze_spike_traces
+from .SpikePlotting import plot_for_neuron_with_smoothed_interactive_multi_tau
 # compute dff from raw fluorescence signals.
 
 
@@ -43,9 +44,10 @@ def run(
         ops,
         norm=True,
         plotting_neurons=[5],
-        taus=[0.10, 0.35, 0.5],
+        taus=[0.01, 0.03, 0.10, 0.40, 1.00, 4.00],
         plot_with_smoothed=False,
-        plot_without_smoothed=True):
+        plot_with_smoothed_group=True,
+        plot_without_smoothed=False):
 
     print('===============================================')
     print('=========== dff trace normalization ===========')
@@ -62,14 +64,16 @@ def run(
 
     save(ops, 'dff', dff)
     print("DFF Results saved under name 'dff'")
-
     # deconvolution code
     if len(taus) > 1:
+        spikes_list = []
+        convolved_list = []
+        thresh_list = []
         # code to perform a parameter search on tau
         tau_spike_dict = {}
         neurons = np.arange(dff.shape[0])
         for tau in taus:
-            smoothed, spikes = SpikeDeconv.run(
+            smoothed, spikes, uptime, threshold_val = SpikeDeconv.run(
                 ops,
                 dff,
                 oasis_tau=tau,
@@ -79,8 +83,25 @@ def run(
                 plot_without_smoothed=plot_without_smoothed)
             tau_spike_dict[tau] = spikes
 
-        analyze_spike_traces(ops, dff, tau_spike_dict,
-                             neurons=np.arange(dff.shape[0]))
+            spikes_list.append(spikes)
+            convolved_list.append(smoothed)
+            thresh_list.append(threshold_val)
+
+        stas = analyze_spike_traces(ops, dff, tau_spike_dict,
+                                    neurons=np.arange(dff.shape[0] // 10))
+
+        if plot_with_smoothed_group:
+            for neuron in plotting_neurons:
+                plot_for_neuron_with_smoothed_interactive_multi_tau(
+                    timings=uptime,
+                    dff=dff,
+                    threshold_list=thresh_list,
+                    spikes_list=spikes_list,
+                    convolved_spikes_list=convolved_list,
+                    sta_list=stas,
+                    neuron=neuron,
+                    tau_list=taus)
+
     else:
         # if we just specify one tau value
         tau = taus[0]

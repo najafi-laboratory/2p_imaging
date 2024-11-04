@@ -84,35 +84,63 @@ def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333
     Args:
         ops (dict): Operation parameters.
         dff (np.array): DF/F data array.
-        taus (list): List of tau values for OASIS deconvolution.
+        tau_spike_dict (dict): Dictionary mapping tau values to their corresponding spike arrays.
         neurons (list): List of neuron indices to analyze.
         n (int): Sample size for all neurons.
     """
     results = []
 
+    # Define the window size for STA computation
+    pre_spike_window = 200   # Number of time points before the spike
+    post_spike_window = 600  # Number of time points after the spike
+
+    stas = []
     for tau in tau_spike_dict.keys():
         print(f'Analyzing spikes for tau = {tau}')
-        # smoothed, spikes = SpikeDeconv.run(
-        #     ops, dff, oasis_tau=tau, neurons=neurons)
+        # Get the spikes for the current tau
+        spikes = tau_spike_dict[tau]
 
         # Compute statistics for the spikes
-        spikes = tau_spike_dict[tau]
         stats = compute_statistics(spikes)
-
+        stas_per_neuron = []
         # Store results with corresponding tau
         for i, neuron in enumerate(neurons):
             result = {
                 'tau': tau,
                 'neuron': neuron,
-                'mean': stats['mean'][i],
-                'std': stats['std'][i],
-                'max': stats['max'][i],
-                'min': stats['min'][i],
-                'median': stats['median'][i],
-                'total_spikes': stats['total_spikes'][i]
+                'mean': stats['mean'][neuron],
+                'std': stats['std'][neuron],
+                'max': stats['max'][neuron],
+                'min': stats['min'][neuron],
+                'median': stats['median'][neuron],
+                'total_spikes': stats['total_spikes'][neuron]
             }
-            results.append(result)
 
+            # Compute the spike-triggered average (STA)
+            spikes_neuron = spikes[neuron, :]
+            dff_neuron = dff[neuron, :]
+
+            spike_indices = np.where(spikes_neuron > 0)[0]
+
+            windows = []
+            for spike_time in spike_indices:
+                # Ensure indices are within bounds
+                if (spike_time - pre_spike_window >= 0) and (spike_time + post_spike_window < len(dff_neuron)):
+                    window = dff_neuron[spike_time -
+                                        pre_spike_window: spike_time + post_spike_window]
+                    windows.append(window)
+
+            if len(windows) > 0:
+                # Compute the STA by averaging the windows
+                sta = np.mean(windows, axis=0)
+                stas_per_neuron.append(sta)
+                # Convert to list for serialization
+                result['sta'] = sta.tolist()
+            else:
+                result['sta'] = None  # No spikes, so STA cannot be computed
+
+            results.append(result)
+        stas.append(np.array(stas_per_neuron))
     # Convert results to DataFrame
     df_n = pd.DataFrame(results)
     df_agg = aggregate_statistics(df_n, n)
@@ -123,3 +151,4 @@ def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333
     # Save aggregated results across neurons for each tau to a CSV
     df_agg.to_csv('aggregated_analysis_results.csv', index=False)
     print('Spike analysis results saved to spike_analysis_results.csv')
+    return stas
