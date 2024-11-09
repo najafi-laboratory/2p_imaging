@@ -85,13 +85,16 @@ def get_label(masks_func, masks_anat, thres1=0.3, thres2=0.5): # asign labels to
     Compare ROIs from the functional channel with the anatomical channel to assign labels to the ROIs based on the overlap
     based on overlap - the function assigns labels- -1 for excitatory and 1 for inhibitory and 0 for unsure
     """
+    print(masks_anat)
+    print(masks_func)
+    
     anat_roi_ids = np.unique(masks_anat)[1:] #unique ids of the anatomical masks, skipping 1st ID which is background
-    masks_3d = np.zeros(
-        (len(anat_roi_ids), masks_anat.shape[0], masks_anat.shape[1]))
+    masks_3d = np.zeros( 
+        (len(anat_roi_ids), masks_anat.shape[0], masks_anat.shape[1])) #neurons active unique values 
 
     for i, roi_id in enumerate(anat_roi_ids):
-        masks_3d[i] = (masks_anat == roi_id).astype(int) #3d aray each slice contains the mask of a single roi
-    masks_3d[masks_3d != 0] = 1 #convert to binary 1- roi, 0- background
+        masks_3d[i] = (masks_anat == roi_id).astype(int) #3d aray each slice contains the mask of a single roi , 3d each roi id - make a cop
+    masks_3d[masks_3d != 0] = 1 #convert to binary 1- roi, 0- background 
 
     prob = []
     for i in tqdm(np.unique(masks_func)[1:]): #tqdm create progressive bars shows the progress of the loop - :1 remove background 
@@ -105,11 +108,19 @@ def get_label(masks_func, masks_anat, thres1=0.3, thres2=0.5): # asign labels to
     prob = np.array(prob)
     labels = np.zeros_like(prob)
     labels[prob < thres1] = -1  # Excitatory white 
-    labels[prob > thres2] = 1   # Inhibitory yellow 
+    labels[prob > thres2] = 1   # Inhibitory yellow     
+
+    
+    # calculates labes fro func 
 
     #mask_anat- mask then func is calculated from this 
+    #np.zero get label function 
 
     return labels
+
+
+
+
 
 # Save channel images and masks results
 
@@ -130,19 +141,23 @@ def save_masks(ops, masks_func, masks_anat, masks_anat_corrected, mean_func, max
 # Label images with yellow and green
 
 
-def get_labeled_masks_img(masks, labels, cate):
+def get_labeled_masks_img(masks, labels, cate, channel_color):
     """
     genberate labeled masks image based on their category
     """
     labeled_masks_img = np.zeros(
         (masks.shape[0], masks.shape[1], 3), dtype='int32') #initialize an array of zeros with dimensions (h,w,3(RGB image)) matches mask 
-    neuron_idx = np.where(labels == cate)[0] + 1 #get the index of the neurons tht matches the category , +1 label starts from 1 
-
+    neuron_idx = np.where(labels == cate)[0] + 1 #get the index of the neurons tht matches the category , +1 label starts from 1 , list of rois in labels where category = cate 
     for i in neuron_idx:
         neuron_mask = ((masks == i) * 255).astype('int32') #create a binary mask for current neuron where pixels of the neuron marked True, 255 converts binary values (T/F), 8 bit image range 0-255
-        labeled_masks_img[:, :, 0] += neuron_mask # all neurons of specific category will be marked with red
-
+        if channel_color=='red':
+            labeled_masks_img[:, :, 0] += neuron_mask
+        elif channel_color=='green':
+            labeled_masks_img[:, :, 1] += neuron_mask
+        
+                                                       # all neurons of specific category will be marked with red, roi ids are added to the red channel
     return labeled_masks_img
+
 
 
 def read_fluos(ops):
@@ -185,16 +200,18 @@ def run(ops, diameter):
 
         print('Computing masks for uncorrected red channel')
         masks_anat = run_cellpose(ops, mean_anat, diameter) #red channel
-
+        print(f"mean_anat: {mean_anat}")
+        print(f"mean_func: {mean_func}")
         print('Computing labels for each ROI on uncorrected red channel')
-        labels = get_label(masks_anat, masks_func)
+        labels = get_label(masks_func, masks_anat)
 
         print('Computing labeled masks on uncorrected red channel')
-        labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1)
+        labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1, 'red')
         print (f'labeled_masks_img_orig: {labeled_masks_img_orig}')
 
         print('Computing unsure masks on uncorrected red channel')
-        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
+        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0, 'red')
+        
 
         # Fluorescence data
         fluo, fluo_chan2 = read_fluos(ops)
@@ -228,11 +245,12 @@ def run(ops, diameter):
 
         print('Computing labeled masks on corrected red channel')
         labeled_masks_img_corr = get_labeled_masks_img(
-            masks_anat_corrected, labels_corrected, 1)
+            masks_anat_corrected, labels_corrected, 1, 'red')
 
         print('Computing unsure masks on corrected red channel')
         unsure_masks_img_corr = get_labeled_masks_img(
-            masks_anat_corrected, labels_corrected, 0)
+            masks_anat_corrected, labels_corrected, 0, 'red')
+  
 
         print("Corrected number of ROIs: ", len(
             np.argwhere(masks_anat_corrected != 0)))
@@ -246,18 +264,20 @@ def run(ops, diameter):
         print('Running Cellpose on functional channel mean image')
         masks_func = run_cellpose(ops, mean_func, diameter) #green channel
 
-        print('Computing labels for each ROI on functional channel')
-        labels_func = get_label(masks_anat, masks_func)
-        print(f'Functional ROI labels: {labels_func}')
-        print(f'Unique functional ROI labels: {np.unique(labels_func)}')
+       # print('Computing labels for each ROI on functional channel')
+       # labels_func = get_label(max_func, masks_anat)
+       # print(f'Functional ROI labels: {labels_func}')
+        #print(f'Unique functional ROI labels: {np.unique(labels_func)}')
 
-        print('Computing labeled masks on functional channel')
-        labeled_masks_img_func = get_labeled_masks_img(masks_func, labels_func, 1)
-        print(f'labeled_masks_img_func: {labeled_masks_img_func}')
+        #print('Computing labeled masks on functional channel')
+        #labeled_masks_img_func = get_labeled_masks_img(masks_func, labels_func, 1, 'green')
+        #print(f'labeled_masks_img_func: {labeled_masks_img_func}')
 
-        print('Computing unsure masks on functional channel')
-        unsure_masks_img_func = get_labeled_masks_img(masks_func, labels_func, 0)
-
+       # print('Computing unsure masks on functional channel')
+       # unsure_masks_img_func = get_labeled_masks_img(masks_func, labels_func, 0, 'green')
+       # print(f'Unique unsure masks: {np.unique(unsure_masks_img_func)}')
+       # print(f'labeled_masks_img_func: {np.unique(labeled_masks_img_func)}')
+        
         # print(
         #     f"Unsure before: {len(np.argwhere(unsure_masks_img_orig != 0))}, Unsure after: {len(np.argwhere(unsure_masks_img_orig != 0))}")
 
@@ -279,12 +299,15 @@ def run(ops, diameter):
         common_neurons_comparison_image('Common', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                 labeled_masks_img_orig, labeled_masks_img_corr, None, None, True, mean_func)
         
-        func_channel_roi_image('Func', mean_func, masks_func, labeled_masks_img_func, unsure_masks_img_func, True)
+        plot_unsure_rois(mean_anat, mean_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr, mean_func)
 
-        yellow_combined_roi_plot(mean_anat, mean_anat_corrected, mean_func, masks_anat, masks_anat_corrected, labeled_masks_img_orig, labeled_masks_img_corr, unsure_masks_img_orig, unsure_masks_img_corr, labeled_masks_img_func, unsure_masks_img_func)
+        plot_combined_inhibitory_rois(mean_func, mean_anat, mean_anat_corrected, labeled_masks_img_orig, labeled_masks_img_corr)
 
+        plot_combined_excitatory_rois(mean_func, mean_anat, mean_anat_corrected, excitatory_masks_img_orig, excitatory_masks_img_corr)
 
-       
+        print(
+            f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')
+
         print(
             f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')
 
