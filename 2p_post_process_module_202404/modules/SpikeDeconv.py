@@ -162,7 +162,7 @@ def run(
     smoothed = denoise(spikes, kernel_size=(400),
                        std_dev=65, neurons=neurons)
 
-    spikes, threshold_val = threshold(spikes, threshold_num_stds)
+    _, threshold_val = threshold(spikes, threshold_num_stds)
     # smoothed = denoise(spikes, kernel_size=(1),
     #                    std_dev=1, neurons=neurons)
 

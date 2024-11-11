@@ -224,26 +224,34 @@ def plot_for_neuron_with_smoothed(timings, dff, spikes, convolved_spikes, neuron
 
 
 def plot_for_neuron_with_smoothed_interactive_multi_tau(
-    timings, dff, threshold_list, spikes_list, convolved_spikes_list, sta_list, neuron=5, tau_list=[1.25]
+    timings,
+    dff,
+    spikes_list,
+    convolved_spikes_list,
+    sta_list,
+    threshold_val=[],
+    neuron=5,
+    tau_list=[1.25]
 ):
     """
     Produces an interactive HTML figure with subplots for each tau value.
     Each row corresponds to a tau value and contains two subplots:
-    - Left column: Original DF/F, inferred spikes, and convolved (smoothed) spikes.
+    - Left column: Original DF/F, inferred spikes, convolved (smoothed) spikes, and threshold line.
     - Right column: The spike-triggered average (STA) for the corresponding tau.
 
-    The tau values are displayed as titles only on the left column subplots.
+    The tau values are displayed as annotations on the left side of each row.
 
     Args:
         timings (np.array): Array of time points.
         dff (np.array): DF/F data array.
-        threshold_val (np.array): Threshold values for neurons.
         spikes_list (list of np.array): List of spikes arrays for each tau.
             Each array should have shape (num_neurons, num_time_points).
         convolved_spikes_list (list of np.array): List of convolved spikes arrays for each tau.
             Each array should have shape (num_neurons, num_time_points).
         sta_list (list of np.array): List of STA arrays for each tau.
-            Each array is a 1D array representing the STA for the neuron.
+            Each array is a 2D array where each row is the STA for a neuron.
+        threshold_val (float or list): Threshold value(s) to plot as horizontal lines.
+            Can be a scalar or a list with the same length as tau_list.
         neuron (int): Index of the neuron to plot. Default is 5.
         tau_list (list of float): List of tau parameter values.
     """
@@ -255,19 +263,26 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
     assert len(sta_list) == len(
         tau_list), "The number of STA arrays must match the number of tau values"
 
+    # Ensure threshold_val is a list with the same length as tau_list
+    if isinstance(threshold_val, (int, float)):
+        threshold_vals = [threshold_val] * len(tau_list)
+    elif isinstance(threshold_val, (list, np.ndarray)):
+        assert len(threshold_val) == len(
+            tau_list), "threshold_val must have same length as tau_list"
+        threshold_vals = threshold_val
+    else:
+        raise ValueError("threshold_val must be a scalar or a list/array")
+
     # Prepare figure with subplots
     num_taus = len(tau_list)
-    titles = [item for item in tau_list for _ in range(2)]
-
     fig = make_subplots(
         rows=num_taus, cols=2, shared_xaxes=False, vertical_spacing=0.05, horizontal_spacing=0.05,
-        # Set subplot titles only for the left column
-        subplot_titles=[f'Tau = {tau}' for tau in titles],
         specs=[[{"type": "xy"}, {"type": "xy"}] for _ in range(num_taus)]
     )
 
     # Extract neuron data
     dff_neuron = dff[neuron, :]
+    timings_neuron = timings
 
     # For scaling, compute max values
     dff_max = np.max(dff_neuron)
@@ -277,16 +292,17 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
     showlegend_sta = True
 
     # For each tau and its corresponding spikes, convolved spikes, and STA, plot
-    for i, (tau, spikes, convolved_spikes, sta) in enumerate(zip(tau_list, spikes_list, convolved_spikes_list, sta_list)):
+    for i, (tau, spikes, convolved_spikes, sta, threshold) in enumerate(zip(
+            tau_list, spikes_list, convolved_spikes_list, sta_list, threshold_vals)):
         spikes_neuron = spikes[neuron, :]
         convolved_spikes_neuron = convolved_spikes[neuron, :]
 
         # Determine the shift due to potential different lengths between timings and spikes
-        shift = len(timings) - len(spikes_neuron)
+        shift = len(timings_neuron) - len(spikes_neuron)
 
         # Adjust timings and signals based on shift
-        timings_plot = timings[shift:]
-        dff_neuron_shifted = dff_neuron
+        timings_plot = timings_neuron[shift:]
+        dff_neuron_shifted = dff_neuron[shift:]
         spikes_neuron_shifted = spikes_neuron
         convolved_spikes_neuron_shifted = convolved_spikes_neuron
 
@@ -302,7 +318,9 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
             convolved_scale_factor = dff_max / convolved_max
         convolved_scaled = convolved_spikes_neuron_shifted * convolved_scale_factor
 
-        sta_neuron = sta[neuron, :]
+        # STA for the neuron
+        sta_neuron = sta[neuron, :] if sta is not None else None
+
         # Plot in subplot (row=i+1, col=1) - Main signals
         # Plot DF/F
         fig.add_trace(
@@ -332,6 +350,19 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
                 x=timings_plot, y=convolved_scaled,
                 mode='lines', name='Convolved Spikes',
                 line=dict(color='red'),
+                showlegend=showlegend_main
+            ),
+            row=i+1, col=1
+        )
+
+        # Plot threshold value as horizontal line
+        fig.add_trace(
+            go.Scatter(
+                x=[timings_plot[0], timings_plot[-1]],
+                y=[threshold, threshold],
+                mode='lines',
+                name='Threshold',
+                line=dict(color='purple'),
                 showlegend=showlegend_main
             ),
             row=i+1, col=1

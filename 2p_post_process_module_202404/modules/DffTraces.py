@@ -30,8 +30,9 @@ def get_dff(
                 (np.std(dff[j, :]) + 1e-5)
     return dff
 
-
 # save results
+
+
 def save(ops, name, data):
     f = h5py.File(os.path.join(ops['save_path0'], 'dff.h5'), 'w')
     f['name'] = data
@@ -44,7 +45,7 @@ def run(
         ops,
         norm=True,
         plotting_neurons=[5],
-        taus=[0.01, 0.03, 0.10, 0.40, 1.00, 4.00],
+        taus=[0.06, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2.0, 5],
         plot_with_smoothed=False,
         plot_with_smoothed_group=True,
         plot_without_smoothed=False):
@@ -87,18 +88,24 @@ def run(
             convolved_list.append(smoothed)
             thresh_list.append(threshold_val)
 
-        stas = analyze_spike_traces(ops, dff, tau_spike_dict,
-                                    neurons=np.arange(dff.shape[0] // 10))
+        _, spike_stas, dff_stas = analyze_spike_traces(ops, dff, tau_spike_dict,
+                                                       neurons=np.arange(dff.shape[0] // 10))
+
+        # dff_stas = res_df['sta_dff']
+        # spike_stas = res_df['sta_spikes']
+        # print('here')
+        # print(spike_stas)
+        # print(len(spike_stas[0]))
 
         if plot_with_smoothed_group:
             for neuron in plotting_neurons:
                 plot_for_neuron_with_smoothed_interactive_multi_tau(
                     timings=uptime,
                     dff=dff,
-                    threshold_list=thresh_list,
                     spikes_list=spikes_list,
                     convolved_spikes_list=convolved_list,
-                    sta_list=stas,
+                    sta_list=dff_stas,
+                    threshold_val=thresh_list,
                     neuron=neuron,
                     tau_list=taus)
 
@@ -106,7 +113,7 @@ def run(
         # if we just specify one tau value
         tau = taus[0]
         neurons = np.arange(dff.shape[0])
-        smoothed, spikes = SpikeDeconv.run(
+        smoothed, spikes, _, _ = SpikeDeconv.run(
             ops,
             dff,
             oasis_tau=tau,

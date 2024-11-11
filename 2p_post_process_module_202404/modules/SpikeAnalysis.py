@@ -77,6 +77,69 @@ def compute_statistics(spikes):
     return stats
 
 
+def compute_sta(spikes_neuron, dff_neuron, pre_spike_window=200, post_spike_window=600):
+    """
+    Compute the spike-triggered averages (STAs) for a single neuron on both the DF/F data and the inferred spike traces,
+    including only spikes where the quadratic variation around the spike is greater than the average quadratic variation.
+
+    Args:
+        spikes_neuron (np.array): Spike train of the neuron.
+        dff_neuron (np.array): DF/F data of the neuron.
+        pre_spike_window (int): Number of time points before the spike.
+        post_spike_window (int): Number of time points after the spike.
+
+    Returns:
+        dict or None: A dictionary containing the STAs for both DF/F and spikes, or None if STA cannot be computed.
+    """
+    spike_indices = np.where(spikes_neuron > 0)[0]
+
+    dff_windows = []
+    spike_windows = []
+    quadratic_variations = []
+
+    # First pass: collect windows and compute quadratic variations
+    for spike_time in spike_indices:
+        # Ensure indices are within bounds
+        if (spike_time - pre_spike_window >= 0) and (spike_time + post_spike_window < len(dff_neuron)):
+            dff_window = dff_neuron[spike_time -
+                                    pre_spike_window: spike_time + post_spike_window]
+            spike_window = spikes_neuron[spike_time -
+                                         pre_spike_window: spike_time + post_spike_window]
+
+            # Compute quadratic variation of the dff_window
+            diffs = np.diff(dff_window)
+            quadratic_variation = np.sum(diffs ** 2)
+            quadratic_variations.append(quadratic_variation)
+
+            # Store the windows
+            dff_windows.append(dff_window)
+            spike_windows.append(spike_window)
+
+    if len(quadratic_variations) > 0:
+        # Compute average quadratic variation
+        avg_quadratic_variation = np.mean(quadratic_variations)
+        std_quadratic_variation = np.std(quadratic_variations)
+        qv_thresh = avg_quadratic_variation + 2 * std_quadratic_variation
+
+        # Second pass: filter windows with quadratic variation greater than the average
+        filtered_dff_windows = []
+        filtered_spike_windows = []
+        for i, qv in enumerate(quadratic_variations):
+            if qv > qv_thresh:
+                filtered_dff_windows.append(dff_windows[i])
+                filtered_spike_windows.append(spike_windows[i])
+
+        if len(filtered_dff_windows) > 0:
+            # Compute the STAs by averaging the filtered windows
+            sta_dff = np.mean(filtered_dff_windows, axis=0)
+            sta_spikes = np.mean(filtered_spike_windows, axis=0)
+            return {'sta_dff': sta_dff, 'sta_spikes': sta_spikes}
+        else:
+            return None  # No windows with quadratic variation greater than average
+    else:
+        return None  # No spikes, so STAs cannot be computed
+
+
 def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333):
     """
     Analyze spike traces for different tau values and save results to a CSV file.
@@ -91,18 +154,19 @@ def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333
     results = []
 
     # Define the window size for STA computation
-    pre_spike_window = 200   # Number of time points before the spike
-    post_spike_window = 600  # Number of time points after the spike
+    pre_spike_window = 100   # Number of time points before the spike
+    post_spike_window = 300  # Number of time points after the spike
 
-    stas = []
+    spike_stas = []
+    dff_stas = []
     for tau in tau_spike_dict.keys():
         print(f'Analyzing spikes for tau = {tau}')
         # Get the spikes for the current tau
         spikes = tau_spike_dict[tau]
-
+        neuron_spike_stas = []
+        neuron_dff_stas = []
         # Compute statistics for the spikes
         stats = compute_statistics(spikes)
-        stas_per_neuron = []
         # Store results with corresponding tau
         for i, neuron in enumerate(neurons):
             result = {
@@ -116,31 +180,29 @@ def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333
                 'total_spikes': stats['total_spikes'][neuron]
             }
 
-            # Compute the spike-triggered average (STA)
+            # Compute the spike-triggered averages (STAs)
             spikes_neuron = spikes[neuron, :]
             dff_neuron = dff[neuron, :]
 
-            spike_indices = np.where(spikes_neuron > 0)[0]
+            sta_result = compute_sta(
+                spikes_neuron, dff_neuron, pre_spike_window, post_spike_window)
 
-            windows = []
-            for spike_time in spike_indices:
-                # Ensure indices are within bounds
-                if (spike_time - pre_spike_window >= 0) and (spike_time + post_spike_window < len(dff_neuron)):
-                    window = dff_neuron[spike_time -
-                                        pre_spike_window: spike_time + post_spike_window]
-                    windows.append(window)
-
-            if len(windows) > 0:
-                # Compute the STA by averaging the windows
-                sta = np.mean(windows, axis=0)
-                stas_per_neuron.append(sta)
+            if sta_result is not None:
                 # Convert to list for serialization
-                result['sta'] = sta.tolist()
+                result['sta_dff'] = sta_result['sta_dff'].tolist()
+                result['sta_spikes'] = sta_result['sta_spikes'].tolist()
             else:
-                result['sta'] = None  # No spikes, so STA cannot be computed
+                # No spikes, so STAs cannot be computed
+                result['sta_dff'] = None
+                result['sta_spikes'] = None
 
             results.append(result)
-        stas.append(np.array(stas_per_neuron))
+
+            neuron_spike_stas.append(sta_result['sta_spikes'])
+            neuron_dff_stas.append(sta_result['sta_dff'])
+        spike_stas.append(neuron_spike_stas)
+        dff_stas.append(neuron_dff_stas)
+
     # Convert results to DataFrame
     df_n = pd.DataFrame(results)
     df_agg = aggregate_statistics(df_n, n)
@@ -151,4 +213,5 @@ def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333
     # Save aggregated results across neurons for each tau to a CSV
     df_agg.to_csv('aggregated_analysis_results.csv', index=False)
     print('Spike analysis results saved to spike_analysis_results.csv')
-    return stas
+
+    return df_n, np.array(spike_stas), np.array(dff_stas)
