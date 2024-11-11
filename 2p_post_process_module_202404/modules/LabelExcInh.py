@@ -208,10 +208,11 @@ def run(ops, diameter):
         print('Computing labeled masks on uncorrected red channel')
         labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1, 'red')
         print (f'labeled_masks_img_orig: {labeled_masks_img_orig}')
+        print('Computing inhibitory masks on uncorrected red channel')
+        labeled_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 1)
 
         print('Computing unsure masks on uncorrected red channel')
-        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0, 'red')
-        
+        unsure_masks_img_orig = get_labeled_masks_img(masks_anat, labels, 0)
 
         # Fluorescence data
         fluo, fluo_chan2 = read_fluos(ops)
@@ -251,6 +252,10 @@ def run(ops, diameter):
         unsure_masks_img_corr = get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 0, 'red')
   
+
+        print('Computing excitory masks on corrected red channel')
+        excitory_masks_img_corr = get_labeled_masks_img(
+            masks_anat_corrected, labels_corrected, -1)
 
         print("Corrected number of ROIs: ", len(
             np.argwhere(masks_anat_corrected != 0)))

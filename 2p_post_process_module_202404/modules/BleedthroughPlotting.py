@@ -225,7 +225,7 @@ def identify_new_neurons(masks_anat, masks_anat_corrected):
         neuron_mask = (labeled_anat_corrected == i)
 
         # Check if any pixels overlap in the uncorrected mask
-        overlap = np.any(neuron_mask & (labeled_anat > 0))
+        overlap = np.any(neuron_mask & (labeled_anat != 0))
 
         # If there is no overlap, it means this neuron is new after correction
         if not overlap:
