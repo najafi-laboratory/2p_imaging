@@ -299,11 +299,14 @@ def run(ops, diameter):
         common_neurons_comparison_image('Common', labels, labels_corrected, mean_anat, mean_anat_corrected, masks_anat, masks_anat_corrected,
                                 labeled_masks_img_orig, labeled_masks_img_corr, None, None, True, mean_func)
         
-        plot_unsure_rois(mean_anat, mean_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr, mean_func)
+       # plot_unsure_rois(mean_anat, mean_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr, mean_func)
+        plot_combined_unsure_neurons(mean_func, mean_anat, mean_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr)
 
         plot_combined_inhibitory_rois(mean_func, mean_anat, mean_anat_corrected, labeled_masks_img_orig, labeled_masks_img_corr)
 
-        plot_combined_excitatory_rois(mean_func, mean_anat, mean_anat_corrected, excitatory_masks_img_orig, excitatory_masks_img_corr)
+       # plot_combined_excitatory_rois(mean_func, mean_anat, mean_anat_corrected, excitatory_masks_img_orig, excitatory_masks_img_corr)
+        
+        
 
         print(
             f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')
