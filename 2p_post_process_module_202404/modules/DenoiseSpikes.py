@@ -57,6 +57,30 @@ def asymmetric_exp(x, tau_rise, tau_decay):
     return y
 
 
+def exponential_moving_average(data, alpha=0.1):
+    """
+    Smooths data using an exponential moving average.
+
+    Args:
+        data (np.array): The input data to be smoothed.
+        alpha (float): Smoothing factor, between 0 and 1.
+                       Higher values mean less smoothing.
+
+    Returns:
+        np.array: Smoothed data.
+    """
+    smoothed = np.zeros_like(data)
+    smoothed[0] = data[0]
+    for t in range(1, len(data)):
+        smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
+    return smoothed
+
+
+# Usage in your denoising routine:
+smoothed_spikes = exponential_moving_average(
+    spikes, alpha=0.2)  # adjust alpha as needed
+
+
 def denoise(spikes, kernel_size=1000, std_dev=1, neurons=None):
     """
     Denoise the spikes using a half-Gaussian kernel.

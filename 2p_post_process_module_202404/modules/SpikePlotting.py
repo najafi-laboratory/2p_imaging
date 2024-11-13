@@ -276,7 +276,7 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
     # Prepare figure with subplots
     num_taus = len(tau_list)
     fig = make_subplots(
-        rows=num_taus, cols=2, shared_xaxes=False, vertical_spacing=0.05, horizontal_spacing=0.05,
+        rows=num_taus, cols=2, shared_xaxes=True, vertical_spacing=0.05, horizontal_spacing=0.05,
         specs=[[{"type": "xy"}, {"type": "xy"}] for _ in range(num_taus)]
     )
 
@@ -358,12 +358,15 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
         # Plot threshold value as horizontal line
         fig.add_trace(
             go.Scatter(
+                # Use the range of timings
                 x=[timings_plot[0], timings_plot[-1]],
+                # Same threshold value for both y points
                 y=[threshold, threshold],
                 mode='lines',
                 name='Threshold',
-                line=dict(color='purple'),
-                showlegend=showlegend_main
+                # Added dash style to make it more noticeable
+                line=dict(color='purple', dash='dash'),
+                showlegend=True  # Ensure this is set to True
             ),
             row=i+1, col=1
         )

@@ -1,3 +1,4 @@
+from sklearn.metrics import mean_squared_error
 import numpy as np
 import matplotlib.pyplot as plt
 from suite2p.extraction.dcnv import oasis
@@ -8,8 +9,12 @@ import plotly.graph_objs as go
 from plotly.offline import plot
 import plotly.graph_objs as go
 from plotly.subplots import make_subplots
+from sklearn.metrics import mean_absolute_error
+from skopt import gp_minimize
+from skopt.space import Integer, Real
+from skopt.utils import use_named_args
 
-from .convolution import denoise
+from .DenoiseSpikes import denoise
 from .SpikePlotting import *
 
 
@@ -135,6 +140,84 @@ def threshold(data, num_stds):
     return data * threshold_mask, threshold_val
 
 
+# def optimize_denoise_parameters(dff, spikes, neurons, kernel_size_range, std_dev_range):
+#     """
+#     Finds the optimal kernel size and standard deviation for the denoise function
+#     by minimizing the MSE between the smoothed data and the original DF/F data.
+
+#     Args:
+#         dff (np.array): DF/F data array.
+#         spikes (np.array): Detected spikes array.
+#         neurons (np.array): Array of neuron indices to optimize for.
+#         kernel_size_range (list): Range of kernel sizes to test.
+#         std_dev_range (list): Range of standard deviations to test.
+
+#     Returns:
+#         tuple: Optimal kernel size and standard deviation.
+#     """
+#     best_mse = float("inf")
+#     best_params = (None, None)
+
+#     for kernel_size in kernel_size_range:
+#         for std_dev in std_dev_range:
+#             # Run the denoise function with the current parameters
+#             smoothed = denoise(spikes, kernel_size=kernel_size,
+#                                std_dev=std_dev, neurons=neurons)
+
+#             # Calculate the MSE for the neurons
+#             mse = mean_absolute_error(dff[:, neurons], smoothed[:, neurons])
+
+#             # Update best parameters if the current MAE is lower
+#             if mse < best_mse:
+#                 best_mse = mse
+#                 best_params = (kernel_size, std_dev)
+
+#     return best_params
+
+# Objective function to minimize
+def optimize_denoise_parameters(dff, spikes, neurons):
+    """
+    Optimizes denoising parameters using Bayesian optimization.
+
+    Args:
+        dff (np.array): DF/F data array.
+        spikes (np.array): Detected spikes array.
+        neurons (np.array): Array of neuron indices to optimize for.
+
+    Returns:
+        tuple: Optimal kernel size and standard deviation.
+    """
+    # Define parameter search space
+    space = [
+        # Adjust range based on expected values
+        Integer(10, 300, name='kernel_size'),
+        # Adjust range based on expected values
+        Real(0.1, 5.0, name='std_dev')
+    ]
+
+    # Objective function to minimize MSE between smoothed spikes and dff
+    @use_named_args(space)
+    def objective(kernel_size, std_dev):
+        smoothed = denoise(spikes, kernel_size=kernel_size,
+                           std_dev=std_dev, neurons=neurons)
+        mse = mean_absolute_error(dff[:, neurons], smoothed[:, neurons])
+        return mse
+
+    # Perform Bayesian optimization
+    result = gp_minimize(
+        func=objective,
+        dimensions=space,
+        # Number of function calls (iterations of search)
+        n_calls=20,
+        random_state=0
+    )
+
+    # Extract best parameters
+    best_kernel_size = result.x[0]
+    best_std_dev = result.x[1]
+    return best_kernel_size, best_std_dev
+
+
 def run(
         ops,
         dff,
@@ -156,17 +239,20 @@ def run(
     spikes = spike_detect(ops, dff, tau=oasis_tau)
     uptime, _ = get_trigger_time(vol_time, vol_img)
 
-    # smoothing
-    # smoothed = denoise(spikes, kernel_size=(400),
-    #                    std_dev=np.exp(-20 / oasis_tau), neurons=neurons)
-    smoothed = denoise(spikes, kernel_size=(400),
-                       std_dev=65, neurons=neurons)
+    # Optimize denoising parameters
+    kernel_size_range = range(50, 500, 50)  # Example range for kernel size
+    # Example range for standard deviation
+    std_dev_range = range(50, 80, 5)
+    best_kernel_size, best_std_dev = optimize_denoise_parameters(
+        dff, spikes, neurons, kernel_size_range, std_dev_range)
+
+    # Apply denoise with the best parameters
+    smoothed = denoise(spikes, kernel_size=best_kernel_size,
+                       std_dev=best_std_dev, neurons=neurons)
 
     _, threshold_val = threshold(spikes, threshold_num_stds)
-    # smoothed = denoise(spikes, kernel_size=(1),
-    #                    std_dev=1, neurons=neurons)
 
-    # plot for certain neurons
+    # Plot for certain neurons
     if plot_without_smoothed or plot_with_smoothed:
         for i in plotting_neurons:
             if plot_with_smoothed:

@@ -96,7 +96,7 @@ def run(
         # print('here')
         # print(spike_stas)
         # print(len(spike_stas[0]))
-
+        print(thresh_list)
         if plot_with_smoothed_group:
             for neuron in plotting_neurons:
                 plot_for_neuron_with_smoothed_interactive_multi_tau(
