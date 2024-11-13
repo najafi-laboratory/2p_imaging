@@ -132,11 +132,11 @@ def threshold(data, num_stds):
         np.array: thresholded data
     """
     # center the data
-    data_centered = data - np.mean(data, axis=-1, keepdims=True)
+    # data_centered = data - np.mean(data, axis=-1, keepdims=True)
     stds = np.std(data, axis=-1, keepdims=True)
 
-    threshold_val = num_stds * stds
-    threshold_mask = data_centered >= threshold_val
+    threshold_val = num_stds * stds + np.mean(data, axis=-1, keepdims=True)
+    threshold_mask = data >= threshold_val
     return data * threshold_mask, threshold_val
 
 
@@ -243,12 +243,12 @@ def run(
     kernel_size_range = range(50, 500, 50)  # Example range for kernel size
     # Example range for standard deviation
     std_dev_range = range(50, 80, 5)
-    best_kernel_size, best_std_dev = optimize_denoise_parameters(
-        dff, spikes, neurons, kernel_size_range, std_dev_range)
+    # best_kernel_size, best_std_dev = optimize_denoise_parameters(
+    #     dff, spikes, neurons)
 
     # Apply denoise with the best parameters
-    smoothed = denoise(spikes, kernel_size=best_kernel_size,
-                       std_dev=best_std_dev, neurons=neurons)
+    smoothed = denoise(spikes, kernel_size=400,
+                       std_dev=65, neurons=neurons)
 
     _, threshold_val = threshold(spikes, threshold_num_stds)
 
@@ -257,9 +257,9 @@ def run(
         for i in plotting_neurons:
             if plot_with_smoothed:
                 plot_for_neuron_with_smoothed_interactive(timings=uptime, dff=dff, spikes=spikes,
-                                                          convolved_spikes=smoothed, neuron=i, tau=oasis_tau, threshold_val=threshold_val)
+                                                          convolved_spikes=smoothed, neuron=i, tau=oasis_tau)
             if plot_without_smoothed:
                 plot_for_neuron_without_smoothed_interactive(
-                    timings=uptime, dff=dff, spikes=spikes, neuron=i, tau=oasis_tau, threshold_val=threshold_val)
+                    timings=uptime, dff=dff, spikes=spikes, neuron=i, tau=oasis_tau)
 
     return smoothed, spikes, uptime, threshold_val

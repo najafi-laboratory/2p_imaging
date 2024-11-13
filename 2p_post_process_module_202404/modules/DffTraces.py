@@ -91,12 +91,6 @@ def run(
         _, spike_stas, dff_stas = analyze_spike_traces(ops, dff, tau_spike_dict,
                                                        neurons=np.arange(dff.shape[0] // 10))
 
-        # dff_stas = res_df['sta_dff']
-        # spike_stas = res_df['sta_spikes']
-        # print('here')
-        # print(spike_stas)
-        # print(len(spike_stas[0]))
-        print(thresh_list)
         if plot_with_smoothed_group:
             for neuron in plotting_neurons:
                 plot_for_neuron_with_smoothed_interactive_multi_tau(

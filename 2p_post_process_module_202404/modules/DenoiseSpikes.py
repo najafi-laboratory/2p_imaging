@@ -76,11 +76,6 @@ def exponential_moving_average(data, alpha=0.1):
     return smoothed
 
 
-# Usage in your denoising routine:
-smoothed_spikes = exponential_moving_average(
-    spikes, alpha=0.2)  # adjust alpha as needed
-
-
 def denoise(spikes, kernel_size=1000, std_dev=1, neurons=None):
     """
     Denoise the spikes using a half-Gaussian kernel.
