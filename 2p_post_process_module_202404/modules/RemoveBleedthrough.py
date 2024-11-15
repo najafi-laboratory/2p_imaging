@@ -50,12 +50,9 @@ def correct_bleedthrough(Ly, Lx, nblks, mimg, mimg2):
     Returns:
     - mimg2_corrected (numpy.ndarray): Corrected mean image of the second channel.
     """
-    # Compute the sigma for the Gaussian filter
     sT = np.round((Ly + Lx) / (nblks * 2) * 0.25)
-    # Initialize the mask and weights arrays
     mask = np.zeros((Ly, Lx, nblks, nblks), dtype=np.float32)
     weights = np.zeros((nblks, nblks), dtype=np.float32)
-    # Compute block boundaries
     yb = np.linspace(0, Ly, nblks + 1).astype(int)
     xb = np.linspace(0, Lx, nblks + 1).astype(int)
 

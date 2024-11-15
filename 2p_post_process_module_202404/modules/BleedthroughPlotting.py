@@ -8,14 +8,11 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 from skimage.segmentation import find_boundaries
 from sklearn.linear_model import LinearRegression
-from skimage.morphology import dilation, square
 from scipy.ndimage import label
 import matplotlib.patches as mpatches
 import matplotlib.colors as mcolors
 
 from .RemoveBleedthrough import *
-from .LabelExcInh import *
-from skimage.measure import regionprops
 
 
 def identify_removed_neurons(masks_anat, masks_anat_corrected):
@@ -130,8 +127,8 @@ def prep_img(mean_anat, mean_func=None):
     Returns:
     - img (numpy.ndarray): Composite RGB image.
     """
-    img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32') #new numpy array named img is created filled with 0 
-    img[:, :, 0] = adjust_contrast(mean_anat) #assigning red channel to the mean anatomical image data, : , then adjust contrast image 
+    img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
+    img[:, :, 0] = adjust_contrast(mean_anat)
     if mean_func is not None:
         img[:, :, 1] = adjust_contrast(mean_func)
 
@@ -208,9 +205,9 @@ def anat(ax, mean_anat, masks=None, labeled_masks_img=None, unsure_masks_img=Non
     - title (str, optional): The title of the plot.
     """
     anat_img = np.zeros(
-        (mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32') #new numpy array named anat_img is created filled with 0 with shape of mean_anat
-    anat_img[:, :, 0] = adjust_contrast(mean_anat) #assigning red channel to the mean anatomical image data, : , then adjust contrast image
-    anat_img = adjust_contrast(anat_img) #adjust contrast of the image
+        (mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
+    anat_img[:, :, 0] = adjust_contrast(mean_anat)
+    anat_img = adjust_contrast(anat_img)
 
     iter_lst = []
 
@@ -288,7 +285,7 @@ def main_channel_comparison_image(comp_mask_type, labels, labels_corrected,
     - with_mask (bool, optional): Whether to include mask boundaries.
     - mean_func (numpy.ndarray, optional): Mean functional image data.
 
-    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+    This function generates a figure comparing the original and corrected anatomical images, including masks.
     """
     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
     anat(ax[0], mean_anat, masks_anat, labeled_masks_img_orig,
@@ -330,8 +327,6 @@ def removed_neurons_comparison_image(comp_mask_type, labels, labels_corrected,
     # Identify removed neurons
     removed_neurons = list(identify_removed_neurons(
         masks_anat, masks_anat_corrected))
-    
-    print(f'Total number of removed neurons: {len(removed_neurons)}')
     # Isolate removed neurons
     removed_neurons_mask = isolate_neurons(masks_anat, removed_neurons)
 
