@@ -120,7 +120,7 @@ def spike_detect(ops, dff, tau=1.25):
     return spikes
 
 
-def threshold(data, num_stds):
+def threshold(data, threshold_num_stds, const_threshold=None):
     """Threshold off spikes below a certain hard threshold. This threshold is
     computed as a certain number of standard deviations from the mean.
 
@@ -133,10 +133,17 @@ def threshold(data, num_stds):
     """
     # center the data
     # data_centered = data - np.mean(data, axis=-1, keepdims=True)
-    stds = np.std(data, axis=-1, keepdims=True)
+    threshold_val = None
 
-    threshold_val = num_stds * stds + np.mean(data, axis=-1, keepdims=True)
+    if const_threshold is None:
+        stds = np.std(data, axis=-1, keepdims=True)
+
+        threshold_val = num_stds * stds + np.mean(data, axis=-1, keepdims=True)
+    else:
+        threshold_val = const_threshold
+
     threshold_mask = data >= threshold_val
+
     return data * threshold_mask, threshold_val
 
 
@@ -250,7 +257,8 @@ def run(
     smoothed = denoise(spikes, kernel_size=400,
                        std_dev=65, neurons=neurons)
 
-    _, threshold_val = threshold(spikes, threshold_num_stds)
+    _, threshold_val = threshold(
+        spikes, threshold_num_stds=None, const_threshold=2.0)
 
     # Plot for certain neurons
     if plot_without_smoothed or plot_with_smoothed:

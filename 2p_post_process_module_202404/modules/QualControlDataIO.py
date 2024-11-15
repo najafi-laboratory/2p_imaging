@@ -138,7 +138,12 @@ def save_move_offset(ops):
 
 def run(
         ops,
-        range_skew, max_connect, max_aspect, range_compact, range_footprint, stat_file_names,
+        range_skew,
+        max_connect,
+        max_aspect,
+        range_compact,
+        range_footprint,
+        stat_file_names,
         run_qc=True
 ):
     print('===============================================')

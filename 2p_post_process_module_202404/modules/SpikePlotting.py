@@ -394,14 +394,6 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
         spikes_scale_factor = dff_max / 2
         spikes_scaled = spikes_neuron_shifted * spikes_scale_factor
 
-        # Scale convolved spikes to match amplitude of dff
-        # convolved_max = np.max(convolved_spikes_neuron_shifted)
-        # if convolved_max == 0:
-        #     convolved_scale_factor = 0
-        # else:
-        #     convolved_scale_factor = dff_max / convolved_max
-        # convolved_scaled = convolved_spikes_neuron_shifted * convolved_scale_factor
-
         # STA for the neuron
         sta_neuron = sta[neuron, :] if sta is not None else None
 
@@ -430,31 +422,13 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
             row=i+1, col=1
         )
 
-        # Plot convolved spikes (scaled)
-        # fig.add_trace(
-        #     go.Scatter(
-        #         x=timings_plot, y=convolved_scaled,
-        #         mode='lines', name='Convolved Spikes',
-        #         line=dict(color='red'),
-        #         showlegend=showlegend_main
-        #     ),
-        #     row=i+1, col=1
-        # )
+        try:
+            fig.add_hline(y=threshold[neuron][0], line_dash='dash',
+                          line_color='red', row=i+1, col=1)
 
-        # Plot threshold value as horizontal line
-        # fig.add_trace(
-        #     go.Scatter(
-        #         x=[timings_plot[0], timings_plot[-1]],
-        #         y=[threshold, threshold],
-        #         mode='lines',
-        #         name='Threshold',
-        #         line=dict(color='purple', dash='dash'),
-        #         showlegend=showlegend_main
-        #     ),
-        #     row=i+1, col=1
-        # )
-        print(threshold[neuron][0])
-        fig.add_hline(y=threshold[neuron][0], line_dash='dash', line_color='red', row=i+1, col=1)
+        except:
+            fig.add_hline(y=threshold, line_dash='dash',
+                          line_color='red', row=i+1, col=1)
 
         # fig.add_hline(y=threshold, line=dict(color='purple',
         #               dash='dash'), annotation='Spike Threshold')
