@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+
 import h5py
 import tifffile
 import numpy as np
@@ -12,17 +13,21 @@ from skimage.segmentation import find_boundaries
 from sklearn.linear_model import LinearRegression
 import matplotlib.colors as mcolors
 
-
 from .RemoveBleedthrough import *
 from .BleedthroughPlotting import *
 
-# Z-score normalization
-
 
 def normz(data):
-    return (data - np.mean(data)) / (np.std(data) + 1e-5)
+    """
+    Performs Z-score normalization on the input data.
 
-# Run Cellpose for cell detection and save results
+    Parameters:
+    - data (numpy.ndarray): Input data to normalize.
+
+    Returns:
+    - numpy.ndarray: Z-score normalized data.
+    """
+    return (data - np.mean(data)) / (np.std(data) + 1e-5)
 
 
 def run_cellpose(ops, mean_anat, diameter, flow_threshold=0.5): 
@@ -42,24 +47,40 @@ def run_cellpose(ops, mean_anat, diameter, flow_threshold=0.5):
 
     model = models.Cellpose(model_type="cyto3")
     masks_anat, flows, styles, diams = model.eval(
-        mean_anat, diameter=diameter, flow_threshold=flow_threshold)
+        mean_anat, diameter=diameter, flow_threshold=flow_threshold
+    )
 
     io.masks_flows_to_seg(
         images=mean_anat,
         masks=masks_anat,
         flows=flows,
         file_names=os.path.join(save_dir, 'mean_anat'),
-        diams=diameter
+        diams=diameter,
     )
 
     return masks_anat
 
-# Read and cut masks in ops
-
 
 def get_mask(ops, mean_anat_corr=None):
-    masks_npy = np.load(os.path.join(
-        ops['save_path0'], 'qc_results', 'masks.npy'), allow_pickle=True)
+    """
+    Reads and extracts masks and images from the ops dictionary.
+
+    Parameters:
+    - ops (dict): Dictionary containing operation parameters.
+    - mean_anat_corr (numpy.ndarray, optional): Corrected mean anatomical image.
+
+    Returns:
+    - If mean_anat_corr is provided:
+        - numpy.ndarray: Cropped corrected mean anatomical image.
+    - If mean_anat_corr is None:
+        - masks_func (numpy.ndarray): Functional masks.
+        - mean_func (numpy.ndarray): Mean functional image.
+        - max_func (numpy.ndarray): Maximum projection functional image.
+        - mean_anat (numpy.ndarray or None): Mean anatomical image if available, else None.
+    """
+    masks_npy = np.load(
+        os.path.join(ops['save_path0'], 'qc_results', 'masks.npy'), allow_pickle=True
+    )
     x1, x2 = ops['xrange']
     y1, y2 = ops['yrange']
 
@@ -67,17 +88,16 @@ def get_mask(ops, mean_anat_corr=None):
     mean_func = ops['meanImg'][y1:y2, x1:x2]
     max_func = ops['max_proj']
 
-    mean_anat = ops['meanImg_chan2'][y1:y2,
-                                     x1:x2] if ops['nchannels'] == 2 else None
+    mean_anat = (
+        ops['meanImg_chan2'][y1:y2, x1:x2] if ops['nchannels'] == 2 else None
+    )
     if mean_anat_corr is not None:
-        mean_anat_corr = mean_anat_corr[y1:y2,
-                                        x1:x2] if ops['nchannels'] == 2 else None
-
+        mean_anat_corr = (
+            mean_anat_corr[y1:y2, x1:x2] if ops['nchannels'] == 2 else None
+        )
         return mean_anat_corr
 
     return masks_func, mean_func, max_func, mean_anat
-
-# Compute overlapping to get labels
 
 
 def get_label(masks_func, masks_anat, thres1=0.3, thres2=0.5): # asign labels to rois 
@@ -138,8 +158,6 @@ def save_masks(ops, masks_func, masks_anat, masks_anat_corrected, mean_func, max
             f['masks_anat_corrected'] = masks_anat_corrected
             f['meanImg_chan2_corrected'] = mean_anat_corrected
 
-# Label images with yellow and green
-
 
 def get_labeled_masks_img(masks, labels, cate, channel_color):
     """
@@ -161,22 +179,48 @@ def get_labeled_masks_img(masks, labels, cate, channel_color):
 
 
 def read_fluos(ops):
+    """
+    Reads fluorescence data from the qc_results directory.
+
+    Parameters:
+    - ops (dict): Dictionary containing operation parameters.
+
+    Returns:
+    - fluo (numpy.ndarray): Fluorescence data for the first channel.
+    - fluo_chan2 (numpy.ndarray): Fluorescence data for the second channel.
+    """
     path = ops['save_path0']
 
-    fluo = np.load(os.path.join(path, 'qc_results',
-                   'fluo.npy'), allow_pickle=True)
+    fluo = np.load(
+        os.path.join(path, 'qc_results', 'fluo.npy'), allow_pickle=True
+    )
     print("fluo shape: ", fluo.shape)
 
-    fluo_chan2 = np.load(os.path.join(path, 'qc_results',
-                         'fluo_chan2.npy'), allow_pickle=True)
+    fluo_chan2 = np.load(
+        os.path.join(path, 'qc_results', 'fluo_chan2.npy'), allow_pickle=True
+    )
     print("fluo chan2 shape: ", fluo_chan2.shape)
 
     return fluo, fluo_chan2
 
-# Main function to run the workflow
-
 
 def run(ops, diameter):
+    """
+    Main function to run the two-channel data ROI identification workflow.
+
+    Parameters:
+    - ops (dict): Dictionary containing operation parameters.
+    - diameter (float): Diameter of cells for Cellpose.
+
+    This function performs the following steps:
+    - Reads masks and images.
+    - Runs Cellpose on the anatomical channel to detect cells.
+    - Computes labels for each ROI based on overlap.
+    - Generates images of labeled masks.
+    - Corrects the red channel for bleedthrough.
+    - Repeats cell detection and labeling on the corrected images.
+    - Generates comparison images and saves results.
+    """
     print('===============================================')
     print('===== Two channel data ROI identification =====')
     print('===============================================')
@@ -190,8 +234,9 @@ def run(ops, diameter):
     if ops['nchannels'] == 1: 
         print('Single channel recording, skipping ROI labeling')
         labels = -1 * np.ones(int(np.max(masks_func))).astype('int32')
-        save_masks(ops, masks_func, None, None,
-                   mean_func, max_func, None, labels)
+        save_masks(
+            ops, masks_func, None, None, mean_func, max_func, None, labels
+        )
     else:
         print('Running Cellpose on anatomical channel mean image')
         print(f'Found diameter as {diameter}')
@@ -236,7 +281,9 @@ def run(ops, diameter):
         # CORRECTED MASKS AND LABELS
 
         print('Computing corrected mask')
-        masks_anat_corrected = run_cellpose(ops, mean_anat_corrected, diameter)
+        masks_anat_corrected = run_cellpose(
+            ops, mean_anat_corrected, diameter
+        )
 
         # np.savetxt('masks_anat.csv', masks_anat, delimiter=',')
         # np.savetxt('masks_anat_corr.csv', masks_anat_corrected, delimiter=',')
@@ -244,7 +291,7 @@ def run(ops, diameter):
         print('Computing corrected labels for each ROI')
         labels_corrected = get_label(masks_func, masks_anat_corrected)
 
-        print('Computing labeled masks on corrected red channel')
+        print('Computing inhibitory masks on corrected red channel')
         labeled_masks_img_corr = get_labeled_masks_img(
             masks_anat_corrected, labels_corrected, 1, 'red')
 
@@ -253,12 +300,10 @@ def run(ops, diameter):
             masks_anat_corrected, labels_corrected, 0, 'red')
   
 
-        print('Computing excitory masks on corrected red channel')
+        print('Computing excitatory masks on corrected red channel')
         excitory_masks_img_corr = get_labeled_masks_img(
-            masks_anat_corrected, labels_corrected, -1)
-
-        print("Corrected number of ROIs: ", len(
-            np.argwhere(masks_anat_corrected != 0)))
+            masks_anat_corrected, labels_corrected, -1
+        )
 
         print(
             f"Anat before: {len(np.unique(masks_anat)) - 1}, Anat after: {len(np.unique(masks_anat_corrected)) - 1}")
@@ -317,9 +362,20 @@ def run(ops, diameter):
             f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')
 
         print(
-            f'Found {np.sum(labels == 1)} labeled ROIs out of {len(labels)} in total')
+            f'Found {np.sum(labels == 1)} labeled ROIs out of '
+            f'{len(labels)} in total'
+        )
 
-        save_masks(ops, masks_func, masks_anat, masks_anat_corrected,
-                   mean_func, max_func, mean_anat, mean_anat_corrected, labels)
+        save_masks(
+            ops,
+            masks_func,
+            masks_anat,
+            masks_anat_corrected,
+            mean_func,
+            max_func,
+            mean_anat,
+            mean_anat_corrected,
+            labels,
+        )
 
         print('Masks results saved')

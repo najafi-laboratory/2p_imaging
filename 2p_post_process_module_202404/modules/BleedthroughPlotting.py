@@ -3,30 +3,132 @@ import h5py
 import tifffile
 import numpy as np
 from tqdm import tqdm
-from cellpose import models
-from cellpose import io
+from cellpose import models, io
 import matplotlib.pyplot as plt
 from scipy.stats import linregress
 from skimage.segmentation import find_boundaries
 from sklearn.linear_model import LinearRegression
 from skimage.morphology import dilation, square
 from scipy.ndimage import label
+import matplotlib.patches as mpatches
+import matplotlib.colors as mcolors
 
 from .RemoveBleedthrough import *
 from .LabelExcInh import *
 from skimage.measure import regionprops
 
 
-def prep_img(mean_anat, mean_func=None):
+def identify_removed_neurons(masks_anat, masks_anat_corrected):
     """
-    Prepares an image to visualize anatomical channel data.
+    Identifies neurons present in the original anatomical mask but not in the corrected mask.
 
     Parameters:
-    - mean_anat (numpy array): The mean anatomical image data.
-    - mean_func (numpy array, optional): The mean functional image data. Defaults to None.
+    - masks_anat (numpy.ndarray): Original anatomical masks.
+    - masks_anat_corrected (numpy.ndarray): Corrected anatomical masks.
 
     Returns:
-    - img (numpy array): A composite image for visualization.
+    - only_in_anat (set): Set of neuron IDs present only in the original mask.
+    """
+    # Label each connected component in both masks
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, _ = label(masks_anat_corrected)
+
+    only_in_anat = set()
+
+    for i in range(1, num_features_anat + 1):
+        neuron_mask = (labeled_anat == i)
+        overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
+
+        if not overlap:
+            only_in_anat.add(i)
+
+    return only_in_anat
+
+
+def identify_new_neurons(masks_anat, masks_anat_corrected):
+    """
+    Identifies neurons present in the corrected anatomical mask but not in the original mask.
+
+    Parameters:
+    - masks_anat (numpy.ndarray): Original anatomical masks.
+    - masks_anat_corrected (numpy.ndarray): Corrected anatomical masks.
+
+    Returns:
+    - only_in_corrected (set): Set of neuron IDs present only in the corrected mask.
+    """
+    labeled_anat, _ = label(masks_anat)
+    labeled_anat_corrected, num_features_corrected = label(
+        masks_anat_corrected)
+
+    only_in_corrected = set()
+
+    for i in range(1, num_features_corrected + 1):
+        neuron_mask = (labeled_anat_corrected == i)
+        overlap = np.any(neuron_mask & (labeled_anat != 0))
+
+        if not overlap:
+            only_in_corrected.add(i)
+
+    return only_in_corrected
+
+
+def identify_common_neurons(masks_anat, masks_anat_corrected):
+    """
+    Identifies neurons present in both the original and corrected anatomical masks.
+
+    Parameters:
+    - masks_anat (numpy.ndarray): Original anatomical masks.
+    - masks_anat_corrected (numpy.ndarray): Corrected anatomical masks.
+
+    Returns:
+    - common_neurons (set): Set of neuron IDs present in both masks.
+    """
+    labeled_anat, num_features_anat = label(masks_anat)
+    labeled_anat_corrected, _ = label(masks_anat_corrected)
+
+    common_neurons = set()
+    for i in range(1, num_features_anat + 1):
+        neuron_mask = (labeled_anat == i)
+        overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
+
+        if overlap:
+            common_neurons.add(i)
+
+    return common_neurons
+
+
+def isolate_neurons(mask, neuron_indices):
+    """
+    Isolates specific neurons from a labeled mask.
+
+    Parameters:
+    - mask (numpy.ndarray): Labeled mask from which to isolate neurons.
+    - neuron_indices (list or set): Neuron IDs to isolate.
+
+    Returns:
+    - isolated_neurons (numpy.ndarray): Mask containing only the specified neurons.
+    """
+    labeled_mask, _ = label(mask)
+
+    isolated_neurons = np.zeros_like(mask, dtype=int)
+
+    for i in neuron_indices:
+        neuron_mask = (labeled_mask == i)
+        isolated_neurons[neuron_mask] = i
+
+    return isolated_neurons
+
+
+def prep_img(mean_anat, mean_func=None):
+    """
+    Prepares an RGB image by adjusting the contrast of the anatomical and functional images.
+
+    Parameters:
+    - mean_anat (numpy.ndarray): Mean anatomical image data.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
+
+    Returns:
+    - img (numpy.ndarray): Composite RGB image.
     """
     img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32') #new numpy array named img is created filled with 0 
     img[:, :, 0] = adjust_contrast(mean_anat) #assigning red channel to the mean anatomical image data, : , then adjust contrast image 
@@ -38,26 +140,31 @@ def prep_img(mean_anat, mean_func=None):
 
 def adjust_contrast(org_img, lower_percentile=50, upper_percentile=99):
     """
-    Adjusts the contrast of an image by clipping and scaling the intensity values.
+    Adjusts the contrast of an image by clipping and scaling intensity values.
 
     Parameters:
-    - org_img (numpy array): The original image data.
-    - lower_percentile (int, optional): The lower percentile for contrast adjustment. Defaults to 50.
-    - upper_percentile (int, optional): The upper percentile for contrast adjustment. Defaults to 99.
+    - org_img (numpy.ndarray): Original image data.
+    - lower_percentile (int, optional): Lower percentile for contrast adjustment.
+    - upper_percentile (int, optional): Upper percentile for contrast adjustment.
 
     Returns:
-    - img (numpy array): The image with adjusted contrast.
+    - img (numpy.ndarray): Image with adjusted contrast.
     """
     lower = np.percentile(org_img, lower_percentile)
     upper = np.percentile(org_img, upper_percentile)
-    img = np.clip((org_img - lower) * 255 / (upper - lower), 0, 255)
+    # Add a small epsilon to prevent division by zero
+    img = np.clip((org_img - lower) * 255 / (upper - lower + 1e-5), 0, 255)
     img = img.astype('int32')
     return img
 
-# adjust layout for masks plot.
-
 
 def adjust_layout(ax):
+    """
+    Adjusts the layout of a matplotlib Axes object by hiding ticks and spines.
+
+    Parameters:
+    - ax (matplotlib.axes.Axes): The Axes object to adjust.
+    """
     ax.tick_params(tick1On=False)
     ax.spines['left'].set_visible(False)
     ax.spines['right'].set_visible(False)
@@ -67,18 +174,38 @@ def adjust_layout(ax):
     ax.set_yticks([])
 
 
-def anat(ax, mean_anat, masks, labeled_masks_img, unsure_masks_img, with_mask=True, title='anatomy channel mean image'):
+def display_mean_image(mean_img, title='Anatomical Mean Image'):
+    """
+    Displays the mean anatomical image in red.
+
+    Parameters:
+    - mean_img (numpy.ndarray): The mean anatomical image data.
+    - title (str, optional): The title of the plot.
+
+    This function displays the mean anatomical image in red, similar to other images generated in BleedthroughPlotting.py.
+    """
+    img = prep_img(mean_img)
+
+    plt.figure(figsize=(8, 8))
+    plt.imshow(img)
+    plt.title(title)
+    plt.axis('off')
+    plt.savefig('plot_results/mean_anat_image.png')
+
+
+def anat(ax, mean_anat, masks=None, labeled_masks_img=None, unsure_masks_img=None,
+         with_mask=True, title='Anatomy Channel Mean Image'):
     """
     Plots the anatomy channel mean image with optional mask boundaries.
 
     Parameters:
-    - ax (matplotlib axes): The axes to plot on.
-    - mean_anat (numpy array): The mean anatomical image data.
-    - masks (numpy array): The masks for ROIs.
-    - labeled_masks_img (numpy array): The labeled masks image for visualization.
-    - unsure_masks_img (numpy array): The unsure masks image for visualization.
-    - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
-    - title (str, optional): The title of the plot. Defaults to 'anatomy channel mean image'.
+    - ax (matplotlib.axes.Axes): The axes to plot on.
+    - mean_anat (numpy.ndarray): The mean anatomical image data.
+    - masks (numpy.ndarray, optional): Masks for ROIs.
+    - labeled_masks_img (numpy.ndarray, optional): Labeled masks image for visualization.
+    - unsure_masks_img (numpy.ndarray, optional): Unsure masks image for visualization.
+    - with_mask (bool, optional): Whether to include mask boundaries in the plot.
+    - title (str, optional): The title of the plot.
     """
     anat_img = np.zeros(
         (mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32') #new numpy array named anat_img is created filled with 0 with shape of mean_anat
@@ -88,226 +215,119 @@ def anat(ax, mean_anat, masks, labeled_masks_img, unsure_masks_img, with_mask=Tr
     iter_lst = []
 
     if masks is not None:
-        iter_lst.append((masks, [255, 255, 255])) #white 
+        iter_lst.append((masks, [255, 255, 255]))  # White
 
     if labeled_masks_img is not None:
-        iter_lst.append((labeled_masks_img[:, :, 0], [255, 255, 0])) #yellow
+        iter_lst.append((labeled_masks_img[:, :, 0], [255, 255, 0]))  # Yellow
 
     if unsure_masks_img is not None:
-        iter_lst.append((unsure_masks_img[:, :, 0], [0, 196, 255])) #blue cyan 
+        iter_lst.append((unsure_masks_img[:, :, 0], [
+                        0, 196, 255]))  # Light Blue
 
     if with_mask:
         for mask, color in iter_lst:
-            x_all, y_all = np.where(find_boundaries(mask)) #find boundaries of the mask return coordinates
-            for x, y in zip(x_all, y_all): #zip the coordinates
-                anat_img[x, y, :] = np.array(color) #assign the color to the coordinates
-    ax.matshow(anat_img)
+            x_all, y_all = np.where(find_boundaries(mask))
+            anat_img[x_all, y_all, :] = color
+
+    ax.imshow(anat_img)
     adjust_layout(ax)
-    ax.set_title(f'{title}')
+    ax.set_title(title)
 
 
-def roi_comparison_image(ax, mean_anat, masks_anat, labels, labels_corrected, rois, title, mean_func):
+def roi_comparison_image(ax, mean_anat, masks_anat, labels, labels_corrected,
+                         rois, title, mean_func=None):
     """
-    Plots the comparison image for ROI analysis with optional mean function application.
+    Plots a comparison image for ROI analysis, highlighting specified ROIs.
 
     Parameters:
-    - ax (matplotlib axes): The axes to plot on.
-    - mean_anat (numpy array): The mean anatomical image data.
-    - masks_anat (numpy array): The masks for anatomical ROIs.
-    - labels (numpy array): The labels for ROIs before correction.
-    - labels_corrected (numpy array): The labels for ROIs after correction.
-    - rois (list): The list of ROI IDs to highlight in the plot.
+    - ax (matplotlib.axes.Axes): The axes to plot on.
+    - mean_anat (numpy.ndarray): The mean anatomical image data.
+    - masks_anat (numpy.ndarray): Masks for anatomical ROIs.
+    - labels (numpy.ndarray): Labels for ROIs before correction.
+    - labels_corrected (numpy.ndarray): Labels for ROIs after correction.
+    - rois (list): List of ROI IDs to highlight in the plot.
     - title (str): The title of the plot.
-    - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
 
-    This function plots the comparison image for ROI analysis, highlighting the specified ROIs with a white boundary. It also applies a mean function to the image if provided.
+    This function plots the comparison image for ROI analysis, highlighting the specified ROIs with a white boundary.
     """
-
     img = prep_img(mean_anat, mean_func)
 
-    # Add a white boundary around each misidentified inhibitory ROI
+    # Add a white boundary around each specified ROI
     for roi_id in rois:
         boundaries = find_boundaries(masks_anat == roi_id)
         x_all, y_all = np.where(boundaries)
-        for x, y in zip(x_all, y_all):
-            img[x, y, :] = np.array([255, 255, 255])
+        img[x_all, y_all, :] = [255, 255, 255]
 
     ax.imshow(img)
     ax.set_title(title)
     ax.axis('off')
 
 
-def main_channel_comparison_image(
-        comp_mask_type,
-        labels,
-        labels_corrected,
-        mean_anat,
-        mean_anat_corrected,
-        masks_anat,
-        masks_anat_corrected,
-        labeled_masks_img_orig, # original red cannel labels (anat) - y,w,b 
-        labeled_masks_img_corr, # corrected red cannel labels (anat)
-        unsure_masks_img_orig, # red blue red channel unsure labels (anat)
-        unsure_masks_img_corr, # red blue red channel unsure labels (anat)
-        with_mask,
-        mean_func):
+def main_channel_comparison_image(comp_mask_type, labels, labels_corrected,
+                                  mean_anat, mean_anat_corrected,
+                                  masks_anat, masks_anat_corrected,
+                                  labeled_masks_img_orig, labeled_masks_img_corr,
+                                  unsure_masks_img_orig, unsure_masks_img_corr,
+                                  with_mask=True, mean_func=None):
     """
-    Generates a figure with comparisons of the original and corrected anatomical channel images with masks.
+    Generates a figure comparing the original and corrected anatomical images with masks.
 
     Parameters:
-    - mean_anat (numpy array): The mean anatomical image data.
-    - masks_anat (numpy array): The masks for anatomical ROIs.
-    - labeled_masks_img_orig (numpy array): The labeled masks image for original visualization.
-    - unsure_masks_img_orig (numpy array): The unsure masks image for original visualization.
-    - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
-    - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
+    - comp_mask_type (str): Type of comparison mask.
+    - labels (numpy.ndarray): Labels before correction.
+    - labels_corrected (numpy.ndarray): Labels after correction.
+    - mean_anat (numpy.ndarray): Mean anatomical image before correction.
+    - mean_anat_corrected (numpy.ndarray): Mean anatomical image after correction.
+    - masks_anat (numpy.ndarray): Anatomical masks before correction.
+    - masks_anat_corrected (numpy.ndarray): Anatomical masks after correction.
+    - labeled_masks_img_orig (numpy.ndarray): Labeled masks image before correction.
+    - labeled_masks_img_corr (numpy.ndarray): Labeled masks image after correction.
+    - unsure_masks_img_orig (numpy.ndarray): Unsure masks image before correction.
+    - unsure_masks_img_corr (numpy.ndarray): Unsure masks image after correction.
+    - with_mask (bool, optional): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
 
     This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
     """
-    
-    if mean_func is not None:
-        fig, ax = plt.subplots(1, 3, figsize=(30, 10))
-    else:
-        fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-
+    fig, ax = plt.subplots(1, 2, figsize=(25, 10))
     anat(ax[0], mean_anat, masks_anat, labeled_masks_img_orig,
-         unsure_masks_img_orig, with_mask=True, title='Orig. Anat. + Mask')
+         unsure_masks_img_orig, with_mask=True, title='Original Anatomy + Mask')
 
     anat(ax[1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
-         unsure_masks_img_corr, with_mask=True, title='Corr. Anat. + Mask')
+         unsure_masks_img_corr, with_mask=True, title='Corrected Anatomy + Mask')
 
-    # Corrected anatomical image with functional ROIs
-    if mean_func is not None:
-        func_img = prep_img(mean_anat_corrected, mean_func)
-        ax[2].imshow(func_img)
-        ax[2].set_title('Corr. Anat. + Func ROIs')
-        adjust_layout(ax[2])
-    plt.rcParams['savefig.dpi'] = 1000
-    plt.savefig(f'{comp_mask_type}_bleedthrough_channel_comparison.pdf')
-    # # plt.show()
-    
-def identify_removed_neurons(masks_anat, masks_anat_corrected):
-    # Label each connected component in both masks
-    labeled_anat, num_features_anat = label(masks_anat) 
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected) #label willcount individual neurons 
-
-    # Create a set to track neurons present only in uncorrected mask
-    only_in_anat = set()
-
-    # Iterate through each labeled region in the uncorrected mask
-    for i in range(1, num_features_anat + 1): #neuron wise comparison to create a binary mask. compares each elemnt of labeled anat with i (current neuron label) and  if the i is true then it will be added to the set
-        # Create a mask for the current neuron in uncorrected mask
-        neuron_mask = (labeled_anat == i) #It contains True values wherever the pixel belongs to the neuron/ROI with label i and False everywhere else.
-
-        # Check if any pixels overlap in the corrected mask
-        overlap = np.any(neuron_mask & (labeled_anat_corrected > 0)) #checks if any pixel in the neuron_mask is also present in the corrected mask
-
-        # If there is no overlap, it means this neuron is missing after correction
-        if not overlap:
-            only_in_anat.add(i)
-
-    return only_in_anat
+    plt.savefig(
+        f'plot_results/{comp_mask_type}_bleedthrough_channel_comparison.png')
 
 
-def identify_new_neurons(masks_anat, masks_anat_corrected):
-    # Label each connected component in both masks
-    labeled_anat, num_features_anat = label(masks_anat)
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected)
-
-    # Create a set to track neurons present only in corrected mask
-    only_in_corrected = set()
-
-    # Iterate through each labeled region in the corrected mask
-    for i in range(1, num_features_corrected + 1):
-    # Create a mask for the current neuron in corrected mask
-        neuron_mask = (labeled_anat_corrected == i)
-
-        # Check if any pixels overlap in the uncorrected mask
-        overlap = np.any(neuron_mask & (labeled_anat != 0))
-
-        # If there is no overlap, it means this neuron is new after correction
-        if not overlap:
-            only_in_corrected.add(i)
-
-    return only_in_corrected
-
-
-def isolate_neurons(mask, neuron_indices):
-    # Label each connected component in the mask
-    labeled_mask, num_features = label(mask) #label each connected neuronthe mask
-
-    # Create an empty mask to store only the specified neurons
-    isolated_neurons = np.zeros_like(mask, dtype=int)
-
-    # Iterate through each specified neuron index
-    for i in neuron_indices:
-        # Create a mask for the current neuron in the labeled mask
-        neuron_mask = (labeled_mask == i)
-
-        # Add this neuron to the isolated_neurons mask
-        isolated_neurons[neuron_mask] = i
-
-    return isolated_neurons
-
-
-def identify_common_neurons(masks_anat, masks_anat_corrected):
-    # Label each connected component in both masks
-    labeled_anat, num_features_anat = label(masks_anat)
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected)
-
-    # Create a set to track neurons present in both masks
-    common_neurons = set()
-
-    # Iterate through each labeled region in the uncorrected mask
-    for i in range(1, num_features_anat + 1):
-        # Create a mask for the current neuron in uncorrected mask
-        neuron_mask = (labeled_anat == i)
-
-        # Check if any pixels overlap in the corrected mask
-        overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
-
-        # If there is an overlap, it means this neuron is present in both masks
-        if overlap:
-            common_neurons.add(i)
-
-    return common_neurons
-
-
-def removed_neurons_comparison_image(
-        comp_mask_type,
-        labels,
-        labels_corrected,
-        mean_anat,
-        mean_anat_corrected,
-        masks_anat,
-        masks_anat_corrected,
-        labeled_masks_img_orig,
-        labeled_masks_img_corr,
-        unsure_masks_img_orig,
-        unsure_masks_img_corr,
-        with_mask,
-        mean_func):
+def removed_neurons_comparison_image(comp_mask_type, labels, labels_corrected,
+                                     mean_anat, mean_anat_corrected,
+                                     masks_anat, masks_anat_corrected,
+                                     labeled_masks_img_orig, labeled_masks_img_corr,
+                                     unsure_masks_img_orig, unsure_masks_img_corr,
+                                     with_mask=True, mean_func=None):
     """
-    Generates a figure with comparisons of the original and corrected anatomical channel images with masks, including removed neurons.
+    Generates a figure comparing original and corrected images, highlighting removed neurons.
 
     Parameters:
-    - mean_anat (numpy array): The mean anatomical image data.
-    - masks_anat (numpy array): The masks for anatomical ROIs.
-    - labeled_masks_img_orig (numpy array): The labeled masks image for original visualization.
-    - unsure_masks_img_orig (numpy array): The unsure masks image for original visualization.
-    - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
-    - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
+    - comp_mask_type (str): Type of comparison mask.
+    - labels (numpy.ndarray): Labels before correction.
+    - labels_corrected (numpy.ndarray): Labels after correction.
+    - mean_anat (numpy.ndarray): Mean anatomical image before correction.
+    - mean_anat_corrected (numpy.ndarray): Mean anatomical image after correction.
+    - masks_anat (numpy.ndarray): Anatomical masks before correction.
+    - masks_anat_corrected (numpy.ndarray): Anatomical masks after correction.
+    - labeled_masks_img_orig (numpy.ndarray): Labeled masks image before correction.
+    - labeled_masks_img_corr (numpy.ndarray): Labeled masks image after correction.
+    - unsure_masks_img_orig (numpy.ndarray): Unsure masks image before correction.
+    - unsure_masks_img_corr (numpy.ndarray): Unsure masks image after correction.
+    - with_mask (bool, optional): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
 
-    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+    This function highlights neurons that are present in the original mask but not in the corrected mask.
     """
     # Identify removed neurons
-    labeled_anat, num_features_anat = label(masks_anat)
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected)
-
     removed_neurons = list(identify_removed_neurons(
         masks_anat, masks_anat_corrected))
     
@@ -317,641 +337,396 @@ def removed_neurons_comparison_image(
 
     # Generate the figure
     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-    anat(ax[0], mean_anat=mean_anat, masks=removed_neurons_mask, labeled_masks_img=unsure_masks_img_corr,
-         unsure_masks_img=unsure_masks_img_orig, with_mask=True, title='Orig+removed')
+    anat(ax[0], mean_anat=mean_anat, masks=removed_neurons_mask,
+         labeled_masks_img=None, unsure_masks_img=None,
+         with_mask=True, title='Original + Removed Neurons')
 
-    anat(ax[1], mean_anat_corrected, masks_anat_corrected, labeled_masks_img_corr,
-         unsure_masks_img_corr, with_mask=True, title='Corr. Anat. + Mask')
+    anat(ax[1], mean_anat_corrected, masks_anat_corrected,
+         labeled_masks_img=labeled_masks_img_corr,
+         unsure_masks_img=unsure_masks_img_corr,
+         with_mask=True, title='Corrected Anatomy + Mask')
+
     plt.rcParams['savefig.dpi'] = 1000
-    plt.savefig(f'removed_neurons_bleedthrough_channel_comparison.pdf')
-    # # plt.show()
+    plt.savefig(
+        'plot_results/removed_neurons_bleedthrough_channel_comparison.pdf')
 
 
-def new_neurons_comparison_image(
-        comp_mask_type,
-        labels,
-        labels_corrected,
-        mean_anat,
-        mean_anat_corrected,
-        masks_anat,
-        masks_anat_corrected,
-        labeled_masks_img_orig,
-        labeled_masks_img_corr,
-        unsure_masks_img_orig,
-        unsure_masks_img_corr,
-        with_mask,
-        mean_func):
+def new_neurons_comparison_image(comp_mask_type, labels, labels_corrected,
+                                 mean_anat, mean_anat_corrected,
+                                 masks_anat, masks_anat_corrected,
+                                 labeled_masks_img_orig, labeled_masks_img_corr,
+                                 unsure_masks_img_orig, unsure_masks_img_corr,
+                                 with_mask=True, mean_func=None):
     """
-    Generates a figure with comparisons of the original and corrected anatomical channel images with masks, including removed neurons.
+    Generates a figure comparing original and corrected images, highlighting new neurons.
 
     Parameters:
-    - mean_anat (numpy array): The mean anatomical image data.
-    - masks_anat (numpy array): The masks for anatomical ROIs.
-    - labeled_masks_img_orig (numpy array): The labeled masks image for original visualization.
-    - unsure_masks_img_orig (numpy array): The unsure masks image for original visualization.
-    - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
-    - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
+    - comp_mask_type (str): Type of comparison mask.
+    - labels (numpy.ndarray): Labels before correction.
+    - labels_corrected (numpy.ndarray): Labels after correction.
+    - mean_anat (numpy.ndarray): Mean anatomical image before correction.
+    - mean_anat_corrected (numpy.ndarray): Mean anatomical image after correction.
+    - masks_anat (numpy.ndarray): Anatomical masks before correction.
+    - masks_anat_corrected (numpy.ndarray): Anatomical masks after correction.
+    - labeled_masks_img_orig (numpy.ndarray): Labeled masks image before correction.
+    - labeled_masks_img_corr (numpy.ndarray): Labeled masks image after correction.
+    - unsure_masks_img_orig (numpy.ndarray): Unsure masks image before correction.
+    - unsure_masks_img_corr (numpy.ndarray): Unsure masks image after correction.
+    - with_mask (bool, optional): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
 
-    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+    This function highlights neurons that are present in the corrected mask but not in the original mask.
     """
-    # Identify removed neurons
-    labeled_anat, num_features_anat = label(masks_anat)
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected)
-
-    new_neurons = list(identify_new_neurons(
-        masks_anat, masks_anat_corrected))
-    print(f'Total number of new neurons: {len(new_neurons)})')
-    # Isolate removed neurons
+    # Identify new neurons
+    new_neurons = list(identify_new_neurons(masks_anat, masks_anat_corrected))
+    # Isolate new neurons
     new_neurons_mask = isolate_neurons(masks_anat_corrected, new_neurons)
 
     # Generate the figure
     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-<<<<<<< HEAD
-    anat(ax[0], mean_anat=mean_anat, masks=new_neurons_mask, labeled_masks_img=None,
-         unsure_masks_img=None, with_mask=True, title='Orig')
-=======
-    anat(ax[0], mean_anat=mean_anat, masks=new_neurons_mask, labeled_masks_img=unsure_masks_img_orig,
-         unsure_masks_img=unsure_masks_img_orig, with_mask=True, title='Orig')
->>>>>>> a86e0b8 (stuff chainged)
+    anat(ax[0], mean_anat=mean_anat, masks=None,
+         labeled_masks_img=None, unsure_masks_img=None,
+         with_mask=True, title='Original Anatomy')
 
-    anat(ax[1], mean_anat_corrected, new_neurons_mask, None,
-         None, with_mask=True, title='Corr. Anat. New')
+    anat(ax[1], mean_anat_corrected, masks=new_neurons_mask,
+         labeled_masks_img=None, unsure_masks_img=None,
+         with_mask=True, title='Corrected Anatomy + New Neurons')
+
     plt.rcParams['savefig.dpi'] = 1000
-    plt.savefig(f'new_neurons_bleedthrough_channel_comparison.pdf')
-    # # plt.show()
+    plt.savefig('plot_results/new_neurons_bleedthrough_channel_comparison.pdf')
 
 
-<<<<<<< HEAD
-def common_neurons_comparison_image(
-        comp_mask_type,
-        labels,
-        labels_corrected,
-        mean_anat,
-        mean_anat_corrected,
-        masks_anat,
-        masks_anat_corrected,
-        labeled_masks_img_orig,
-        labeled_masks_img_corr,
-        unsure_masks_img_orig,
-        unsure_masks_img_corr,
-        with_mask,
-        mean_func):
+def common_neurons_comparison_image(comp_mask_type, labels, labels_corrected,
+                                    mean_anat, mean_anat_corrected,
+                                    masks_anat, masks_anat_corrected,
+                                    labeled_masks_img_orig, labeled_masks_img_corr,
+                                    unsure_masks_img_orig, unsure_masks_img_corr,
+                                    with_mask=True, mean_func=None):
     """
-    Generates a figure with comparisons of the original and corrected anatomical channel images with masks, including removed neurons.
+    Generates a figure comparing original and corrected images, highlighting common neurons.
 
     Parameters:
-    - mean_anat (numpy array): The mean anatomical image data.
-    - masks_anat (numpy array): The masks for anatomical ROIs.
-    - labeled_masks_img_orig (numpy array): The labeled masks image for original visualization.
-    - unsure_masks_img_orig (numpy array): The unsure masks image for original visualization.
-    - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
-    - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
+    - comp_mask_type (str): Type of comparison mask.
+    - labels (numpy.ndarray): Labels before correction.
+    - labels_corrected (numpy.ndarray): Labels after correction.
+    - mean_anat (numpy.ndarray): Mean anatomical image before correction.
+    - mean_anat_corrected (numpy.ndarray): Mean anatomical image after correction.
+    - masks_anat (numpy.ndarray): Anatomical masks before correction.
+    - masks_anat_corrected (numpy.ndarray): Anatomical masks after correction.
+    - labeled_masks_img_orig (numpy.ndarray): Labeled masks image before correction.
+    - labeled_masks_img_corr (numpy.ndarray): Labeled masks image after correction.
+    - unsure_masks_img_orig (numpy.ndarray): Unsure masks image before correction.
+    - unsure_masks_img_corr (numpy.ndarray): Unsure masks image after correction.
+    - with_mask (bool, optional): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
 
-    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+    This function highlights neurons that are present in both the original and corrected masks.
     """
-    # Identify removed neurons
-    labeled_anat, num_features_anat = label(masks_anat)
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected)
-
+    # Identify common neurons
     common_neurons = list(identify_common_neurons(
         masks_anat, masks_anat_corrected))
-    print(f'Total number of common neurons: {len(common_neurons)}')
-    # Isolate removed neurons
+    # Isolate common neurons
     common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
 
     # Generate the figure
     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-    anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=None,
-         unsure_masks_img=None, with_mask=True, title='Orig')
+    anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask,
+         labeled_masks_img=None, unsure_masks_img=None,
+         with_mask=True, title='Original Anatomy + Common Neurons')
 
-    anat(ax[1], mean_anat_corrected, common_neurons_mask, None,
-         None, with_mask=True, title='Corr. Anat. New')
+    anat(ax[1], mean_anat_corrected, masks=common_neurons_mask,
+         labeled_masks_img=None, unsure_masks_img=None,
+         with_mask=True, title='Corrected Anatomy + Common Neurons')
+
     plt.rcParams['savefig.dpi'] = 1000
-    plt.savefig(f'common_neurons_bleedthrough_channel_comparison.pdf')
-    # plt.show()
+    plt.savefig(
+        'plot_results/common_neurons_bleedthrough_channel_comparison.pdf')
 
 
-#UNSURE NEURONS PLOTTING
-
-def identify_removed_unsure_neurons(masks_anat, masks_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr):
-    # Label each connected component in both masks
-    labeled_orig_unsure, num_features_orig_unsure_rm = label(unsure_masks_img_orig[:, :, 0])
-    labeled_corr_unsure, num_features_corr_unsure_rm = label(unsure_masks_img_corr[:, :, 0])
-
-    # Create a set to track unsure ROIs present only in the original mask
-    removed_unsure = set()
-
-    # Iterate through each labeled unsure ROI in the original mask
-    for i in range(1, num_features_orig_unsure_rm + 1):
-        # Create a mask for the current unsure ROI in the original mask
-        unsure_roi_mask = (labeled_orig_unsure == i)
-
-        # Check if any pixels overlap in the corrected mask
-        overlap_unsure = np.any(unsure_roi_mask & (labeled_corr_unsure > 0))
-
-        # If there is no overlap, it means this unsure ROI is missing after correction
-        if not overlap_unsure:
-            removed_unsure.add(i)
-
-    return removed_unsure
-
-def identify_new_unsure_neurons(masks_anat, masks_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr):
-    # Label each connected component in both masks
-    labeled_orig_unsure_nw, num_features_orig_unsure_nw = label(unsure_masks_img_orig[:, :, 0])
-    labeled_corr_unsure_nw, num_features_corr_unsure_nw = label(unsure_masks_img_corr[:, :, 0])
-
-    # Create a set to track unsure ROIs present only in the corrected mask
-    new_unsure = set()
-
-    # Iterate through each labeled unsure ROI in the corrected mask
-    for i in range(1, num_features_corr_unsure_nw + 1):
-        # Create a mask for the current unsure ROI in the corrected mask
-        unsure_roi_mask = (labeled_corr_unsure_nw == i)
-
-        # Check if any pixels overlap in the original mask
-        overlap_unsure = np.any(unsure_roi_mask & (labeled_orig_unsure_nw > 0))
-
-        # If there is no overlap, it means this unsure ROI is new after correction
-        if not overlap_unsure:
-            new_unsure.add(i)
-
-    return new_unsure
-
-def identify_common_unsure_neurons(masks_anat, masks_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr): 
-    # Label each connected component in both masks
-    labeled_orig_unsure_cm, num_features_orig_unsure_cm = label(unsure_masks_img_orig[:, :, 0])
-    labeled_corr_unsure_cm, num_features_corr_unsure_cm = label(unsure_masks_img_corr[:, :, 0])
-
-    # Create a set to track unsure ROIs present in both original and corrected masks
-    common_unsure = set()
-
-    # Iterate through each labeled unsure ROI in the original mask
-    for i in range(1, num_features_orig_unsure_cm + 1):
-        # Create a mask for the current unsure ROI in the original mask
-        unsure_roi_mask = (labeled_orig_unsure_cm == i)
-
-        # Check if any pixels overlap in the corrected mask
-        overlap_unsure = np.any(unsure_roi_mask & (labeled_corr_unsure_cm > 0))
-
-        # If there is an overlap, it means this unsure ROI is present in both original and corrected masks
-        if overlap_unsure:
-            common_unsure.add(i)
-
-    return common_unsure
-
-def plot_combined_unsure_neurons(mean_func, mean_anat, mean_anat_corrected, unsure_masks_img_orig, unsure_masks_img_corr):
-    # Identify removed, new, and common unsure neurons
-    removed_unsure = identify_removed_unsure_neurons(None, None, unsure_masks_img_orig, unsure_masks_img_corr)
-    new_unsure = identify_new_unsure_neurons(None, None, unsure_masks_img_orig, unsure_masks_img_corr)
-    common_unsure = identify_common_unsure_neurons(None, None, unsure_masks_img_orig, unsure_masks_img_corr)
-    print(f"Number of common unsure ROIs: {len(common_unsure)}")
-
-     # Create labeled masks for removed, new, and common unsure ROIs
-    labeled_orig_unsure, _ = label(unsure_masks_img_orig[:, :, 0])
-    labeled_corr_unsure, _ = label(unsure_masks_img_corr[:, :, 0])
-
-    removed_mask = isolate_neurons(labeled_orig_unsure, removed_unsure)
-    new_mask = isolate_neurons(labeled_corr_unsure, new_unsure)
-    common_mask = isolate_neurons(labeled_corr_unsure, common_unsure)
-
-    # Create a figure with four subplots
-    fig, ax = plt.subplots(1, 4, figsize=(40, 10))
-
-    # Functional channel with unsure ROI labels (Green channel)
-    func_img = np.zeros((mean_func.shape[0], mean_func.shape[1], 3), dtype='int32')
-    func_img[:, :, 1] = adjust_contrast(mean_func)  # Green channel for functional data
-
-    # Overlay removed, new, and common unsure ROIs on functional image
-    # Removed unsure ROIs - magenta
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        func_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed unsure ROIs
-
-    # New unsure ROIs - orange
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        func_img[x, y, :] = np.array([255, 165, 0])  # Orange for new unsure ROIs
-
-    # Common unsure ROIs - blue
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        func_img[x, y, :] = np.array([0, 0, 255])  # Blue for common unsure ROIs
-
-    ax[0].imshow(func_img)
-    ax[0].set_title('Functional Channel (Green) with Removed, New, and Common Unsure ROIs')
-    ax[0].axis('off')
-  
-    # Plot 2: Original anatomical channel with removed, new, and common unsure ROIs (Red channel)
-    anat_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
-    anat_img[:, :, 0] = adjust_contrast(mean_anat)  # Red channel for anatomical data
-
-    # Overlay removed (magenta), new (orange), and common (blue) unsure ROIs
-    labeled_orig_unsure, _ = label(unsure_masks_img_orig[:, :, 0])
-    labeled_corr_unsure, _ = label(unsure_masks_img_corr[:, :, 0])
-
-    # Removed unsure ROIs - magenta
-    removed_mask = isolate_neurons(labeled_orig_unsure, removed_unsure)
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        anat_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed unsure ROIs
-
-    # New unsure ROIs - orange
-    new_mask = isolate_neurons(labeled_corr_unsure, new_unsure)
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        anat_img[x, y, :] = np.array([255, 165, 0])  # Orange for new unsure ROIs
-
-    # Common unsure ROIs - blue
-    common_mask = isolate_neurons(labeled_corr_unsure, common_unsure)
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    print(f"Number of boundary pixels: {len(x_all)}")
-    for x, y in zip(x_all, y_all):
-        anat_img[x, y, :] = np.array([0, 0, 255])  # Blue for common unsure ROIs
-    print(f"Number of pixels in common_mask: {np.sum(common_mask)}")
-    ax[1].imshow(anat_img)
-    ax[1].set_title('Original Anatomical Channel with Unsure ROI Changes')
-    ax[1].axis('off')
-
-    # Plot 3: Corrected anatomical channel with removed, new, and common unsure ROIs (Red channel)
-    corrected_img = np.zeros((mean_anat_corrected.shape[0], mean_anat_corrected.shape[1], 3), dtype='int32')
-    corrected_img[:, :, 0] = adjust_contrast(mean_anat_corrected)  # Red channel for anatomical data
-
-    # Overlay removed (magenta), new (orange), and common (blue) unsure ROIs on corrected image
-    # Removed unsure ROIs - magenta
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        corrected_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed unsure ROIs
-
-    # New unsure ROIs - orange
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        corrected_img[x, y, :] = np.array([255, 165, 0])  # Orange for new unsure ROIs
-
-    # Common unsure ROIs - blue
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        corrected_img[x, y, :] = np.array([0, 0, 255])  # Blue for common unsure ROIs
-
-    ax[2].imshow(corrected_img)
-    ax[2].set_title('Corrected Anatomical Channel with Unsure ROI Changes')
-    ax[2].axis('off')
-
-    # Plot 4: Original anatomical channel showing only removed unsure ROIs
-    diff_matrix = mean_anat - mean_anat_corrected
-    diff_img = np.zeros((diff_matrix.shape[0], diff_matrix.shape[1], 3), dtype='int32')
-    diff_img[:, :, 0] = adjust_contrast(diff_matrix)  # Red channel for difference data
-
-    # Removed unsure ROIs - magenta (to distinguish clearly from other ROIs)
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        diff_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed unsure ROIs
-
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        diff_img[x, y, :] = np.array([255, 165, 0])  # Orange for new unsure ROIs
-
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        diff_img[x, y, :] = np.array([0, 0, 255])  # Blue for common unsure ROIs
-
-    ax[3].imshow(diff_img)
-    ax[3].set_title('Difference between Original and Corrected Anatomical Channels with Unsure ROIs')
-    ax[3].axis('off')
-
-    # Adjust layout to ensure there is no overlap
-    plt.tight_layout()
-
-     # Add space for titles
-    plt.subplots_adjust(top=0.85)
-
-    # Save all plots in a single PDF file
-    plt.savefig('unsure_ROI_combined_plot_fn.pdf')
-
-    #plt.show()
-
-
-#PLOTTING INHIIBITORY NEURONS
-
-def plot_combined_inhibitory_rois(mean_func, mean_anat, mean_anat_corrected, labeled_masks_img_orig, labeled_masks_img_corr):
+def get_excitory_rois(masks_anat, inhibitory_mask, unsure_mask):
     """
-    Plots removed, new, and common inhibitory ROIs on both anatomical and functional channels.
+    Identifies excitatory ROIs by excluding inhibitory and unsure ROIs from the anatomical masks.
 
     Parameters:
-    - mean_func: numpy array, mean functional image (green channel).
-    - mean_anat: numpy array, mean anatomical image before correction.
-    - mean_anat_corrected: numpy array, mean anatomical image after correction.
-    - labeled_masks_img_orig: numpy array, inhibitory masks in the original anatomical image.
-    - labeled_masks_img_corr: numpy array, inhibitory masks in the corrected anatomical image.
+    - masks_anat (numpy.ndarray): Anatomical masks.
+    - inhibitory_mask (numpy.ndarray): Mask of inhibitory neurons.
+    - unsure_mask (numpy.ndarray): Mask of unsure neurons.
+
+    Returns:
+    - excitory (numpy.ndarray): Mask of excitatory neurons.
+
+    Note:
+    - The function name contains a typo ('excitory' instead of 'excitatory').
+      Consider renaming the function to 'get_excitatory_rois' for clarity.
     """
-    
-    # Identify removed, new, and common inhibitory neurons
-    removed_inhibitory = identify_removed_neurons(labeled_masks_img_orig, labeled_masks_img_corr)
-    new_inhibitory = identify_new_neurons(labeled_masks_img_orig, labeled_masks_img_corr)
-    common_inhibitory = identify_common_neurons(labeled_masks_img_orig, labeled_masks_img_corr)
-    print(f"Number of common inhibitory ROIs: {len(common_inhibitory)}")
+    inhibit = inhibitory_mask[:, :, 0]
+    unsure = unsure_mask[:, :, 0]
 
-    # Create masks for removed, new, and common inhibitory ROIs
-    labeled_orig_inhibitory, _ = label(labeled_masks_img_orig[:, :, 0])
-    labeled_corr_inhibitory, _ = label(labeled_masks_img_corr[:, :, 0])
+    anat_minus_inhibit = identify_new_neurons(inhibit, masks_anat)
+    anat_minus_inhibit = isolate_neurons(masks_anat, list(anat_minus_inhibit))
 
-    removed_mask = isolate_neurons(labeled_orig_inhibitory, removed_inhibitory)
-    new_mask = isolate_neurons(labeled_corr_inhibitory, new_inhibitory)
-    common_mask = isolate_neurons(labeled_corr_inhibitory, common_inhibitory)
+    excitory = identify_new_neurons(unsure, anat_minus_inhibit)
+    excitory = isolate_neurons(masks_anat, list(excitory))
 
-    # Step  Calculate the difference between the original and corrected red channels
-    diff_matrix = mean_anat - mean_anat_corrected
-    img_diff = prep_img(diff_matrix)
-
-    # Create a figure with three subplots
-    fig, ax = plt.subplots(1, 4, figsize=(40, 10))
-
-    # Plot 1: Functional channel with inhibitory ROI labels (Green channel) - Overlays removed, new, and common inhibitory ROIs
-    func_img = np.zeros((mean_func.shape[0], mean_func.shape[1], 3), dtype='int32')
-    func_img[:, :, 1] = adjust_contrast(mean_func)  # Green channel for functional data
-
-    # Removed inhibitory ROIs - Magenta
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        func_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed inhibitory ROIs
-
-    # New inhibitory ROIs - Orange
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        func_img[x, y, :] = np.array([255, 165, 0])  # Orange for new inhibitory ROIs
-
-    # Common inhibitory ROIs - Blue
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        func_img[x, y, :] = np.array([0, 0, 255])  # Blue for common inhibitory ROIs
-
-    ax[0].imshow(func_img)
-    ax[0].set_title('Functional Channel (Green) with Removed, New, and Common Inhibitory ROIs')
-    ax[0].axis('off')
-
-    # Plot 2: Original anatomical channel with removed, new, and common inhibitory ROIs (Red channel)
-    anat_img = np.zeros((mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
-    anat_img[:, :, 0] = adjust_contrast(mean_anat)  # Red channel for anatomical data
-
-    # Removed inhibitory ROIs - Magenta
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        anat_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed inhibitory ROIs
-
-    # New inhibitory ROIs - Orange
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        anat_img[x, y, :] = np.array([255, 165, 0])  # Orange for new inhibitory ROIs
-
-    # Common inhibitory ROIs - Blue
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        anat_img[x, y, :] = np.array([0, 0, 255])  # Blue for common inhibitory ROIs
-
-    ax[1].imshow(anat_img)
-    ax[1].set_title('Original Anatomical Channel with Inhibitory ROI Changes')
-    ax[1].axis('off')
-
-    # Plot 3: Corrected anatomical channel with removed, new, and common inhibitory ROIs (Red channel)
-    corrected_img = np.zeros((mean_anat_corrected.shape[0], mean_anat_corrected.shape[1], 3), dtype='int32')
-    corrected_img[:, :, 0] = adjust_contrast(mean_anat_corrected)  # Red channel for anatomical data
-
-    # Removed inhibitory ROIs - Magenta
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        corrected_img[x, y, :] = np.array([255, 0, 255])  # Magenta for removed inhibitory ROIs
-
-    # New inhibitory ROIs - Orange
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        corrected_img[x, y, :] = np.array([255, 165, 0])  # Orange for new inhibitory ROIs
-
-    # Common inhibitory ROIs - Blue
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        corrected_img[x, y, :] = np.array([0, 0, 255])  # Blue for common inhibitory ROIs
-
-    ax[2].imshow(corrected_img)
-    ax[2].set_title('Corrected Anatomical Channel with Inhibitory ROI Changes')
-    ax[2].axis('off')
-
-    # Plot 4: Difference of original and corrected anatomical channels with inhibitory ROIs
-    # Overlay removed inhibitory ROIs on img_diff - Magenta
-    x_all, y_all = np.where(find_boundaries(removed_mask))
-    for x, y in zip(x_all, y_all):
-        img_diff[x, y, :] = np.array([255, 0, 255])  # Magenta for removed inhibitory ROIs
-
-    # Overlay new inhibitory ROIs on img_diff - Orange
-    x_all, y_all = np.where(find_boundaries(new_mask))
-    for x, y in zip(x_all, y_all):
-        img_diff[x, y, :] = np.array([255, 165, 0])  # Orange for new inhibitory ROIs
-
-    # Overlay common inhibitory ROIs on img_diff - Blue
-    x_all, y_all = np.where(find_boundaries(common_mask))
-    for x, y in zip(x_all, y_all):
-        img_diff[x, y, :] = np.array([0, 0, 255])  # Blue for common inhibitory ROIs
-
-    ax[3].imshow(img_diff)
-    ax[3].set_title('Difference of Original and Corrected Anatomical Channels with Inhibitory ROIs')
-    ax[3].axis('off')
+    return excitory
 
 
-    # Adjust layout to ensure there is no overlap
+def superimpose(ax, with_mask=True, mean_func=None, max_func=None,
+                mean_anat=None, inhibit_mask=None):
+    """
+    Creates a superimposed image of anatomical and functional data with optional mask overlays.
+
+    Parameters:
+    - ax (matplotlib.axes.Axes): The axes to plot on.
+    - with_mask (bool, optional): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray, optional): Mean functional image data.
+    - max_func (numpy.ndarray, optional): Max projection of functional data.
+    - mean_anat (numpy.ndarray, optional): Mean anatomical image data.
+    - inhibit_mask (numpy.ndarray, optional): Mask of inhibitory neurons.
+
+    This function superimposes the mean anatomical and functional images, and overlays inhibitory neuron boundaries.
+    """
+    if max_func is None:
+        f = mean_func
+    elif mean_func is None:
+        f = max_func
+    else:
+        raise ValueError('Need to specify either mean_func or max_func.')
+
+    super_img = np.zeros((f.shape[0], f.shape[1], 3), dtype='int32')
+    super_img[:, :, 0] = adjust_contrast(mean_anat)
+    super_img[:, :, 1] = adjust_contrast(f)
+    super_img = adjust_contrast(super_img)
+    if with_mask and inhibit_mask is not None:
+        x_all, y_all = np.where(find_boundaries(inhibit_mask[:, :, 0]))
+        super_img[x_all, y_all, :] = [255, 255, 255]
+    ax.imshow(super_img)
+    adjust_layout(ax)
+    ax.set_title('Channel Images Superimposed')
+
+
+def shared_masks(ax, masks_anat=None, inhibit_mask=None,
+                 unsure_mask=None, labels=None):
+    """
+    Displays shared masks by overlaying anatomical, inhibitory, and unsure masks.
+
+    Parameters:
+    - ax (matplotlib.axes.Axes): The axes to plot on.
+    - masks_anat (numpy.ndarray, optional): Anatomical masks.
+    - inhibit_mask (numpy.ndarray, optional): Mask of inhibitory neurons.
+    - unsure_mask (numpy.ndarray, optional): Mask of unsure neurons.
+    - labels (numpy.ndarray, optional): Labels for ROIs.
+
+    This function overlays masks of different types in different color channels for visualization.
+    """
+    label_masks = np.zeros(
+        (masks_anat.shape[0], masks_anat.shape[1], 3), dtype='int32')
+    if inhibit_mask is not None:
+        label_masks[:, :, 0] = inhibit_mask[:, :, 0]
+    if masks_anat is not None:
+        label_masks[:, :, 1] = masks_anat
+    if unsure_mask is not None:
+        label_masks[:, :, 2] = unsure_mask[:, :, 0]
+
+    label_masks[label_masks >= 1] = 255
+    label_masks = label_masks.astype('int32')
+    ax.imshow(label_masks)
+    adjust_layout(ax)
+    ax.set_title('Channel Masks Superimposed')
+
+
+def superimposed_plots(with_mask, mean_func, max_func, mean_anat,
+                       masks_anat_both, inhibit_mask_both,
+                       unsure_mask_both, labels_both):
+    """
+    Generates superimposed plots of images and masks before and after correction.
+
+    Parameters:
+    - with_mask (bool): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray): Mean functional image data.
+    - max_func (numpy.ndarray): Max projection of functional data.
+    - mean_anat (numpy.ndarray): Mean anatomical image data.
+    - masks_anat_both (tuple): Tuple containing anatomical masks before and after correction.
+    - inhibit_mask_both (tuple): Tuple containing inhibitory masks before and after correction.
+    - unsure_mask_both (tuple): Tuple containing unsure masks before and after correction.
+    - labels_both (tuple): Tuple containing labels before and after correction.
+
+    This function creates plots comparing the superimposed images and masks before and after correction.
+    """
+    masks_anat, masks_anat_corrected = masks_anat_both
+    inhibit_mask, inhibit_mask_corr = inhibit_mask_both
+    unsure_mask, unsure_mask_corr = unsure_mask_both
+
+    labels, labels_corr = labels_both
+
+    fig, axs = plt.subplots(nrows=2, ncols=2, figsize=(12, 6))
+
+    superimpose(axs[0][0], with_mask=with_mask, mean_func=mean_func,
+                mean_anat=mean_anat, inhibit_mask=inhibit_mask)
+    shared_masks(ax=axs[0][1], masks_anat=masks_anat,
+                 inhibit_mask=inhibit_mask, unsure_mask=unsure_mask, labels=labels)
+
+    superimpose(axs[1][0], with_mask=with_mask, mean_func=mean_func,
+                mean_anat=mean_anat, inhibit_mask=inhibit_mask_corr)
+    shared_masks(ax=axs[1][1], masks_anat=masks_anat_corrected,
+                 inhibit_mask=inhibit_mask_corr, unsure_mask=unsure_mask_corr, labels=labels_corr)
+
     plt.tight_layout()
-
-    # Add space for titles
-    plt.subplots_adjust(top=0.85)
-
-    plt.rcParams['savefig.dpi'] = 1000
-    plt.savefig(f'inhibitory_rois_combined_f.pdf')
-    # # plt.show()
-   
-
-=======
-# def common_neurons_comparison_image(
-#         comp_mask_type,
-#         labels,
-#         labels_corrected,
-#         mean_anat,
-#         mean_anat_corrected,
-#         masks_anat,
-#         masks_anat_corrected,
-#         labeled_masks_img_orig,
-#         labeled_masks_img_corr,
-#         unsure_masks_img_orig,
-#         unsure_masks_img_corr,
-#         with_mask,
-#         mean_func):
-#     """
-#     Generating image with anat neurons present throughout before and after bleedthrough correction
-#      """
-
-#     # Identify neurons that are present in both original and corrected masks
-#     labeled_anat, num_features_anat = label(masks_anat)
-#     labeled_anat_corrected, num_features_corrected = label(
-#         masks_anat_corrected)
-
-#     common_neurons = set()
-
-#     # Iterate through each labeled region in the original mask
-#     for i in range(1, num_features_anat + 1):
-#         # Create a mask for the current neuron in the original mask
-#         neuron_mask = (labeled_anat == i)
-
-#         # Check if this neuron overlaps in the corrected mask
-#         overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
-
-#         # If there is overlap, it means this neuron is present in both
-#         if overlap:
-#             common_neurons.add(i)
-
-#     # Isolate common neurons
-#     common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
-
-#     # Generate the figure
-#     fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-
-#     # Plot the original anatomical image with common neurons with boundary
-#     anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=labeled_masks_img_orig,
-#          unsure_masks_img=unsure_masks_img_orig, with_mask=with_mask, title='Common Neurons (Original)')
-#     # Plot the corrected anatomical image with common neurons with boundary
-#     anat(ax[1], mean_anat_corrected, common_neurons_mask, labeled_masks_img=labeled_masks_img_corr,
-#          unsure_masks_img=unsure_masks_img_corr, with_mask=with_mask, title='Common Neurons (Corrected)')
-
-#     plt.rcParams['savefig.dpi'] = 1000
-#     plt.savefig(f'common_neurons_comparison.pdf')
-#     plt.show()
-
-# # Functional Channel included
+    plt.savefig('plot_results/superimposed_plots.png')
 
 
-# def common_neurons_with_func(
-#         comp_mask_type,
-#         labels,
-#         labels_corrected,
-#         mean_anat,
-#         mean_anat_corrected,
-#         masks_anat,
-#         masks_anat_corrected,
-#         labeled_masks_img_orig,
-#         labeled_masks_img_corr,
-#         unsure_masks_img_orig,
-#         unsure_masks_img_corr,
-#         with_mask,
-#         mean_func):
-#     """
-#     Generates a plot with comparisons of the original and corrected anatomical channel images with masks, including functional neurons projection.
-#     """
-#     # Identify neurons that are present in both original and corrected masks
-#     labeled_anat, num_features_anat = label(masks_anat)
-#     labeled_anat_corrected, num_features_corrected = label(
-#         masks_anat_corrected)
-
-#     common_neurons = set()
-
-#     # Iterate through each labeled region in the original mask
-#     for i in range(1, num_features_anat + 1):
-#         # Create a mask for the current neuron in the original mask
-#         neuron_mask = (labeled_anat == i)
-
-#         # Check if this neuron overlaps in the corrected mask
-#         overlap = np.any(neuron_mask & (labeled_anat_corrected > 0))
-
-#         # If there is overlap, it means this neuron is present in both
-#         if overlap:
-#             common_neurons.add(i)
-
-#     # Isolate common neurons
-#     common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
-
-#     # Generate the figure
-#     fig, ax = plt.subplots(1, 3, figsize=(30, 10))
-
-#     # Plot the original anatomical image with common neurons highlighted
-#     anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=labeled_masks_img_orig,
-#          unsure_masks_img=unsure_masks_img_orig, with_mask=with_mask, title='Common Neurons (Original)')
-
-#     # Plot the corrected anatomical image with common neurons highlighted
-#     anat(ax[1], mean_anat_corrected, common_neurons_mask, labeled_masks_img=labeled_masks_img_corr,
-#          unsure_masks_img=unsure_masks_img_corr, with_mask=with_mask, title='Common Neurons (Corrected)')
-
-#     # Prepare composite image for the corrected anatomical image with functional data
-#     corr_func_img = prep_img(mean_anat_corrected, mean_func)
-
-#     # Overlay the masks and boundaries on corr_func_img
-#     if with_mask:
-#         iter_lst_corr = []
-
-#         if common_neurons_mask is not None:
-#             iter_lst_corr.append((common_neurons_mask, [255, 255, 255]))
-
-#         if labeled_masks_img_corr is not None:
-#             iter_lst_corr.append(
-#                 (labeled_masks_img_corr[:, :, 0], [255, 255, 0]))
-
-#         if unsure_masks_img_corr is not None:
-#             iter_lst_corr.append(
-#                 (unsure_masks_img_corr[:, :, 0], [0, 196, 255]))
-
-#         for mask, color in iter_lst_corr:
-#             x_all, y_all = np.where(find_boundaries(mask))
-#             corr_func_img[x_all, y_all, :] = np.array(color)
-
-#     ax[2].imshow(corr_func_img)
-#     adjust_layout(ax[2])
-#     ax[2].set_title('Common Neurons with Func (Corrected)')
-
-#     plt.rcParams['savefig.dpi'] = 1000
-#     plt.savefig(f'common_neurons_with_func_comparison.pdf')
-#     plt.show()
-
-
-# def common_neurons_comparison_image(
-#         comp_mask_type,
-#         labels,
-#         labels_corrected,
-#         mean_anat,
-#         mean_anat_corrected,
-#         masks_anat,
-#         masks_anat_corrected,
-#         labeled_masks_img_orig,
-#         labeled_masks_img_corr,
-#         unsure_masks_img_orig,
-#         unsure_masks_img_corr,
-#         with_mask,
-#         mean_func):
-#     """
-#     Generates a figure with comparisons of the original and corrected anatomical channel images with masks, including removed neurons.
-
-#     Parameters:
-#     - mean_anat (numpy array): The mean anatomical image data.
-#     - masks_anat (numpy array): The masks for anatomical ROIs.
-#     - labeled_masks_img_orig (numpy array): The labeled masks image for original visualization.
-#     - unsure_masks_img_orig (numpy array): The unsure masks image for original visualization.
-#     - with_mask (bool, optional): Whether to include mask boundaries in the plot. Defaults to True.
-#     - mean_func (numpy array, optional): The mean functional image data for applying a mean function. Defaults to None.
-
-    This function generates a figure with comparisons of the original and corrected anatomical channel images, including plots for misidentified, correct, and missed ROIs.
+def match_neurons(mask1, mask2, overlap_threshold=0.5):
     """
-    # Identify removed neurons
-    labeled_anat, num_features_anat = label(masks_anat)
-    labeled_anat_corrected, num_features_corrected = label(
-        masks_anat_corrected)
+    Matches neurons between two masks based on spatial overlap.
 
-    common_neurons = list(identify_common_neurons(
-        masks_anat, masks_anat_corrected))
-    # Isolate removed neurons
-    common_neurons_mask = isolate_neurons(masks_anat, common_neurons)
+    Parameters:
+    - mask1 (numpy.ndarray): Labeled mask before correction.
+    - mask2 (numpy.ndarray): Labeled mask after correction.
+    - overlap_threshold (float, optional): Minimum overlap ratio to consider neurons as matching.
 
-    # Generate the figure
-    fig, ax = plt.subplots(1, 2, figsize=(25, 10))
-    anat(ax[0], mean_anat=mean_anat, masks=common_neurons_mask, labeled_masks_img=None,
-         unsure_masks_img=None, with_mask=True, title='Orig')
+    Returns:
+    - matches (dict): Keys are neuron IDs in mask1, values are matching neuron IDs in mask2.
+    - unmatched_mask1 (set): Neuron IDs in mask1 with no match in mask2.
+    - unmatched_mask2 (set): Neuron IDs in mask2 with no match in mask1.
+    """
+    matches = {}
+    unmatched_mask1 = set(np.unique(mask1)) - {0}
+    unmatched_mask2 = set(np.unique(mask2)) - {0}
 
-#     anat(ax[1], mean_anat_corrected, common_neurons_mask, labeled_masks_img_corr,
-#          unsure_masks_img_corr, with_mask=True, title='Corr. Anat. New')
-#     plt.rcParams['savefig.dpi'] = 1000
-#     plt.savefig(f'new_neurons_bleedthrough_channel_comparison.pdf')
-#     # # plt.show()
->>>>>>> a86e0b8 (stuff chainged)
+    for neuron_id1 in unmatched_mask1.copy():
+        neuron_mask1 = (mask1 == neuron_id1).astype(np.int32)
+
+        for neuron_id2 in unmatched_mask2:
+            neuron_mask2 = (mask2 == neuron_id2).astype(np.int32)
+            intersection = np.logical_and(neuron_mask1, neuron_mask2).sum()
+            union = neuron_mask1.sum() + neuron_mask2.sum() - intersection
+            overlap_ratio = intersection / union if union != 0 else 0
+
+            if overlap_ratio >= overlap_threshold:
+                matches[neuron_id1] = neuron_id2
+                unmatched_mask1.remove(neuron_id1)
+                unmatched_mask2.remove(neuron_id2)
+                break  # Assuming one-to-one matching
+
+    return matches, unmatched_mask1, unmatched_mask2
+
+
+def identify_neuron_changes(mask1, mask2, overlap_threshold=0.5):
+    """
+    Identifies common, removed, and new neurons between two masks based on spatial overlap.
+
+    Parameters:
+    - mask1 (numpy.ndarray): Labeled mask before correction.
+    - mask2 (numpy.ndarray): Labeled mask after correction.
+    - overlap_threshold (float, optional): Minimum overlap ratio to consider neurons as matching.
+
+    Returns:
+    - common_neurons_mask1 (set): Neuron IDs in mask1 that have matches in mask2.
+    - common_neurons_mask2 (set): Neuron IDs in mask2 that have matches in mask1.
+    - removed_neurons (set): Neuron IDs in mask1 not present in mask2.
+    - new_neurons (set): Neuron IDs in mask2 not present in mask1.
+    """
+    matches, unmatched_mask1, unmatched_mask2 = match_neurons(
+        mask1, mask2, overlap_threshold)
+    common_neurons_mask1 = set(matches.keys())
+    common_neurons_mask2 = set(matches.values())
+    removed_neurons = unmatched_mask1
+    new_neurons = unmatched_mask2
+
+    return common_neurons_mask1, common_neurons_mask2, removed_neurons, new_neurons
+
+
+def three_by_four_comparison(with_mask, mean_func, mean_anat, mean_anat_corrected,
+                             masks_anat_both, masks_func, labels_both):
+    """
+    Generates a 3x4 grid of images comparing the effects of bleedthrough correction on different ROI categories.
+
+    Parameters:
+    - with_mask (bool): Whether to include mask boundaries.
+    - mean_func (numpy.ndarray): Mean functional image data.
+    - mean_anat (numpy.ndarray): Mean anatomical image before correction.
+    - mean_anat_corrected (numpy.ndarray): Mean anatomical image after correction.
+    - masks_anat_both (tuple): Tuple containing anatomical masks before and after correction.
+    - masks_func (numpy.ndarray): Functional masks.
+    - labels_both (tuple): Tuple containing labels before and after correction.
+
+    This function creates a grid of images, each row corresponding to a category (inhibitory, excitatory, unsure),
+    and overlays common, removed, and new neurons in different colors.
+    """
+    masks_anat, masks_anat_corrected = masks_anat_both
+    labels, labels_corrected = labels_both
+
+    fig, axs = plt.subplots(nrows=3, ncols=4, figsize=(20, 15))
+
+    column_titles = ['Green Channel', 'Original Red Channel',
+                     'Corrected Red Channel', 'Superimposed Channel']
+    for ax, col in zip(axs[0], column_titles):
+        ax.set_title(col, fontsize=14)
+
+    categories = [1, -1, 0]  # inhibitory, excitatory, unsure
+    category_names = ['Inhibitory', 'Excitatory', 'Unsure']
+
+    colors = {
+        'common': [255, 255, 255],   # White
+        'removed': [0, 255, 255],    # Cyan
+        'new': [255, 255, 0]         # Yellow
+    }
+
+    # Identify neuron changes
+    common_neurons_mask1, common_neurons_mask2, removed_neurons, new_neurons = identify_neuron_changes(
+        masks_anat, masks_anat_corrected, overlap_threshold=0.5)
+
+    for row_idx, cate in enumerate(categories):
+        axs[row_idx][0].set_ylabel(
+            f'{category_names[row_idx]} ROIs', fontsize=14)
+
+        idxs_before = set(np.where(labels == cate)[0] + 1)
+        idxs_after = set(np.where(labels_corrected == cate)[0] + 1)
+
+        common_cate = common_neurons_mask1.intersection(idxs_before)
+        removed_cate = removed_neurons.intersection(idxs_before)
+        new_cate = new_neurons.intersection(idxs_after)
+
+        common_mask = isolate_neurons(masks_anat, list(common_cate))
+        removed_mask = isolate_neurons(masks_anat, list(removed_cate))
+        new_mask = isolate_neurons(masks_anat_corrected, list(new_cate))
+
+        overlay_masks = np.zeros(
+            (mean_anat.shape[0], mean_anat.shape[1], 3), dtype='int32')
+        overlay_masks[common_mask > 0] = colors['common']
+        overlay_masks[removed_mask > 0] = colors['removed']
+        overlay_masks[new_mask > 0] = colors['new']
+
+        base_images = [
+            prep_img(mean_func),             # Green Channel
+            prep_img(mean_anat),             # Original Red Channel
+            prep_img(mean_anat_corrected),   # Corrected Red Channel
+            prep_img(mean_anat_corrected, mean_func)  # Superimposed Channel
+        ]
+
+        for col_idx in range(4):
+            base_img = base_images[col_idx].copy()
+            overlay_img = overlay_masks.copy()
+
+            alpha = 0.5
+            overlay_img_float = overlay_img.astype(np.float32)
+            base_img_float = base_img.astype(np.float32)
+
+            overlay_mask = (overlay_img.sum(axis=2) > 0)[:, :, np.newaxis]
+
+            blended_img = np.where(
+                overlay_mask,
+                (1 - alpha) * base_img_float + alpha * overlay_img_float,
+                base_img_float
+            )
+            blended_img = np.clip(blended_img, 0, 255).astype('uint8')
+
+            axs[row_idx][col_idx].imshow(blended_img)
+            axs[row_idx][col_idx].axis('off')
+
+    handles = [mpatches.Patch(color=np.array(colors[key]) / 255, label=key.capitalize())
+               for key in colors]
+    fig.legend(handles=handles, loc='upper right', fontsize=12)
+
+    plt.tight_layout()
+    plt.savefig('plot_results/three_by_four.png')
