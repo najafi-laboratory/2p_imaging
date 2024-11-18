@@ -247,9 +247,9 @@ def run(
     uptime, _ = get_trigger_time(vol_time, vol_img)
 
     # Optimize denoising parameters
-    kernel_size_range = range(50, 500, 50)  # Example range for kernel size
+    # kernel_size_range = range(50, 500, 50)  # Example range for kernel size
     # Example range for standard deviation
-    std_dev_range = range(50, 80, 5)
+    # std_dev_range = range(50, 80, 5)
     # best_kernel_size, best_std_dev = optimize_denoise_parameters(
     #     dff, spikes, neurons)
 
