@@ -142,9 +142,10 @@ def threshold(data, threshold_num_stds, const_threshold=None):
     else:
         threshold_val = const_threshold
 
-    threshold_mask = data >= threshold_val
+    above_threshold_mask = data >= threshold_val
+    below_threshold_mask = data < threshold_val
 
-    return data * threshold_mask, threshold_val
+    return data * above_threshold_mask, data * below_threshold_mask, threshold_val
 
 
 # def optimize_denoise_parameters(dff, spikes, neurons, kernel_size_range, std_dev_range):
@@ -254,10 +255,11 @@ def run(
     #     dff, spikes, neurons)
 
     # Apply denoise with the best parameters
-    smoothed = denoise(spikes, kernel_size=400,
-                       std_dev=65, neurons=neurons)
+    # smoothed = denoise(spikes, kernel_size=400,
+    #                    std_dev=65, neurons=neurons)
+    smoothed = denoise(spikes, window_length=50, polyorder=3)
 
-    thresholded_spikes, threshold_val = threshold(
+    thresholded_spikes, below_thresholded_spikes, threshold_val = threshold(
         spikes, threshold_num_stds=None, const_threshold=0.8)
 
     # Plot for certain neurons
@@ -270,4 +272,4 @@ def run(
     #             plot_for_neuron_without_smoothed_interactive(
     #                 timings=uptime, dff=dff, spikes=spikes, neuron=i, tau=oasis_tau, threshold_val=threshold_val, thresholded_spikes=thresholded_spikes)
 
-    return smoothed, spikes, uptime, threshold_val, thresholded_spikes
+    return smoothed, spikes, uptime, threshold_val, thresholded_spikes, below_thresholded_spikes

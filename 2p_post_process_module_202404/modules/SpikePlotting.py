@@ -11,21 +11,29 @@ from plotly.subplots import make_subplots
 from plotly.offline import plot
 
 
-def plot_for_neuron_without_smoothed_interactive(
-    timings, dff, spikes, threshold_val, thresholded_spikes,
-    sta, thresholded_sta, neuron=5, tau=1.25
+def plot_for_neuron_interactive(
+    timings,
+    dff,
+    spikes,
+    threshold_val,
+    thresholded_spikes,
+    below_thresh_sta,
+    above_thresh_sta,
+    neuron=5,
+    tau=0.4,
+    smoothed=False,
+    smoothed_spikes=None
 ):
     """
-    Generates an interactive HTML figure with multiple subplots for a specified neuron without smoothed data:
+    Generates an interactive HTML figure with multiple subplots for a specified neuron:
     - First row:
         - Columns 1 and 2 (spanning): Inferred spikes with threshold value plotted as a horizontal line.
-        - Column 3: Non-thresholded STA.
+        - Column 3: Below-threshold STA.
     - Second row:
         - Columns 1 and 2 (spanning): Thresholded inferred spikes.
-        - Column 3: Thresholded STA.
+        - Column 3: Above-threshold STA.
     - Third row:
-        - Column 1: DF/F data.
-        - Column 2: DF/F data with scaled thresholded spikes overlaid.
+        - Columns 1, 2, and 3 (spanning): DF/F + inferred spikes + threshold line.
 
     Args:
         timings (np.ndarray): Array of time points.
@@ -33,19 +41,34 @@ def plot_for_neuron_without_smoothed_interactive(
         spikes (np.ndarray): Inferred spike data array, shape (neurons, timepoints).
         threshold_val (float): Threshold value for spike detection for the specified neuron.
         thresholded_spikes (np.ndarray): Thresholded spikes data array, shape (neurons, timepoints).
-        sta (np.ndarray): Spike-triggered average using non-thresholded inferred spikes.
-        thresholded_sta (np.ndarray): Spike-triggered average using thresholded inferred spikes.
+        below_thresh_sta (np.ndarray): Spike-triggered average for below-threshold spikes.
+        above_thresh_sta (np.ndarray): Spike-triggered average for above-threshold spikes.
         neuron (int, optional): Index of the neuron to plot. Default is 5.
-        tau (float, optional): Tau parameter value used in analysis. Default is 1.25.
+        tau (float, optional): Tau parameter value used in analysis. Default is 0.4.
+        smoothed (bool, optional): If True, plots the smoothed spikes. Default is False.
+        smoothed_spikes (np.ndarray, optional): Smoothed spikes data array, shape (neurons, timepoints). Required if `smoothed` is True.
 
     Saves:
         An HTML file of the interactive plot in 'plot_results' directory with filename including neuron, tau, and threshold.
     """
+
     # Determine the shift due to potential different lengths between timings and spikes
     shift = len(timings) - len(spikes[neuron, :])
-    spikes_scale_factor = 0.5 * np.max(dff[neuron, :])
-    spikes_scaled = spikes[neuron, :] * spikes_scale_factor
-    thresh_spikes_scaled = thresholded_spikes[neuron, :] * spikes_scale_factor
+    dff_scale_factor = 0.3
+
+    # Adjust the layout
+    subplot_titles = (
+        f'Inferred Spikes for Neuron {neuron} (Tau={tau}, Threshold={threshold_val})',
+        'Below-threshold STA',
+        'Thresholded Inferred Spikes',
+        'Above-threshold STA',
+        'Superimposed DF/F + Inferred Spikes + Threshold'
+    )
+    specs = [
+        [{'colspan': 2}, None, {}],  # First row
+        [{'colspan': 2}, None, {}],  # Second row
+        [{'colspan': 2}, None, {}]   # Third row spans all columns
+    ]
 
     # Create subplots using Plotly with the new layout
     fig = make_subplots(
@@ -54,19 +77,8 @@ def plot_for_neuron_without_smoothed_interactive(
         shared_xaxes=False,
         vertical_spacing=0.1,
         horizontal_spacing=0.05,
-        specs=[
-            [{'colspan': 2}, None, {}],  # First row
-            [{'colspan': 2}, None, {}],  # Second row
-            [{}, {}, None]               # Third row
-        ],
-        subplot_titles=(
-            f'Inferred Spikes for Neuron {neuron} (Tau={tau}, Threshold={threshold_val})',
-            'Non-thresholded STA',
-            'Thresholded Inferred Spikes',
-            'Thresholded STA',
-            'DF/F Signal',
-            'DF/F Signal with Scaled Thresholded Spikes'
-        )
+        specs=specs,
+        subplot_titles=subplot_titles
     )
 
     # First row, columns 1 and 2: Inferred spikes with threshold line
@@ -91,13 +103,13 @@ def plot_for_neuron_without_smoothed_interactive(
         col=1
     )
 
-    # First row, column 3: Non-thresholded STA
+    # First row, column 3: Below-threshold STA
     fig.add_trace(
         go.Scatter(
-            x=np.arange(len(sta)),
-            y=sta,
+            x=np.arange(len(below_thresh_sta)),
+            y=below_thresh_sta,
             mode='lines',
-            name='Non-thresholded STA',
+            name='Below-threshold STA',
             line=dict(color='purple')
         ),
         row=1,
@@ -117,24 +129,24 @@ def plot_for_neuron_without_smoothed_interactive(
         col=1
     )
 
-    # Second row, column 3: Thresholded STA
+    # Second row, column 3: Above-threshold STA
     fig.add_trace(
         go.Scatter(
-            x=np.arange(len(thresholded_sta)),
-            y=thresholded_sta,
+            x=np.arange(len(above_thresh_sta)),
+            y=above_thresh_sta,
             mode='lines',
-            name='Thresholded STA',
+            name='Above-threshold STA',
             line=dict(color='brown')
         ),
         row=2,
         col=3
     )
 
-    # Third row, column 1: DF/F data
+    # Third row, spanning all columns: Superimposed DF/F + inferred spikes + threshold line
     fig.add_trace(
         go.Scatter(
             x=timings[shift:],
-            y=dff[neuron, :],
+            y=(dff_scale_factor * dff[neuron, :]),
             mode='lines',
             name='DF/F Signal',
             line=dict(color='blue')
@@ -142,32 +154,42 @@ def plot_for_neuron_without_smoothed_interactive(
         row=3,
         col=1
     )
-
-    # Third row, column 2: DF/F data with scaled thresholded spikes
     fig.add_trace(
         go.Scatter(
             x=timings[shift:],
-            y=dff[neuron, :],
+            y=spikes[neuron, :],
             mode='lines',
-            name='DF/F Signal',
-            line=dict(color='blue')
+            name='Inferred Spikes',
+            line=dict(color='orange')
         ),
         row=3,
-        col=2
+        col=1
     )
-    fig.add_trace(
-        go.Scatter(
-            x=timings[shift:],
-            y=thresh_spikes_scaled,
-            mode='lines',
-            name='Scaled Thresholded Spikes',
-            line=dict(color='green')
-        ),
+    fig.add_hline(
+        y=threshold_val,
+        line_dash='dash',
+        line_color='red',
+        annotation_text='Threshold',
+        annotation_position='top left',
         row=3,
-        col=2
+        col=1
     )
 
-    # Update layout and assign axis titles to each subplot
+    if smoothed:
+        # Add smoothed spikes to the third row
+        fig.add_trace(
+            go.Scatter(
+                x=timings[shift:],
+                y=smoothed_spikes[neuron, :],
+                mode='lines',
+                name='Smoothed Spikes',
+                line=dict(color='magenta')
+            ),
+            row=3,
+            col=1
+        )
+
+    # Update layout and assign axis titles
     fig.update_layout(
         height=1000,
         width=1400,
@@ -175,7 +197,6 @@ def plot_for_neuron_without_smoothed_interactive(
         showlegend=True
     )
 
-    # Assign x-axis and y-axis titles individually
     fig.update_xaxes(title_text='Time (ms)', row=1, col=1)
     fig.update_yaxes(title_text='Signal', row=1, col=1)
 
@@ -189,10 +210,7 @@ def plot_for_neuron_without_smoothed_interactive(
     fig.update_yaxes(title_text='STA Value', row=2, col=3)
 
     fig.update_xaxes(title_text='Time (ms)', row=3, col=1)
-    fig.update_yaxes(title_text='DF/F Signal', row=3, col=1)
-
-    fig.update_xaxes(title_text='Time (ms)', row=3, col=2)
-    fig.update_yaxes(title_text='Signal', row=3, col=2)
+    fig.update_yaxes(title_text='Superimposed Signal', row=3, col=1)
 
     # Save plot as HTML
     plot(

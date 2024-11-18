@@ -4,6 +4,8 @@ from scipy.signal import convolve
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import fftconvolve
 # Function to create the right-half Gaussian kernel
+from scipy.signal import savgol_filter
+import pingouin as pg
 
 
 def right_half_gaussian_kernel(std_dev, kernel_size):
@@ -76,34 +78,43 @@ def exponential_moving_average(data, alpha=0.1):
     return smoothed
 
 
-def denoise(spikes, kernel_size=1000, std_dev=1, neurons=None):
-    """
-    Denoise the spikes using a half-Gaussian kernel.
+# def denoise(spikes, kernel_size=1000, std_dev=1, neurons=None):
+#     """
+#     Denoise the spikes using a half-Gaussian kernel.
 
-    Parameters:
-    spikes : numpy array
-        The spikes to denoise.
-    kernel_size : int
-        The size of the Gaussian kernel.
-    std_dev : float
-        The standard deviation of the Gaussian kernel.
-    neurons : list, optional
-        The indices of the neurons to denoise. If None, all neurons are denoised.
+#     Parameters:
+#     spikes : numpy array
+#         The spikes to denoise.
+#     kernel_size : int
+#         The size of the Gaussian kernel.
+#     std_dev : float
+#         The standard deviation of the Gaussian kernel.
+#     neurons : list, optional
+#         The indices of the neurons to denoise. If None, all neurons are denoised.
 
-    Returns:
-    denoised_spikes : numpy array
-        The denoised spikes.
-    """
-    if neurons is None:
-        neurons = range(spikes.shape[0])
+#     Returns:
+#     denoised_spikes : numpy array
+#         The denoised spikes.
+#     """
+#     if neurons is None:
+#         neurons = range(spikes.shape[0])
 
-    x = np.arange(kernel_size)
-    kernel = right_half_gaussian_kernel(
-        kernel_size=kernel_size, std_dev=std_dev)
+#     x = np.arange(kernel_size)
+#     kernel = right_half_gaussian_kernel(
+#         kernel_size=kernel_size, std_dev=std_dev)
 
-    smoothed = np.zeros_like(spikes)
-    for i in neurons:
-        smoothed_signal = np.roll(fftconvolve(
-            spikes[i], kernel, mode='same'), kernel_size//2)
-        smoothed[i] = smoothed_signal
-    return smoothed
+#     smoothed = np.zeros_like(spikes)
+#     for i in neurons:
+#         smoothed_signal = np.roll(fftconvolve(
+#             spikes[i], kernel, mode='same'), kernel_size//2)
+#         smoothed[i] = smoothed_signal
+#     return smoothed
+
+def denoise(spikes, window_length, polyorder):
+    denoised = savgol_filter(
+        spikes, window_length=window_length, polyorder=polyorder)
+
+    # snr_before = pg.snr(spikes)
+    # snr_after = pg.snr(denoised)
+
+    return denoise
