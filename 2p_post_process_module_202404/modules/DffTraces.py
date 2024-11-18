@@ -6,8 +6,8 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 from modules import SpikeDeconv
 
-from .SpikeAnalysis import analyze_spike_traces
-from .SpikePlotting import plot_for_neuron_with_smoothed_interactive_multi_tau
+from .SpikeAnalysis import analyze_spike_traces, compute_sta
+from .SpikePlotting import plot_for_neuron_with_smoothed_interactive_multi_tau, plot_for_neuron_without_smoothed_interactive
 # compute dff from raw fluorescence signals.
 
 
@@ -45,10 +45,10 @@ def run(
         ops,
         norm=True,
         plotting_neurons=[5],
-        taus=[0.06, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.4, 1.6, 1.8, 2.0, 5],
+        taus=[0.4],
         plot_with_smoothed=False,
-        plot_with_smoothed_group=True,
-        plot_without_smoothed=False):
+        plot_with_smoothed_group=False,
+        plot_without_smoothed=True):
 
     print('===============================================')
     print('=========== dff trace normalization ===========')
@@ -74,7 +74,7 @@ def run(
         tau_spike_dict = {}
         neurons = np.arange(dff.shape[0])
         for tau in taus:
-            smoothed, spikes, uptime, threshold_val = SpikeDeconv.run(
+            smoothed, spikes, uptime, threshold_val, _ = SpikeDeconv.run(
                 ops,
                 dff,
                 oasis_tau=tau,
@@ -107,7 +107,7 @@ def run(
         # if we just specify one tau value
         tau = taus[0]
         neurons = np.arange(dff.shape[0])
-        smoothed, spikes, _, _ = SpikeDeconv.run(
+        smoothed, spikes, uptime, threshold_val, thresholded_spikes = SpikeDeconv.run(
             ops,
             dff,
             oasis_tau=tau,
@@ -115,6 +115,29 @@ def run(
             plotting_neurons=plotting_neurons,
             plot_with_smoothed=plot_with_smoothed,
             plot_without_smoothed=plot_without_smoothed)
+
+        sta = None
+        thresholded_sta = None
+        if len(plotting_neurons) == 1:
+            n = plotting_neurons[0]
+            sta = compute_sta(spikes_neuron=spikes[n, :], dff_neuron=dff[n, :])[
+                'sta_dff']
+            thresholded_sta = compute_sta(
+                spikes_neuron=thresholded_spikes[n, :], dff_neuron=dff[n, :])['sta_dff']
+        else:
+            raise NotImplementedError(
+                "STA calculationNot yet implemented for multiple neurons")
+
+        # PLOTTING
+        plot_for_neuron_without_smoothed_interactive(
+            tau=tau,
+            timings=uptime,
+            dff=dff,
+            spikes=spikes,
+            threshold_val=threshold_val,
+            thresholded_spikes=thresholded_spikes,
+            sta=sta,
+            thresholded_sta=thresholded_sta)
 
         save(ops, 'spikes', spikes)
         print("Spike traces saved under name 'spikes'")

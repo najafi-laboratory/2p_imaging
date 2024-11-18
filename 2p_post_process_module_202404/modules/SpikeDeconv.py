@@ -257,17 +257,17 @@ def run(
     smoothed = denoise(spikes, kernel_size=400,
                        std_dev=65, neurons=neurons)
 
-    _, threshold_val = threshold(
-        spikes, threshold_num_stds=None, const_threshold=2.0)
+    thresholded_spikes, threshold_val = threshold(
+        spikes, threshold_num_stds=None, const_threshold=0.8)
 
     # Plot for certain neurons
-    if plot_without_smoothed or plot_with_smoothed:
-        for i in plotting_neurons:
-            if plot_with_smoothed:
-                plot_for_neuron_with_smoothed_interactive(timings=uptime, dff=dff, spikes=spikes,
-                                                          convolved_spikes=smoothed, neuron=i, tau=oasis_tau)
-            if plot_without_smoothed:
-                plot_for_neuron_without_smoothed_interactive(
-                    timings=uptime, dff=dff, spikes=spikes, neuron=i, tau=oasis_tau)
+    # if plot_without_smoothed or plot_with_smoothed:
+    #     for i in plotting_neurons:
+    #         if plot_with_smoothed:
+    #             plot_for_neuron_with_smoothed_interactive(timings=uptime, dff=dff, spikes=spikes,
+    #                                                       convolved_spikes=smoothed, neuron=i, tau=oasis_tau, threshold_val=threshold_val)
+    #         if plot_without_smoothed:
+    #             plot_for_neuron_without_smoothed_interactive(
+    #                 timings=uptime, dff=dff, spikes=spikes, neuron=i, tau=oasis_tau, threshold_val=threshold_val, thresholded_spikes=thresholded_spikes)
 
-    return smoothed, spikes, uptime, threshold_val
+    return smoothed, spikes, uptime, threshold_val, thresholded_spikes
