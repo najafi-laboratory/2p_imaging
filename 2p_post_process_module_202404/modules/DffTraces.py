@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 from modules import SpikeDeconv
 
 from .SpikeAnalysis import analyze_spike_traces, compute_sta
-from .SpikePlotting import plot_for_neuron_with_smoothed_interactive_multi_tau, plot_for_neuron_interactive
+from .SpikePlotting import plot_for_neuron_with_smoothed_interactive_multi_tau, plot_for_neuron_interactive, plot_stas_single_thresh_neuron
 # compute dff from raw fluorescence signals.
 
 
@@ -140,6 +140,9 @@ def run(
             above_thresh_sta=above_thresh_sta,
             smoothed=plot_with_smoothed,
             smoothed_spikes=smoothed)
+
+        plot_stas_single_thresh_neuron(
+            above_sta=above_thresh_sta, below_sta=below_thresh_sta, thresh_val=threshold_val, tau=tau, neuron=plotting_neurons[0])
 
         save(ops, 'spikes', spikes)
         print("Spike traces saved under name 'spikes'")

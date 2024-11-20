@@ -3,12 +3,7 @@ import matplotlib.pyplot as plt
 import plotly.graph_objects as go
 from plotly.offline import plot
 from plotly.subplots import make_subplots
-
-
-import numpy as np
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-from plotly.offline import plot
+import os
 
 
 def plot_for_neuron_interactive(
@@ -510,10 +505,70 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
     )
 
 
-def plot_stas_single_thresh_neuron(above_sta, below_sta, thresh_val, neuron):
-    """Plots the above- and below-threshold STAs on a single plot
-       for a given threshold value."""
-    pass
+def plot_stas_single_thresh_neuron(above_sta, below_sta, thresh_val, neuron, tau):
+    """
+    Plots the above- and below-threshold STAs on a single plot for a given threshold value.
+
+    Args:
+        above_sta (np.ndarray): Spike-triggered average for spikes above the threshold, shape (neurons, timepoints).
+        below_sta (np.ndarray): Spike-triggered average for spikes below the threshold, shape (neurons, timepoints).
+        thresh_val (float): Threshold value used for separating spikes.
+        neuron (int): Index of the neuron to plot.
+
+    Saves:
+        A plot as an HTML file in the 'plot_results' directory with the filename including neuron and threshold value.
+    """
+    output_dir = 'plot_results'
+    os.makedirs(output_dir, exist_ok=True)
+
+    fig = go.Figure()
+
+    fig.add_trace(
+        go.Scatter(
+            x=np.arange(len(below_sta)),
+            y=below_sta,
+            mode='lines',
+            name='Below-Threshold STA',
+            line=dict(color='blue')
+        )
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=np.arange(len(above_sta)),
+            y=above_sta,
+            mode='lines',
+            name='Above-Threshold STA',
+            line=dict(color='orange')
+        )
+    )
+
+    fig.add_hline(
+        y=thresh_val,
+        line_dash='dash',
+        line_color='red',
+        annotation_text=f'Threshold ({thresh_val})',
+        annotation_position='top left')
+
+    fig.update_layout(
+        title=f'STAs for Neuron {neuron} at Threshold {thresh_val}',
+        title_x=0.5,  # Center-align the title
+        xaxis_title='Time Relative to Spike (samples)',
+        yaxis_title='STA Amplitude',
+        legend=dict(
+            x=0.5,
+            y=-0.2,
+            xanchor='center',
+            orientation='h',
+            font=dict(size=10)
+        ),
+        height=600,
+        width=800,
+        margin=dict(t=80)
+    )
+
+    filename = f'{output_dir}/neuron_{neuron}_thresh_{thresh_val}_tau_{tau}_sta_plot.html'
+    fig.write_html(filename)
 
 
 def plot_stas_multi_thresh_neuron(thresh_vals, neuron):
