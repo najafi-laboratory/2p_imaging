@@ -508,3 +508,14 @@ def plot_for_neuron_with_smoothed_interactive_multi_tau(
     fig.write_html(
         f'plot_results/neuron_{neuron}_tau_list_smoothed_plot.html'
     )
+
+
+def plot_stas_single_thresh_neuron(above_sta, below_sta, thresh_val, neuron):
+    """Plots the above- and below-threshold STAs on a single plot
+       for a given threshold value."""
+    pass
+
+
+def plot_stas_multi_thresh_neuron(thresh_vals, neuron):
+    """Plots above- and below-threshold STAs across multiple threshold values"""
+    pass

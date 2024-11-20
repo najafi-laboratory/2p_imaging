@@ -15,7 +15,7 @@ from skopt.space import Integer, Real
 from skopt.utils import use_named_args
 
 from .DenoiseSpikes import denoise
-from .SpikePlotting import *
+# from .SpikePlotting import *
 
 
 def read_raw_voltages(ops):
