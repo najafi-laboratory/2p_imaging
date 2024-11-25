@@ -571,6 +571,84 @@ def plot_stas_single_thresh_neuron(above_sta, below_sta, thresh_val, neuron, tau
     fig.write_html(filename)
 
 
-def plot_stas_multi_thresh_neuron(thresh_vals, neuron):
+def plot_stas_multi_thresh_neuron(thresh_vals, above_thresh_stas, below_thresh_stas, tau, neuron):
     """Plots above- and below-threshold STAs across multiple threshold values"""
-    pass
+
+    output_dir = 'plot_results'
+    assert thresh_vals.shape[0] == len(above_thresh_stas) == len(below_thresh_stas), \
+        "Length of thresh_vals, above_thresh_stas, and below_thresh_stas must be the same."
+
+    # Create subplots for each threshold value
+    num_thresholds = len(thresh_vals)
+    fig = make_subplots(
+        rows=num_thresholds,
+        cols=1,
+        shared_xaxes=False,
+        vertical_spacing=0.05,
+        subplot_titles=[
+            f'Threshold = {round(thresh, 2)}' for thresh in thresh_vals]
+    )
+
+    # Add traces for each threshold
+    for i, (thresh, above_sta, below_sta) in enumerate(zip(thresh_vals, above_thresh_stas, below_thresh_stas)):
+        fig.add_trace(
+            go.Scatter(
+                x=np.arange(len(below_sta)),
+                y=below_sta,
+                mode='lines',
+                name='Below-Threshold STA',
+                line=dict(color='blue'),
+                showlegend=(i == 0)  # Only show legend for the first subplot
+            ),
+            row=i + 1,
+            col=1
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=np.arange(len(above_sta)),
+                y=above_sta,
+                mode='lines',
+                name='Above-Threshold STA',
+                line=dict(color='orange'),
+                showlegend=(i == 0)  # Only show legend for the first subplot
+            ),
+            row=i + 1,
+            col=1
+        )
+
+        fig.add_hline(
+            y=thresh,
+            line_dash='dash',
+            line_color='red',
+            annotation_text=f'Threshold ({round(thresh, 2)})',
+            annotation_position='top left',
+            row=i + 1,
+            col=1
+        )
+
+    # Update layout
+    fig.update_layout(
+        title=f'STAs for Neuron {neuron} Across Multiple Thresholds (Tau={tau})',
+        title_x=0.5,  # Center-align the title
+        height=300 * num_thresholds,  # Adjust height based on the number of thresholds
+        width=800,
+        showlegend=True,
+        legend=dict(
+            x=0.5,
+            y=-0.1,  # Place legend below the plot
+            xanchor='center',
+            orientation='h',
+            font=dict(size=10)
+        )
+    )
+
+    # Add axis labels for each subplot
+    for i in range(num_thresholds):
+        fig.update_xaxes(
+            title_text='Time Relative to Spike (samples)', row=i + 1, col=1)
+        fig.update_yaxes(title_text='STA Amplitude', row=i + 1, col=1)
+
+    # Save plot as an HTML file
+    filename = f'{output_dir}/neuron_{neuron}_tau_{tau}_multi_thresh_sta_plot.html'
+    fig.write_html(filename)

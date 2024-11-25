@@ -121,31 +121,45 @@ def spike_detect(ops, dff, tau=1.25):
 
 
 def threshold(data, threshold_num_stds, const_threshold=None):
-    """Threshold off spikes below a certain hard threshold. This threshold is
-    computed as a certain number of standard deviations from the mean.
+    """
+    Threshold spikes below a certain hard threshold. This threshold is computed
+    as a certain number of standard deviations from the mean.
 
     Args:
-        data (np.array): data to be thresholded
-        num_stds (float): sets the threshold at num_stds * std so that only spikes
-                          >= num_stds * std are kept.
-    Returns:
-        np.array: thresholded data
-    """
-    # center the data
-    # data_centered = data - np.mean(data, axis=-1, keepdims=True)
-    threshold_val = None
+        data (np.array): Data to be thresholded.
+        threshold_num_stds (float): Sets the threshold at num_stds * std so that only spikes
+                                    >= num_stds * std are kept.
+        const_threshold (float or list, optional): A constant threshold or list of thresholds
+                                                   for multiple thresholding.
 
+    Returns:
+        tuple: thresholded data above threshold, data below threshold, threshold value(s)
+    """
+    # Compute the threshold value
     if const_threshold is None:
         stds = np.std(data, axis=-1, keepdims=True)
-
-        threshold_val = num_stds * stds + np.mean(data, axis=-1, keepdims=True)
+        threshold_val = threshold_num_stds * stds + \
+            np.mean(data, axis=-1, keepdims=True)
     else:
         threshold_val = const_threshold
 
-    above_threshold_mask = data >= threshold_val
-    below_threshold_mask = data < threshold_val
+    # Single thresholding
+    if not isinstance(threshold_val, np.ndarray) or threshold_val.ndim == 0:
+        above_threshold_mask = data >= threshold_val
+        below_threshold_mask = data < threshold_val
 
-    return data * above_threshold_mask, data * below_threshold_mask, threshold_val
+        return data * above_threshold_mask, data * below_threshold_mask, threshold_val
+
+    # Multiple thresholds
+    threshold_val = np.array(threshold_val)
+    # Add a new dimension for broadcasting
+    data_rep = np.expand_dims(data, axis=0)
+    data_rep = np.repeat(data_rep, threshold_val.shape[0], axis=0)
+
+    above_thres_masks = data_rep >= threshold_val[:, np.newaxis, np.newaxis]
+    below_thresh_masks = data_rep < threshold_val[:, np.newaxis, np.newaxis]
+
+    return data_rep * above_thres_masks, data_rep * below_thresh_masks, threshold_val
 
 
 # def optimize_denoise_parameters(dff, spikes, neurons, kernel_size_range, std_dev_range):
@@ -233,6 +247,7 @@ def run(
         neurons=np.arange(100),
         plotting_neurons=[5, 10, 100],
         threshold_num_stds=3,
+        const_thresh=np.arange(0.2, 1.6, 0.2),
         plot_with_smoothed=False,
         plot_without_smoothed=False):
 
@@ -260,7 +275,7 @@ def run(
     smoothed = denoise(spikes, window_length=50, polyorder=3)
 
     thresholded_spikes, below_thresholded_spikes, threshold_val = threshold(
-        spikes, threshold_num_stds=None, const_threshold=0.8)
+        spikes, threshold_num_stds=None, const_threshold=const_thresh)
 
     # Plot for certain neurons
     # if plot_without_smoothed or plot_with_smoothed:
