@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 # Ensure this is the correct import for your SpikeDeconv module
 from modules import SpikeDeconv
-
+from joblib import Parallel, delayed
 
 def corrected_sample_var(std, n):
     """
@@ -138,6 +138,51 @@ def compute_sta(spikes_neuron, dff_neuron, pre_spike_window=200, post_spike_wind
             return None  # No windows with quadratic variation greater than average
     else:
         return None  # No spikes, so STAs cannot be computed
+
+def compute_sta_parallel(spikes, dff, pre_spike_window=200, post_spike_window=600, n_jobs=-1):
+    """
+    Compute the spike-triggered averages (STAs) for all neurons in parallel.
+
+    Args:
+        spikes (np.array): Spike trains of shape (b, N, M) or (N, M).
+        dff (np.array): DF/F data of the same shape as spikes.
+        pre_spike_window (int): Time points before the spike.
+        post_spike_window (int): Time points after the spike.
+        n_jobs (int): Number of parallel jobs to run (-1 uses all processors).
+
+    Returns:
+        results_array (np.array): Array containing the STAs.
+            If input shape is (b, N, M), the shape will be (b, N).
+            If input shape is (N, M), the shape will be (N,).
+            Each element is a dict containing the STAs or None if not computed.
+    """
+    original_shape = spikes.shape
+    if spikes.ndim == 2:
+        spikes = np.expand_dims(spikes, axis=0)  
+        dff = np.expand_dims(dff, axis=0)       
+    elif spikes.ndim != 3:
+        raise ValueError("Input arrays must be 2D or 3D.")
+
+    b_size, N_neurons, M_length = spikes.shape
+
+    indices = [(b_idx, n_idx) for b_idx in range(b_size) for n_idx in range(N_neurons)]
+
+    def compute_sta_wrapper(idx):
+        b_idx, n_idx = idx
+        spikes_neuron = spikes[b_idx, n_idx, :]
+        dff_neuron = dff[b_idx, n_idx, :]
+        return compute_sta(spikes_neuron, dff_neuron, pre_spike_window, post_spike_window)
+
+    results = Parallel(n_jobs=n_jobs)(
+        delayed(compute_sta_wrapper)(idx) for idx in indices
+    )
+
+    results_array = np.array(results, dtype=object).reshape(b_size, N_neurons)
+
+    if len(original_shape) == 2:
+        results_array = results_array[0]  # Now shape is (N,)
+
+    return results_array
 
 
 def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333):

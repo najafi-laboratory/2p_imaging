@@ -7,6 +7,8 @@ from scipy.signal import fftconvolve
 from scipy.signal import savgol_filter
 import pingouin as pg
 
+from .SpikeAnalysis import compute_sta_parallel
+
 
 def right_half_gaussian_kernel(std_dev, kernel_size):
     """
@@ -77,44 +79,47 @@ def exponential_moving_average(data, alpha=0.1):
         smoothed[t] = alpha * data[t] + (1 - alpha) * smoothed[t - 1]
     return smoothed
 
+def denoise(spikes, sigma=3):
+    return gaussian_filter1d(spikes, sigma=sigma, axis=-1)
 
-# def denoise(spikes, kernel_size=1000, std_dev=1, neurons=None):
-#     """
-#     Denoise the spikes using a half-Gaussian kernel.
 
-#     Parameters:
-#     spikes : numpy array
-#         The spikes to denoise.
-#     kernel_size : int
-#         The size of the Gaussian kernel.
-#     std_dev : float
-#         The standard deviation of the Gaussian kernel.
-#     neurons : list, optional
-#         The indices of the neurons to denoise. If None, all neurons are denoised.
-
-#     Returns:
-#     denoised_spikes : numpy array
-#         The denoised spikes.
-#     """
-#     if neurons is None:
-#         neurons = range(spikes.shape[0])
-
-#     x = np.arange(kernel_size)
-#     kernel = right_half_gaussian_kernel(
-#         kernel_size=kernel_size, std_dev=std_dev)
-
-#     smoothed = np.zeros_like(spikes)
-#     for i in neurons:
-#         smoothed_signal = np.roll(fftconvolve(
-#             spikes[i], kernel, mode='same'), kernel_size//2)
-#         smoothed[i] = smoothed_signal
-#     return smoothed
-
-def denoise(spikes, window_length, polyorder):
-    denoised = savgol_filter(
-        spikes, window_length=window_length, polyorder=polyorder)
-
-    # snr_before = pg.snr(spikes)
-    # snr_after = pg.snr(denoised)
-
-    return denoise
+class Postprocessor:
+    """Post processing pipeline to perform
+            1. Normalization on spike trains
+            2. Denoising on spike trains
+            3. STA computation on (baselined) DF/F"""
+    def __init__(self, corrected_dff, spikes, denoise_sigma=3, sta_pre_spike_window=200, sta_post_spike_window=600):
+        self.corrected_dff = corrected_dff
+        self.spikes = spikes
+        self.denoise_sigma = denoise_sigma
+        self.sta_pre_spike_window = sta_pre_spike_window
+        self.sta_post_spike_window = sta_post_spike_window
+        
+        self.multi_tau = False if len(spikes.shape) == 3 else True
+        
+        self.normalized_spikes = None
+        self.denoised_spikes = None
+        self.stas = None
+    def _normalize_spikes(self):
+        scale = np.max(self.corrected_dff, axis=-1, keepdims=True) / np.max(self.spikes, axis=-1, keepdims=True)
+        self.normalized_spikes = self.spikes * scale
+    
+    def _denoise_spikes(self):
+        self.denoised_spikes = denoise(self.normalized_spikes, self.denoise_sigma)
+    
+    def _compute_sta(self):
+        self.stas = compute_sta_parallel(
+            spikes=self.spikes, 
+            dff=self.corrected_dff, 
+            pre_spike_window=self.sta_pre_spike_window, 
+            post_spike_window=self.sta_post_spike_window)
+    
+    def __call__(self):
+        # NORMALIZATION
+        self._normalize_spikes()
+        
+        # DENOISING
+        self._denoise_spikes()
+        
+        # STA COMPUTATION
+        self._compute_sta()

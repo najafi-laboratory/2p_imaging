@@ -3,84 +3,32 @@ from scipy.sparse import csc_matrix, spdiags
 from scipy.linalg import solveh_banded
 from joblib import Parallel, delayed
 from itertools import product
-from scipy.sparse import diags
 from scipy.sparse.linalg import spsolve
 from scipy.signal import savgol_filter
+from scipy.sparse import diags, eye, spdiags
 
-def als_baseline(y, lam=1e5, p=0.01, niter=10):
-    """
-    Apply Asymmetric Least Squares baseline correction to a single time series.
+def als_baseline_sparse(y, lam=1e5, p=0.01, n_iter=10, eps=1e-6):
+    L = len(y)
+    diagonals = [np.ones(L), -2 * np.ones(L), np.ones(L)]
+    D = diags(diagonals, [0, -1, -2], shape=(L, L))
 
-    Parameters:
-    y : ndarray
-        The input time series data (1D array of length N).
-    lam : float, optional
-        The smoothing parameter (larger values make the baseline smoother).
-    p : float, optional
-        The asymmetry parameter (between 0 and 1).
-    niter : int, optional
-        Number of iterations to perform.
+    w = np.ones(L)  
 
-    Returns:
-    z : ndarray
-        The estimated baseline (1D array of length N).
-    """
-    N = len(y)
-    # Precompute DTD diagonals for second-order differences
-    DTD_diag0 = np.ones(N) * 6
-    DTD_diag0[0] = DTD_diag0[1] = DTD_diag0[-2] = DTD_diag0[-1] = 5
-    DTD_diag0[0] = DTD_diag0[-1] = 1
+    for _ in range(n_iter):
+        W = diags(w, 0)
+        Z = W + lam * (D.T @ D)  
+        baseline = spsolve(Z, w * y)  
+        w = p * (y > baseline) + (1 - p) * (y <= baseline) 
 
-    DTD_diag1 = np.ones(N - 1) * -4
-    DTD_diag1[0] = DTD_diag1[-1] = -2
+    return baseline
 
-    DTD_diag2 = np.ones(N - 2)
 
-    # Initialize weights
-    w = np.ones(N)
-    for _ in range(niter):
-        # Compute W + λ * D^T D diagonals
-        A_diag0 = w + lam * DTD_diag0
-        A_diag1 = lam * DTD_diag1
-        A_diag2 = lam * DTD_diag2
-
-        # Construct the banded matrix ab for solveh_banded
-        ab = np.zeros((3, N))
-        ab[0, :] = A_diag0              # Main diagonal
-        ab[1, 1:] = A_diag1             # First superdiagonal
-        ab[2, 2:] = A_diag2             # Second superdiagonal
-
-        z = solveh_banded(ab, w * y, overwrite_ab=True, overwrite_b=True)
-
-        residuals = y - z
-        w = p * (residuals > 0) + (1 - p) * (residuals <= 0)
-    return z
-
-def als_baseline_multi(y_array, lam=1e5, p=0.01, niter=10, n_jobs=-1):
-    """
-    Apply ALS baseline correction to multiple time series in parallel.
-
-    Parameters:
-    y_array : ndarray
-        The input time series data (2D array of shape (M, N)).
-    lam : float, optional
-        The smoothing parameter.
-    p : float, optional
-        The asymmetry parameter.
-    niter : int, optional
-        Number of iterations to perform.
-    n_jobs : int, optional
-        The number of jobs to run in parallel (default -1 uses all processors).
-
-    Returns:
-    z_array : ndarray
-        The estimated baselines (2D array of shape (M, N)).
-    """
-    # Process each time series in parallel
+def als_baseline_multi(y_array, lam=1e5, p=0.01, n_iter=10, n_jobs=-1):
     z_list = Parallel(n_jobs=n_jobs)(
-        delayed(als_baseline)(y, lam, p, niter) for y in y_array
+        delayed(als_baseline_sparse)(y, lam, p, n_iter, 1e-6) for y in y_array
     )
     return np.array(z_list)
+
 
 def optimize_als_multi(data, lam_range, p_range, n_iter=10, n_jobs=-1, scoring='l2'):
     """
@@ -116,7 +64,7 @@ def optimize_als_multi(data, lam_range, p_range, n_iter=10, n_jobs=-1, scoring='
     for lam, p in param_grid:
         print(f"Evaluating performance on (lam, p) = ({lam},{p})")
         
-        baseline = als_baseline_multi(data, lam=lam, p=p, niter=n_iter, n_jobs=n_jobs)
+        baseline = als_baseline_multi(data, lam=lam, p=p, n_iter=n_iter, n_jobs=n_jobs)
         
         residual = data - baseline
 
@@ -179,7 +127,6 @@ class Preprocessor:
         
         self.best_baseline_params = {}
         self.best_filter_params = {}
-        self.best_baselines = np.array([])
         self.filter_optimized = False
         self.baseline_optimized = False
         
@@ -195,7 +142,7 @@ class Preprocessor:
                 y_array=self.dff, 
                 lam=self.baseline_params['lam'],
                 p=self.baseline_params['p'],
-                niter=self.baseline_params['niter'],
+                n_iter=self.baseline_params['n_iter'],
                 n_jobs=self.baseline_params['njobs'])
             
             baselined_data = replace_negatives_with_baseline_multi(
@@ -209,15 +156,15 @@ class Preprocessor:
     def _optimized_correct_baseline(self):
         if self.baseline_method == 'als':
             best_params, best_baseline_arr = optimize_als_multi(                
-                y_array=self.dff, 
-                lam=self.baseline_params['lam_range'],
-                p=self.baseline_params['p_range'],
-                niter=self.baseline_params['niter'],
+                data=self.dff, 
+                lam_range=self.baseline_params['lam_range'],
+                p_range=self.baseline_params['p_range'],
+                n_iter=self.baseline_params['n_iter'],
                 n_jobs=self.baseline_params['njobs'],
                 scoring=self.baseline_params['scoring'])
             
             self.best_baseline_params = best_params
-            self.best_baseline_params['niter'] = self.baseline_params['niter']
+            self.best_baseline_params['n_iter'] = self.baseline_params['n_iter']
             self.best_baseline_params['njobs'] = self.baseline_params['njobs']
             self.best_baseline_params['scoring'] = self.baseline_params['scoring']
             
@@ -246,29 +193,37 @@ class Preprocessor:
         pass
     
     def __call__(self):
-        apply_baseline = True
+        self.apply_baseline = True
+        self.apply_filter = True
         optimize_baseline = False
         optimize_filter = False
         
         if len(self.baseline_params.keys()) == 0:
-            apply_baseline = False
-        if apply_baseline:
-            if isinstance(self.baseline_params[self.baseline_params.keys[0]], (list, np.ndarray)):
+            self.apply_baseline = False
+        if self.apply_baseline:
+            # TODO: fix this so it just checks if we have a list in the values
+            print('here')
+            if 'p_range' in self.baseline_params:
+                print('here')
                 optimize_baseline = True
-                
-        if isinstance(self.filter_params[self.filter_params.keys[0]], (list, np.ndarray)):
-            optimize_filter = True
+        
+        if len(self.filter_params.keys()) == 0:
+            self.apply_filter = False
+        if self.apply_filter:
+            # TODO: fix this so it just checks if we have a list in the values
+            if 'window_range' in self.filter_params:
+                optimize_filter = True
             
-        if apply_baseline:
+        if self.apply_baseline:
             # baselining
             if optimize_baseline:
                 self._optimized_correct_baseline()
             else:
                 self._correct_baseline()
-        
-        # filtering
-        if optimize_filter:
-            self._optimized_filter()
-        else:
-            self._apply_filter()
-        
+        if self.apply_filter:
+            # filtering
+            if optimize_filter:
+                self._optimized_filter()
+            else:
+                self._apply_filter()
+            

@@ -14,7 +14,7 @@ from skopt import gp_minimize
 from skopt.space import Integer, Real
 from skopt.utils import use_named_args
 
-from .DenoiseSpikes import denoise
+# from .DenoiseSpikes import denoise
 # from .SpikePlotting import *
 
 
@@ -272,10 +272,10 @@ def run(
     # Apply denoise with the best parameters
     # smoothed = denoise(spikes, kernel_size=400,
     #                    std_dev=65, neurons=neurons)
-    smoothed = denoise(spikes, window_length=50, polyorder=3)
+    # smoothed = denoise(spikes, window_length=50, polyorder=3)
 
-    thresholded_spikes, below_thresholded_spikes, threshold_val = threshold(
-        spikes, threshold_num_stds=None, const_threshold=const_thresh)
+    # thresholded_spikes, below_thresholded_spikes, threshold_val = threshold(
+    #     spikes, threshold_num_stds=None, const_threshold=const_thresh)
 
     # Plot for certain neurons
     # if plot_without_smoothed or plot_with_smoothed:
@@ -287,4 +287,5 @@ def run(
     #             plot_for_neuron_without_smoothed_interactive(
     #                 timings=uptime, dff=dff, spikes=spikes, neuron=i, tau=oasis_tau, threshold_val=threshold_val, thresholded_spikes=thresholded_spikes)
 
-    return smoothed, spikes, uptime, threshold_val, thresholded_spikes, below_thresholded_spikes
+    # return smoothed, spikes, uptime, threshold_val, thresholded_spikes, below_thresholded_spikes
+    return spikes, uptime
