@@ -92,52 +92,23 @@ def compute_sta(spikes_neuron, dff_neuron, pre_spike_window=200, post_spike_wind
         dict or None: A dictionary containing the STAs for both DF/F and spikes, or None if STA cannot be computed.
     """
     spike_indices = np.where(spikes_neuron > 0)[0]
-
     dff_windows = []
-    spike_windows = []
-    quadratic_variations = []
 
-    # First pass: collect windows and compute quadratic variations
+    # Collect windows around each spike
     for spike_time in spike_indices:
         # Ensure indices are within bounds
         if (spike_time - pre_spike_window >= 0) and (spike_time + post_spike_window < len(dff_neuron)):
-            dff_window = dff_neuron[spike_time -
-                                    pre_spike_window: spike_time + post_spike_window]
-            spike_window = spikes_neuron[spike_time -
-                                         pre_spike_window: spike_time + post_spike_window]
-
-            # Compute quadratic variation of the dff_window
-            diffs = np.diff(dff_window)
-            quadratic_variation = np.sum(diffs ** 2)
-            quadratic_variations.append(quadratic_variation)
-
-            # Store the windows
+            dff_window = dff_neuron[spike_time - pre_spike_window: spike_time + post_spike_window]
             dff_windows.append(dff_window)
-            spike_windows.append(spike_window)
 
-    if len(quadratic_variations) > 0:
-        # Compute average quadratic variation
-        avg_quadratic_variation = np.mean(quadratic_variations)
-        std_quadratic_variation = np.std(quadratic_variations)
-        qv_thresh = avg_quadratic_variation + 2 * std_quadratic_variation
-
-        # Second pass: filter windows with quadratic variation greater than the average
-        filtered_dff_windows = []
-        filtered_spike_windows = []
-        for i, qv in enumerate(quadratic_variations):
-            if qv > qv_thresh:
-                filtered_dff_windows.append(dff_windows[i])
-                filtered_spike_windows.append(spike_windows[i])
-
-        if len(filtered_dff_windows) > 0:
-            # Compute the STAs by averaging the filtered windows
-            sta_dff = np.mean(filtered_dff_windows, axis=0)
-            sta_spikes = np.mean(filtered_spike_windows, axis=0)
-            return {'sta_dff': sta_dff, 'sta_spikes': sta_spikes}
-        else:
-            return None  # No windows with quadratic variation greater than average
+    # Check if any windows were collected
+    if len(dff_windows) > 0:
+        # Compute the STA by averaging the windows
+        sta_dff = np.mean(dff_windows, axis=0)
+        return sta_dff
     else:
-        return None  # No spikes, so STAs cannot be computed
+        return None  # No windows collected, cannot compute STA
+
 
 def compute_sta_parallel(spikes, dff, pre_spike_window=200, post_spike_window=600, n_jobs=-1):
     """
@@ -151,19 +122,24 @@ def compute_sta_parallel(spikes, dff, pre_spike_window=200, post_spike_window=60
         n_jobs (int): Number of parallel jobs to run (-1 uses all processors).
 
     Returns:
-        results_array (np.array): Array containing the STAs.
-            If input shape is (b, N, M), the shape will be (b, N).
-            If input shape is (N, M), the shape will be (N,).
-            Each element is a dict containing the STAs or None if not computed.
+        result_dict (dict): A dictionary containing:
+            - 'sta_dff': np.array of shape (N, sta_length) or (b, N, sta_length)
+            - 'sta_spikes': np.array of the same shape
+            - 'valid': np.array of booleans indicating whether STA was computed
     """
     original_shape = spikes.shape
     if spikes.ndim == 2:
-        spikes = np.expand_dims(spikes, axis=0)  
-        dff = np.expand_dims(dff, axis=0)       
+        spikes = np.expand_dims(spikes, axis=0)  # Now shape is (1, N, M)
+        dff = np.expand_dims(dff, axis=0)        # Now shape is (1, N, M)
     elif spikes.ndim != 3:
         raise ValueError("Input arrays must be 2D or 3D.")
 
     b_size, N_neurons, M_length = spikes.shape
+    sta_length = pre_spike_window + post_spike_window
+
+    sta_dff_array = np.full((b_size, N_neurons, sta_length), np.nan)
+    sta_spikes_array = np.full((b_size, N_neurons, sta_length), np.nan)
+    valid_array = np.zeros((b_size, N_neurons), dtype=bool)
 
     indices = [(b_idx, n_idx) for b_idx in range(b_size) for n_idx in range(N_neurons)]
 
@@ -177,12 +153,20 @@ def compute_sta_parallel(spikes, dff, pre_spike_window=200, post_spike_window=60
         delayed(compute_sta_wrapper)(idx) for idx in indices
     )
 
-    results_array = np.array(results, dtype=object).reshape(b_size, N_neurons)
+    for idx, res in zip(indices, results):
+        b_idx, n_idx = idx
+        if res is not None:
+            sta_dff_array[b_idx, n_idx, :] = res
+            # an array indicating if the STA for a particular neuron came back as None 
+            valid_array[b_idx, n_idx] = True 
 
     if len(original_shape) == 2:
-        results_array = results_array[0]  # Now shape is (N,)
+        sta_dff_array = sta_dff_array[0]      # Now shape is (N, sta_length)
+        valid_array = valid_array[0]
 
-    return results_array
+    return {
+        'sta_dff': sta_dff_array,
+        'valid': valid_array}
 
 
 def analyze_spike_traces(ops, dff, tau_spike_dict, neurons=np.arange(100), n=333):

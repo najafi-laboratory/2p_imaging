@@ -7,18 +7,19 @@ from scipy.sparse.linalg import spsolve
 from scipy.signal import savgol_filter
 from scipy.sparse import diags, eye, spdiags
 
+
 def als_baseline_sparse(y, lam=1e5, p=0.01, n_iter=10, eps=1e-6):
     L = len(y)
     diagonals = [np.ones(L), -2 * np.ones(L), np.ones(L)]
     D = diags(diagonals, [0, -1, -2], shape=(L, L))
 
-    w = np.ones(L)  
+    w = np.ones(L)
 
     for _ in range(n_iter):
         W = diags(w, 0)
-        Z = W + lam * (D.T @ D)  
-        baseline = spsolve(Z, w * y)  
-        w = p * (y > baseline) + (1 - p) * (y <= baseline) 
+        Z = W + lam * (D.T @ D)
+        baseline = spsolve(Z, w * y)
+        w = p * (y > baseline) + (1 - p) * (y <= baseline)
 
     return baseline
 
@@ -63,9 +64,10 @@ def optimize_als_multi(data, lam_range, p_range, n_iter=10, n_jobs=-1, scoring='
 
     for lam, p in param_grid:
         print(f"Evaluating performance on (lam, p) = ({lam},{p})")
-        
-        baseline = als_baseline_multi(data, lam=lam, p=p, n_iter=n_iter, n_jobs=n_jobs)
-        
+
+        baseline = als_baseline_multi(
+            data, lam=lam, p=p, n_iter=n_iter, n_jobs=n_jobs)
+
         residual = data - baseline
 
         if scoring == 'l2':
@@ -105,99 +107,101 @@ class Preprocessor:
         1. Baselining (with optional CV parameter optimization)
         2. Filtering (with optional CV parameter optimization)
         3. Stores processed DF/F as `self.filtered` """
-        
+
     def __init__(
-        self, 
-        dff, # DF/F data
-        baseline_method='als', # baselining method (default is ALS)
-        filtering_method='savgol', # filtering method (default is Savitsky-Golay filter)
+        self,
+        dff,  # DF/F data
+        baseline_method='als',  # baselining method (default is ALS)
+        # filtering method (default is Savitsky-Golay filter)
+        filtering_method='savgol',
         # single parameters --> run once on params; param arrays --> run CV optimization
-        baseline_params={}, # baseline method parameters
-        filter_params={}): # filtering method parameters
-        
+        baseline_params={},  # baseline method parameters
+            filter_params={}):  # filtering method parameters
+
         self.dff = dff
         self.baselined = dff
         self.filtered = dff
-        
+
         self.baseline_method = baseline_method
         self.filtering_method = filtering_method
-        
+
         self.baseline_params = baseline_params
         self.filter_params = filter_params
-        
+
         self.best_baseline_params = {}
         self.best_filter_params = {}
         self.filter_optimized = False
         self.baseline_optimized = False
-        
+
         if self.baseline_optimized and len(self.baseline_params.keys()) == 0:
             self.baseline_params = self.best_baseline_params
-            
+
         if self.filter_optimized and len(self.filter_params.keys()) == 0:
             self.filter_params = self.best_filter_params
-    
-    def _correct_baseline(self, data):
+
+    def _correct_baseline(self):
         if self.baseline_method == 'als':
             baseline_arr = als_baseline_multi(
-                y_array=self.dff, 
+                y_array=self.dff,
                 lam=self.baseline_params['lam'],
                 p=self.baseline_params['p'],
                 n_iter=self.baseline_params['n_iter'],
                 n_jobs=self.baseline_params['njobs'])
-            
+
             baselined_data = replace_negatives_with_baseline_multi(
                 data=self.dff, baseline=self.dff - baseline_arr)
-            
+
             self.baselined = baselined_data
         else:
-            raise ValueError("Baseline method not available. You must implement it.")
-            
-            
+            raise ValueError(
+                "Baseline method not available. You must implement it.")
+
     def _optimized_correct_baseline(self):
         if self.baseline_method == 'als':
-            best_params, best_baseline_arr = optimize_als_multi(                
-                data=self.dff, 
+            best_params, best_baseline_arr = optimize_als_multi(
+                data=self.dff,
                 lam_range=self.baseline_params['lam_range'],
                 p_range=self.baseline_params['p_range'],
                 n_iter=self.baseline_params['n_iter'],
                 n_jobs=self.baseline_params['njobs'],
                 scoring=self.baseline_params['scoring'])
-            
+
             self.best_baseline_params = best_params
             self.best_baseline_params['n_iter'] = self.baseline_params['n_iter']
             self.best_baseline_params['njobs'] = self.baseline_params['njobs']
             self.best_baseline_params['scoring'] = self.baseline_params['scoring']
-            
+
             self.best_baselines = best_baseline_arr
             self.baseline_optimized = True
-            
+
             baselined_data = replace_negatives_with_baseline_multi(
                 data=self.dff, baseline=self.dff - best_baseline_arr)
-            
+
             self.baselined = baselined_data
-            
+
         else:
-            raise ValueError("Baseline method not available. You must implement it.")
-    
+            raise ValueError(
+                "Baseline method not available. You must implement it.")
+
     def _apply_filter(self):
         if self.filtering_method == 'savgol':
             filtered = savgol_filter(
-                x=self.baselined, 
-                window_length=self.filter_params['window_length'], 
-                polyorder=self.filter_params['polyorder'], 
+                x=self.baselined,
+                window_length=self.filter_params['window_length'],
+                polyorder=self.filter_params['polyorder'],
                 deriv=self.filter_params['deriv'])
-            
+
             self.filtered = filtered
-    
+
     def _optimized_filter(self):
         pass
-    
+
     def __call__(self):
         self.apply_baseline = True
         self.apply_filter = True
-        optimize_baseline = False
-        optimize_filter = False
-        
+        self.optimize_baseline = False
+        self.optimize_filter = False
+
         if len(self.baseline_params.keys()) == 0:
             self.apply_baseline = False
         if self.apply_baseline:
@@ -205,25 +209,24 @@ class Preprocessor:
             print('here')
             if 'p_range' in self.baseline_params:
                 print('here')
-                optimize_baseline = True
-        
+                self.optimize_baseline = True
+
         if len(self.filter_params.keys()) == 0:
             self.apply_filter = False
         if self.apply_filter:
             # TODO: fix this so it just checks if we have a list in the values
             if 'window_range' in self.filter_params:
-                optimize_filter = True
-            
+                self.optimize_filter = True
+
         if self.apply_baseline:
             # baselining
-            if optimize_baseline:
+            if self.optimize_baseline:
                 self._optimized_correct_baseline()
             else:
                 self._correct_baseline()
         if self.apply_filter:
             # filtering
-            if optimize_filter:
+            if self.optimize_filter:
                 self._optimized_filter()
             else:
                 self._apply_filter()
-            

@@ -215,7 +215,7 @@ def plot_for_neuron_interactive(
 
 
 def plot_for_neuron_with_smoothed_interactive(
-        timings, dff, spikes, threshold_val, convolved_spikes, neuron=5, tau=1.25):
+        timings, dff, spikes, convolved_spikes, neuron=5, tau=1.25):
     """
     Generates an interactive HTML figure with two subplots for a specified neuron with smoothed data:
     - First subplot: Overlay of DF/F signal (scaled), inferred spike trace, and threshold.
@@ -226,7 +226,6 @@ def plot_for_neuron_with_smoothed_interactive(
         dff (np.ndarray): DF/F (delta F over F) data array, shape (neurons, timepoints).
         spikes (np.ndarray): Inferred spike data array, shape (neurons, timepoints).
         convolved_spikes (np.ndarray): Convolved spikes data array, shape (neurons, timepoints).
-        threshold_val (np.ndarray): Threshold values for spike detection, one per neuron.
         neuron (int, optional): Index of the neuron to plot. Default is 5.
         tau (float, optional): Tau parameter value used in analysis. Default is 1.25.
 
@@ -251,7 +250,7 @@ def plot_for_neuron_with_smoothed_interactive(
     # First subplot: DF/F (scaled) and inferred spikes
     fig.add_trace(
         go.Scatter(
-            x=timings[shift:], y=0.5 * dff[neuron, :],
+            x=timings[shift:], y=dff[neuron, :],
             mode='lines',
             name='DF/F (scaled)',
             line=dict(color='blue')
@@ -285,7 +284,7 @@ def plot_for_neuron_with_smoothed_interactive(
 
     fig.add_trace(
         go.Scatter(
-            x=timings[shift:], y=15 * tau * convolved_spikes[neuron, :],
+            x=timings[shift:], y=convolved_spikes[neuron, :],
             mode='lines',
             name='Convolved Spike',
             line=dict(color='red', width=3.0)
@@ -306,7 +305,7 @@ def plot_for_neuron_with_smoothed_interactive(
     # Save plot as HTML
     plot(
         fig,
-        filename=f'plot_results/neuron_{neuron}_tau_{tau}_thresh_{threshold_val}_smoothed_plot.html'
+        filename=f'plot_results/neuron_{neuron}_tau_{tau}_smoothed_plot.html'
     )
 
 
@@ -651,4 +650,139 @@ def plot_stas_multi_thresh_neuron(thresh_vals, above_thresh_stas, below_thresh_s
 
     # Save plot as an HTML file
     filename = f'{output_dir}/neuron_{neuron}_tau_{tau}_multi_thresh_sta_plot.html'
+    fig.write_html(filename)
+
+
+def plot_baselined_dff_smoothed_sta(timings, orig_dff, baselined_dff, inferred_spikes, sta, tau, neuron=0):
+    """
+    Produces a figure with:
+    - Left subplot: Original DF/F, baselined DF/F, smoothed spikes over time for a specified neuron.
+    - Right subplot: Spike-Triggered Average (STA) for the specified neuron.
+
+    Args:
+        timings (np.ndarray): Array of time points.
+        orig_dff (np.ndarray): Original DF/F data array, shape (neurons, timepoints).
+        baselined_dff (np.ndarray): Baselined DF/F data array, shape (neurons, timepoints).
+        smoothed_spikes (np.ndarray): Smoothed spikes data array, shape (neurons, timepoints).
+        sta (np.ndarray): Spike-triggered average data array, shape (neurons, timepoints).
+        neuron (int, optional): Index of the neuron to plot. Default is 0.
+
+    Saves:
+        An HTML file of the interactive plot in 'plot_results' directory with filename including neuron.
+    """
+
+    output_dir = 'plot_results'
+    os.makedirs(output_dir, exist_ok=True)
+
+    fig = make_subplots(
+        rows=3,
+        cols=2,
+        specs=[
+            [{"type": "xy"}, {"type": "xy"}],  # Row 1
+            [{"type": "xy"}, None],            # Row 2
+            [{"type": "xy"}, None],            # Row 3
+        ],
+        subplot_titles=(
+            f'Neuron {neuron} - Original vs Baselined DF/F',
+            f'Neuron {neuron} - Spike-Triggered Average',
+            f'Neuron {neuron} - Baselined DF/F vs Inferred Spikes',
+            "",
+            f'Neuron {neuron} - Baselined DF/F vs Smoothed Spikes',
+            ""
+        ),
+        shared_xaxes=True
+    )
+
+    orig_dff_neuron = orig_dff[neuron, :]
+    baselined_dff_neuron = baselined_dff[neuron, :]
+    inferred_spikes_neuron = inferred_spikes[neuron, :]
+
+    fig.add_trace(
+        go.Scatter(
+            x=timings,
+            y=orig_dff_neuron,
+            mode='lines',
+            name='Original DF/F',
+            line=dict(color='blue')
+        ),
+        row=1,
+        col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=timings,
+            y=baselined_dff_neuron,
+            mode='lines',
+            name='Baselined DF/F',
+            line=dict(color='orange')
+        ),
+        row=1,
+        col=1
+    )
+
+    sta_neuron = sta[neuron, :]
+    sta_length = len(sta_neuron)
+    sta_time = np.arange(-sta_length // 2, sta_length // 2)
+
+    fig.add_trace(
+        go.Scatter(
+            x=sta_time,
+            y=sta_neuron,
+            mode='lines',
+            name='STA',
+            line=dict(color='purple')
+        ),
+        row=1,
+        col=2
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=timings,
+            y=baselined_dff_neuron,
+            mode='lines',
+            name='Baselined DF/F',
+            line=dict(color='orange')
+        ),
+        row=2,
+        col=1
+    )
+
+    fig.add_trace(
+        go.Scatter(
+            x=timings,
+            y=inferred_spikes_neuron,
+            mode='lines',
+            name='Inferred Spikes',
+            line=dict(color='red')
+        ),
+        row=2,
+        col=1
+    )
+
+    fig.update_layout(
+        height=900,
+        width=1200,
+        title=f'Neuron {neuron} Analysis with Tau={tau}',
+        showlegend=True
+    )
+
+    fig.update_xaxes(title_text='Time (ms)', row=1, col=1)
+    fig.update_yaxes(title_text='DF/F Signal', row=1, col=1)
+
+    fig.update_xaxes(
+        title_text='Time Relative to Spike (samples)', row=1, col=2)
+    fig.update_yaxes(title_text='STA Amplitude', row=1, col=2)
+
+    fig.update_xaxes(title_text='Time (ms)', row=2, col=1)
+    fig.update_yaxes(title_text='Signal Amplitude', row=2, col=1)
+
+    fig.update_xaxes(title_text='Time (ms)', row=3, col=1)
+    fig.update_yaxes(title_text='Signal Amplitude', row=3, col=1)
+
+    fig.update_traces(showlegend=True)
+    fig.update_layout(legend=dict(x=1.05, y=1))
+
+    filename = f'{output_dir}/neuron_{neuron}_tau_{tau}_baselined_dff_smoothed_sta.html'
     fig.write_html(filename)
