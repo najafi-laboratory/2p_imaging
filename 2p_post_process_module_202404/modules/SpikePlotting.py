@@ -653,19 +653,39 @@ def plot_stas_multi_thresh_neuron(thresh_vals, above_thresh_stas, below_thresh_s
     fig.write_html(filename)
 
 
-def plot_baselined_dff_smoothed_sta(timings, orig_dff, baselined_dff, inferred_spikes, sta, tau, neuron=0):
+def plot_baselined_filtered_data(
+    timings,
+    orig_dff,
+    inferred_spikes,
+    sta,
+    tau,
+    neuron=0,
+    baselined_dff=None,
+    filtered_dff=None,
+    # if true, then the filtered dff has been baselined first
+    filtered_after_baselined=False,
+    lam='N/A',
+    p='N/A'
+):
     """
     Produces a figure with:
-    - Left subplot: Original DF/F, baselined DF/F, smoothed spikes over time for a specified neuron.
-    - Right subplot: Spike-Triggered Average (STA) for the specified neuron.
+    - Left side (spanning columns 1 and 2):
+        - Row 1: Raw DF/F, Baselined DF/F (if available), Filtered DF/F (if available), and Inferred Spikes (if available) superimposed.
+        - Row 2: Baselined DF/F vs Raw DF/F (if Baselined DF/F is provided).
+        - Row 3: Filtered DF/F vs Raw DF/F (if Filtered DF/F is provided).
+    - Right side (column 3):
+        - Row 1: Spike-Triggered Average (STA) for the specified neuron.
 
     Args:
         timings (np.ndarray): Array of time points.
         orig_dff (np.ndarray): Original DF/F data array, shape (neurons, timepoints).
-        baselined_dff (np.ndarray): Baselined DF/F data array, shape (neurons, timepoints).
-        smoothed_spikes (np.ndarray): Smoothed spikes data array, shape (neurons, timepoints).
+        inferred_spikes (np.ndarray): Inferred spikes data array, shape (neurons, timepoints).
         sta (np.ndarray): Spike-triggered average data array, shape (neurons, timepoints).
+        tau (float): Tau parameter used in the analysis.
         neuron (int, optional): Index of the neuron to plot. Default is 0.
+        baselined_dff (np.ndarray, optional): Baselined DF/F data array, shape (neurons, timepoints). Default is None.
+        filtered_dff (np.ndarray, optional): Filtered DF/F data array, shape (neurons, timepoints). Default is None.
+        filtered_after_baselined (bool, optional): If True, indicates that filtering was done after baselining. Default is False.
 
     Saves:
         An HTML file of the interactive plot in 'plot_results' directory with filename including neuron.
@@ -674,115 +694,239 @@ def plot_baselined_dff_smoothed_sta(timings, orig_dff, baselined_dff, inferred_s
     output_dir = 'plot_results'
     os.makedirs(output_dir, exist_ok=True)
 
+    num_rows = 1  # Start with 1 for the first row
+    if baselined_dff is not None:
+        num_rows += 1  # Add row for baselined DF/F vs raw DF/F
+    if filtered_dff is not None:
+        num_rows += 1  # Add row for filtered DF/F vs raw DF/F
+
+    specs = []
+    for i in range(num_rows):
+        if i == 0:
+            specs.append(
+                [{"colspan": 2}, None, {"rowspan": num_rows}]
+            )
+        else:
+            specs.append(
+                [{"colspan": 2}, None, None]
+            )
+
+    subplot_titles = []
+
+    title_row1_col1 = 'Raw DF/F'
+    if baselined_dff is not None:
+        title_row1_col1 += ', Baselined DF/F'
+    if filtered_dff is not None:
+        title_row1_col1 += ', Filtered DF/F'
+    if inferred_spikes is not None:
+        title_row1_col1 += ', Inferred Spikes'
+    subplot_titles.append(title_row1_col1)
+
+    subplot_titles.append('Spike-Triggered Average (STA)')
+
+    if baselined_dff is not None:
+        subplot_titles.append('Baselined DF/F vs Raw DF/F')
+
+    if filtered_dff is not None:
+        if filtered_after_baselined:
+            title_row = 'Baselined, Filtered DF/F vs Raw DF/F'
+        else:
+            title_row = '(Without Baselining) Filtered DF/F vs Raw DF/F'
+        subplot_titles.append(title_row)
+
     fig = make_subplots(
-        rows=3,
-        cols=2,
-        specs=[
-            [{"type": "xy"}, {"type": "xy"}],  # Row 1
-            [{"type": "xy"}, None],            # Row 2
-            [{"type": "xy"}, None],            # Row 3
-        ],
-        subplot_titles=(
-            f'Neuron {neuron} - Original vs Baselined DF/F',
-            f'Neuron {neuron} - Spike-Triggered Average',
-            f'Neuron {neuron} - Baselined DF/F vs Inferred Spikes',
-            "",
-            f'Neuron {neuron} - Baselined DF/F vs Smoothed Spikes',
-            ""
-        ),
-        shared_xaxes=True
+        rows=num_rows,
+        cols=3,
+        specs=specs,
+        subplot_titles=subplot_titles,
+        shared_xaxes=False
     )
 
     orig_dff_neuron = orig_dff[neuron, :]
-    baselined_dff_neuron = baselined_dff[neuron, :]
-    inferred_spikes_neuron = inferred_spikes[neuron, :]
+    timings_neuron = timings
 
+    legend_traces = set()
+
+    showlegend_raw_dff = 'Raw DF/F' not in legend_traces
     fig.add_trace(
         go.Scatter(
-            x=timings,
+            x=timings_neuron,
             y=orig_dff_neuron,
             mode='lines',
-            name='Original DF/F',
-            line=dict(color='blue')
+            name='Raw DF/F',
+            line=dict(color='blue'),
+            showlegend=showlegend_raw_dff
         ),
         row=1,
         col=1
     )
+    if showlegend_raw_dff:
+        legend_traces.add('Raw DF/F')
 
-    fig.add_trace(
-        go.Scatter(
-            x=timings,
-            y=baselined_dff_neuron,
-            mode='lines',
-            name='Baselined DF/F',
-            line=dict(color='orange')
-        ),
-        row=1,
-        col=1
-    )
+    if baselined_dff is not None:
+        baselined_dff_neuron = baselined_dff[neuron, :]
+        showlegend_baselined_dff = 'Baselined DF/F' not in legend_traces
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=baselined_dff_neuron,
+                mode='lines',
+                name='Baselined DF/F',
+                line=dict(color='orange'),
+                showlegend=showlegend_baselined_dff
+            ),
+            row=1,
+            col=1
+        )
+        if showlegend_baselined_dff:
+            legend_traces.add('Baselined DF/F')
+
+    if filtered_dff is not None:
+        filtered_dff_neuron = filtered_dff[neuron, :]
+        showlegend_filtered_dff = 'Filtered DF/F' not in legend_traces
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=filtered_dff_neuron,
+                mode='lines',
+                name='Filtered DF/F',
+                line=dict(color='yellow'),
+                showlegend=showlegend_filtered_dff,
+                opacity=0.8
+            ),
+            row=1,
+            col=1
+        )
+        if showlegend_filtered_dff:
+            legend_traces.add('Filtered DF/F')
+
+    if inferred_spikes is not None:
+        inferred_spikes_neuron = inferred_spikes[neuron, :]
+        showlegend_inferred_spikes = 'Inferred Spikes' not in legend_traces
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=inferred_spikes_neuron,
+                mode='lines',
+                name='Inferred Spikes',
+                line=dict(color='red'),
+                showlegend=showlegend_inferred_spikes
+            ),
+            row=1,
+            col=1
+        )
+        if showlegend_inferred_spikes:
+            legend_traces.add('Inferred Spikes')
 
     sta_neuron = sta[neuron, :]
     sta_length = len(sta_neuron)
     sta_time = np.arange(-sta_length // 2, sta_length // 2)
 
+    showlegend_sta = 'STA' not in legend_traces
     fig.add_trace(
         go.Scatter(
             x=sta_time,
             y=sta_neuron,
             mode='lines',
             name='STA',
-            line=dict(color='purple')
+            line=dict(color='purple'),
+            showlegend=showlegend_sta
         ),
         row=1,
-        col=2
+        col=3
     )
+    if showlegend_sta:
+        legend_traces.add('STA')
 
-    fig.add_trace(
-        go.Scatter(
-            x=timings,
-            y=baselined_dff_neuron,
-            mode='lines',
-            name='Baselined DF/F',
-            line=dict(color='orange')
-        ),
-        row=2,
-        col=1
-    )
+    current_row = 2
 
-    fig.add_trace(
-        go.Scatter(
-            x=timings,
-            y=inferred_spikes_neuron,
-            mode='lines',
-            name='Inferred Spikes',
-            line=dict(color='red')
-        ),
-        row=2,
-        col=1
-    )
+    if baselined_dff is not None:
+        # Plot Raw DF/F (without legend)
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=orig_dff_neuron,
+                mode='lines',
+                name='Raw DF/F',
+                line=dict(color='blue'),
+                showlegend=False  # Already added
+            ),
+            row=current_row,
+            col=1
+        )
 
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=baselined_dff_neuron,
+                mode='lines',
+                name='Baselined DF/F',
+                line=dict(color='orange'),
+                showlegend=False  # Already added
+            ),
+            row=current_row,
+            col=1
+        )
+        current_row += 1
+
+    if filtered_dff is not None:
+        # Plot Raw DF/F (without legend)
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=orig_dff_neuron,
+                mode='lines',
+                name='Raw DF/F',
+                line=dict(color='blue'),
+                showlegend=False  # Already added
+            ),
+            row=current_row,
+            col=1
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=timings_neuron,
+                y=filtered_dff_neuron,
+                mode='lines',
+                name='Filtered DF/F',
+                line=dict(color='yellow'),
+                showlegend=False,  # Already added
+                opacity=0.8
+            ),
+            row=current_row,
+            col=1
+        )
+        current_row += 1
+
+    # Update layout
     fig.update_layout(
-        height=900,
+        height=300 * num_rows,
         width=1200,
         title=f'Neuron {neuron} Analysis with Tau={tau}',
         showlegend=True
     )
 
     fig.update_xaxes(title_text='Time (ms)', row=1, col=1)
-    fig.update_yaxes(title_text='DF/F Signal', row=1, col=1)
+    fig.update_yaxes(title_text='Signal Amplitude', row=1, col=1)
 
     fig.update_xaxes(
-        title_text='Time Relative to Spike (samples)', row=1, col=2)
-    fig.update_yaxes(title_text='STA Amplitude', row=1, col=2)
+        title_text='Time Relative to Spike (samples)', row=1, col=3)
+    fig.update_yaxes(title_text='STA Amplitude', row=1, col=3)
 
-    fig.update_xaxes(title_text='Time (ms)', row=2, col=1)
-    fig.update_yaxes(title_text='Signal Amplitude', row=2, col=1)
+    row_idx = 2
+    if baselined_dff is not None:
+        fig.update_xaxes(title_text='Time (ms)', row=row_idx, col=1)
+        fig.update_yaxes(title_text='Signal Amplitude', row=row_idx, col=1)
+        row_idx += 1
 
-    fig.update_xaxes(title_text='Time (ms)', row=3, col=1)
-    fig.update_yaxes(title_text='Signal Amplitude', row=3, col=1)
+    if filtered_dff is not None:
+        fig.update_xaxes(title_text='Time (ms)', row=row_idx, col=1)
+        fig.update_yaxes(title_text='Signal Amplitude', row=row_idx, col=1)
 
-    fig.update_traces(showlegend=True)
-    fig.update_layout(legend=dict(x=1.05, y=1))
-
-    filename = f'{output_dir}/neuron_{neuron}_tau_{tau}_baselined_dff_smoothed_sta.html'
+    filename = ''
+    if filtered_after_baselined:
+        filename = f'{output_dir}/neuron_{neuron}_tau_{tau}_baselined_p_{p}_lam_{lam}_filtered_data.html'
+    else:
+        filename = f'{output_dir}/neuron_{neuron}_tau_{tau}_filtered_data.html'
     fig.write_html(filename)

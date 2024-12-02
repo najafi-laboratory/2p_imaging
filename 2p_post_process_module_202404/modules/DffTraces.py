@@ -7,7 +7,7 @@ from scipy.ndimage import gaussian_filter
 from modules import SpikeDeconv
 
 from .SpikeAnalysis import analyze_spike_traces, compute_sta
-from .SpikePlotting import plot_baselined_dff_smoothed_sta, plot_for_neuron_with_smoothed_interactive, plot_for_neuron_with_smoothed_interactive_multi_tau, plot_for_neuron_interactive, plot_stas_single_thresh_neuron, plot_stas_multi_thresh_neuron
+from .SpikePlotting import plot_baselined_filtered_data, plot_for_neuron_with_smoothed_interactive, plot_for_neuron_with_smoothed_interactive_multi_tau, plot_for_neuron_interactive, plot_stas_single_thresh_neuron, plot_stas_multi_thresh_neuron
 # compute dff from raw fluorescence signals.
 from .Preprocessing import Preprocessor
 from .Postprocessing import Postprocessor
@@ -121,8 +121,20 @@ def run(
     # VISUALIZATION (single- and multiple-tau plotting)
     if len(plotting_neurons) == 1:
         if isinstance(tau, float):
-            plot_baselined_dff_smoothed_sta(timings=uptime, orig_dff=dff, baselined_dff=filtered_dff,
-                                            inferred_spikes=normalized_spikes, sta=stas['sta_dff'], tau=tau, neuron=plotting_neurons[0])
+            plot_baselined_filtered_data(
+                timings=uptime,
+                orig_dff=dff,
+                inferred_spikes=normalized_spikes,
+                sta=stas['sta_dff'],
+                tau=tau,
+                neuron=plotting_neurons[0],
+                baselined_dff=None,
+                filtered_dff=filtered_dff,
+                filtered_after_baselined=False,
+                # lam=preproc_baseline_params['lam'],
+                # p=preproc_baseline_params['p']
+            )
+
         elif isinstance(tau, (list, np.ndarray)):
             print('here')
 
