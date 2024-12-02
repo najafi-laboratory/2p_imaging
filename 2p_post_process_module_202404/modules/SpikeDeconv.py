@@ -116,7 +116,6 @@ def spike_detect(ops, dff, tau=1.25):
         tau=tau,
         fs=ops['fs'])
 
-    avg_tau = np.exp(-tau)
     return spikes
 
 

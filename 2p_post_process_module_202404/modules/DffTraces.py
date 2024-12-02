@@ -49,14 +49,15 @@ def run(
         plotting_neurons=[5],
         tau=0.4,
         preproc_baseline_method='als',
-        preproc_baseline_params={'lam': 1e3,
-                                 'p': 0.2,
-                                 'n_iter': 10,
-                                 'njobs': -1,
-                                 'scoring': 'l2'},
+        # preproc_baseline_params={'lam': 1e3,
+        #                          'p': 0.2,
+        #                          'n_iter': 10,
+        #                          'njobs': -1,
+        #                          'scoring': 'l2'},
+        preproc_baseline_params={},
         preproc_filter_method='savgol',
         preproc_filter_params={'window_length': 21,
-                                'polyorder': 3,
+                               'polyorder': 3,
                                'deriv': 0}):
 
     print('===============================================')
@@ -87,7 +88,7 @@ def run(
         print(
             f"Optimized baseline operation to find best (lam, p):{(preprocessor.best_baseline_params['p'], preprocessor.best_baseline_params['lam'])}")
 
-    baselined_dff, filtered_dff = preprocessor.filtered, preprocessor.baselined
+    baselined_dff, filtered_dff = preprocessor.baselined, preprocessor.filtered
 
     print('tau:', tau)
 
@@ -100,7 +101,8 @@ def run(
         spikes_lst = []
         uptime_lst = []
         for t in tau:
-            spikes_t, uptime_t = SpikeDeconv.run(ops=ops, dff=dff, oasis_tau=t)
+            spikes_t, uptime_t = SpikeDeconv.run(
+                ops=ops, dff=filtered_dff, oasis_tau=t)
             spikes_lst.append(spikes_t)
             uptime_lst.append(uptime_t)
 
@@ -116,9 +118,10 @@ def run(
     normalized_spikes, denoised_spikes, stas = postprocessor.normalized_spikes, postprocessor.denoised_spikes, postprocessor.stas
     multi_tau = postprocessor.multi_tau
 
+    # VISUALIZATION (single- and multiple-tau plotting)
     if len(plotting_neurons) == 1:
         if isinstance(tau, float):
-            plot_baselined_dff_smoothed_sta(timings=uptime, orig_dff=dff, baselined_dff=baselined_dff,
+            plot_baselined_dff_smoothed_sta(timings=uptime, orig_dff=dff, baselined_dff=filtered_dff,
                                             inferred_spikes=normalized_spikes, sta=stas['sta_dff'], tau=tau, neuron=plotting_neurons[0])
         elif isinstance(tau, (list, np.ndarray)):
             print('here')

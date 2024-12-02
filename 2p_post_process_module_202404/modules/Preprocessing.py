@@ -119,8 +119,8 @@ class Preprocessor:
             filter_params={}):  # filtering method parameters
 
         self.dff = dff
-        self.baselined = dff
-        self.filtered = dff
+        self.baselined = np.copy(dff)
+        self.filtered = np.copy(dff)
 
         self.baseline_method = baseline_method
         self.filtering_method = filtering_method
@@ -192,6 +192,8 @@ class Preprocessor:
                 deriv=self.filter_params['deriv'])
 
             self.filtered = filtered
+        else:
+            raise ValueError('Filtering method not recognized.')
 
     def _optimized_filter(self):
         pass
@@ -206,9 +208,7 @@ class Preprocessor:
             self.apply_baseline = False
         if self.apply_baseline:
             # TODO: fix this so it just checks if we have a list in the values
-            print('here')
             if 'p_range' in self.baseline_params:
-                print('here')
                 self.optimize_baseline = True
 
         if len(self.filter_params.keys()) == 0:
