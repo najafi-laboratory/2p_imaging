@@ -190,7 +190,7 @@ def display_mean_image(mean_img, title='Anatomical Mean Image'):
     plt.savefig('plot_results/mean_anat_image.png')
 
 
-def anat(ax, mean_anat, masks=None, labeled_masks_img=None, unsure_masks_img=None,
+def anat(ax, mean_anat, masks=None, labeled_masks_img=None, unsure_masks_img=None, excitatory_mask=None,
          with_mask=True, title='Anatomy Channel Mean Image'):
     """
     Plots the anatomy channel mean image with optional mask boundaries.
@@ -220,6 +220,10 @@ def anat(ax, mean_anat, masks=None, labeled_masks_img=None, unsure_masks_img=Non
     if unsure_masks_img is not None:
         iter_lst.append((unsure_masks_img[:, :, 0], [
                         0, 196, 255]))  # Light Blue
+
+    if excitatory_mask is not None:
+        iter_lst.append((excitatory_mask[:, :, 0], [
+                        255, 255, 255]))  # Light Green
 
     if with_mask:
         for mask, color in iter_lst:
