@@ -3,12 +3,24 @@
 import time
 import functools
 import tracemalloc
+import sys
+from pathlib import Path
+
 import numpy as np
 import rastermap as rm
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mtick
 from datetime import datetime
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils_2p.stats import get_mean_sem as shared_get_mean_sem
+from utils_2p.stats import get_norm01_params
+from utils_2p.stats import norm01
+from utils_2p.timing import get_frame_idx_from_time
 
 
 #%% general data processing
@@ -38,37 +50,12 @@ def rescale(data, upper, lower):
     data = data * (upper - lower) + lower
     return data
 
-# normalization into [0,1].
-def norm01(data):
-    return (data - np.nanmin(data)) / (np.nanmax(data) - np.nanmin(data) + 1e-5)
-
-# compute the scale parameters when normalizing data into [0,1].
-def get_norm01_params(data):
-    x_scale = 1 / (np.nanmax(data) - np.nanmin(data))
-    x_offset = - np.nanmin(data) / (np.nanmax(data) - np.nanmin(data))
-    x_min = np.nanmin(data)
-    x_max = np.nanmax(data)
-    return x_scale, x_offset, x_min, x_max
-
 # compute mean and sem for 3d array data.
 def get_mean_sem(data, win_baseline=None):
-    # compute mean.
-    m = np.nanmean(data.reshape(-1, data.shape[-1]), axis=0)
-    # compute sem.
-    std = np.nanstd(data.reshape(-1, data.shape[-1]), axis=0)
-    count = np.nansum(~np.isnan(data.reshape(-1, data.shape[-1])), axis=0)
-    s = std / np.sqrt(count)
-    return m, s
+    return shared_get_mean_sem(data, method_s='standard error')
 
 
 #%% retreating neural data
-
-# compute indice with givn time window for dF/F.
-def get_frame_idx_from_time(timestamps, c_time, l_time, r_time):
-    l_idx = np.searchsorted(timestamps, c_time+l_time)
-    r_idx = np.searchsorted(timestamps, c_time+r_time)
-    return l_idx, r_idx
-
 
 #%% plotting
 

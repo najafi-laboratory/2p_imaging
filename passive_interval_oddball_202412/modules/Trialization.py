@@ -1,9 +1,18 @@
 #!/usr/bin/env python3
 
 import os
+import sys
+from pathlib import Path
+
 import h5py
 import numpy as np
 from scipy.interpolate import interp1d
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils_2p.timing import correct_time_img_center, get_trigger_time
 
 from modules.ReadResults import read_raw_voltages
 from modules.ReadResults import read_dff
@@ -31,33 +40,6 @@ def correct_vol_start(vol_stim_vis):
     if vol_stim_vis[0] == 1:
         vol_stim_vis[:np.where(vol_stim_vis==0)[0][0]] = 0
     return vol_stim_vis
-
-# detect the rising edge and falling edge of binary series.
-def get_trigger_time(
-        vol_time,
-        vol_bin
-        ):
-    # find the edge with np.diff and correct it by preappend one 0.
-    diff_vol = np.diff(vol_bin, prepend=0)
-    idx_up = np.where(diff_vol == 1)[0]
-    idx_down = np.where(diff_vol == -1)[0]
-    # select the indice for risging and falling.
-    # give the edges in ms.
-    time_up   = vol_time[idx_up]
-    time_down = vol_time[idx_down]
-    return time_up, time_down
-
-# correct the fluorescence signal timing.
-def correct_time_img_center(time_img):
-    # find the frame internal.
-    diff_time_img = np.diff(time_img, append=0)
-    # correct the last element.
-    diff_time_img[-1] = np.mean(diff_time_img[:-1])
-    # move the image timing to the center of photon integration interval.
-    diff_time_img = diff_time_img / 2
-    # correct each individual timing.
-    time_neuro = time_img + diff_time_img
-    return time_neuro
 
 # get stimulus sequence labels.
 def get_stim_labels(bpod_sess_data, vol_time, vol_stim_vis):

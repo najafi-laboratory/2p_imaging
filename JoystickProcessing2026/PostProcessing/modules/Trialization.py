@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 
 import os
+import sys
+from pathlib import Path
+
 import h5py
 import numpy as np
 
@@ -8,36 +11,13 @@ from modules.ReadResults import read_raw_voltages
 from modules.ReadResults import read_dff
 from modules.ReadResults import read_bpod_mat_data
 
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-# detect the rising edge and falling edge of binary series.
-
-def get_trigger_time(
-        vol_time,
-        vol_bin
-):
-    # find the edge with np.diff and correct it by preappend one 0.
-    diff_vol = np.diff(vol_bin, prepend=0)
-    idx_up = np.where(diff_vol == 1)[0]
-    idx_down = np.where(diff_vol == -1)[0]
-    # select the indice for risging and falling.
-    # give the edges in ms.
-    time_up = vol_time[idx_up]
-    time_down = vol_time[idx_down]
-    return time_up, time_down
+from utils_2p.timing import correct_time_img_center, get_trigger_time
 
 
-# correct the fluorescence signal timing.
-
-def correct_time_img_center(time_img):
-    # find the frame internal.
-    diff_time_img = np.diff(time_img, append=0)
-    # correct the last element.
-    diff_time_img[-1] = np.mean(diff_time_img[:-1])
-    # move the image timing to the center of photon integration interval.
-    diff_time_img = diff_time_img / 2
-    # correct each individual timing.
-    time_neuro = time_img + diff_time_img
-    return time_neuro
 
 
 # align the stimulus sequence with fluorescence signal.

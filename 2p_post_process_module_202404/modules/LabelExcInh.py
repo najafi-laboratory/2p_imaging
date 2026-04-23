@@ -6,6 +6,7 @@ import tifffile
 import numpy as np
 from scipy.optimize import minimize
 from tqdm import tqdm
+from tqdm.auto import tqdm as tqdm_auto
 from cellpose import models
 from cellpose import io
 
@@ -14,6 +15,36 @@ def normz(data):
     return (data - np.mean(data)) / (np.std(data) + 1e-5)
 
 # run cellpose on one image for cell detection and save the results.
+def get_cellpose_model(model_type: str = "cyto3"):
+    cellpose_home = os.environ.get("CELLPOSE_HOME", "(default)")
+    use_gpu = os.environ.get("CELLPOSE_USE_GPU") == "1"
+    print(f"[cellpose] CELLPOSE_HOME={cellpose_home}")
+    if use_gpu:
+        print("[cellpose] Attempting to use GPU acceleration.")
+    desc = f"Loading Cellpose ({model_type})"
+
+    def _instantiate(gpu_flag: bool):
+        if hasattr(models, "Cellpose"):
+            return models.Cellpose(gpu=gpu_flag, model_type=model_type)
+        if hasattr(models, "CellposeModel"):
+            return models.CellposeModel(gpu=gpu_flag, pretrained_model=model_type, model_type=model_type)
+        raise AttributeError("cellpose.models is missing Cellpose/CellposeModel constructors.")
+
+    with tqdm_auto(total=1, desc=desc, leave=False, bar_format="{l_bar}{bar}| {elapsed}") as bar:
+        model = None
+        if use_gpu:
+            try:
+                model = _instantiate(True)
+                print("[cellpose] GPU model initialized.")
+            except Exception as exc:
+                print(f"[cellpose] GPU initialization failed ({exc}); using CPU instead.")
+        if model is None:
+            model = _instantiate(False)
+        bar.update(1)
+    print("[cellpose] Model ready.")
+    return model
+
+
 def run_cellpose(
         ops, mean_anat,
         diameter,
@@ -24,17 +55,41 @@ def run_cellpose(
     tifffile.imwrite(
         os.path.join(ops['save_path0'], 'cellpose', 'mean_anat.tif'),
         mean_anat)
-    model = models.Cellpose(model_type="cyto3")
-    masks_anat, flows, styles, diams = model.eval(
-        mean_anat,
-        diameter=diameter,
-        flow_threshold=flow_threshold)
-    io.masks_flows_to_seg(
-        images=mean_anat,
-        masks=masks_anat,
-        flows=flows,
-        file_names=os.path.join(ops['save_path0'], 'cellpose', 'mean_anat'),
-        diams=diameter)
+    model = get_cellpose_model("cyto3")
+    with tqdm_auto(total=1, desc="Running Cellpose", leave=False, bar_format="{l_bar}{bar}| {elapsed}") as bar:
+        eval_result = model.eval(
+            mean_anat,
+            diameter=diameter,
+            flow_threshold=flow_threshold)
+        bar.update(1)
+
+    if isinstance(eval_result, tuple):
+        if len(eval_result) == 4:
+            masks_anat, flows, styles, diams = eval_result
+        elif len(eval_result) == 3:
+            masks_anat, flows, styles = eval_result
+            diams = None
+        else:
+            raise ValueError(f"Unexpected Cellpose eval output length: {len(eval_result)}")
+    else:
+        raise ValueError("Cellpose eval returned non-tuple output; cannot unpack.")
+
+    seg_kwargs = {
+        "images": mean_anat,
+        "masks": masks_anat,
+        "flows": flows,
+        "file_names": os.path.join(ops['save_path0'], 'cellpose', 'mean_anat'),
+    }
+    if diams is not None:
+        seg_kwargs["diams"] = diams
+    else:
+        seg_kwargs["diams"] = diameter
+
+    try:
+        io.masks_flows_to_seg(**seg_kwargs)
+    except TypeError:
+        seg_kwargs.pop("diams", None)
+        io.masks_flows_to_seg(**seg_kwargs)
     return masks_anat
 
 # read and cut mask in ops.

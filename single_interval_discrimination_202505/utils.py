@@ -2,6 +2,9 @@
 
 import functools
 import tracemalloc
+import sys
+from pathlib import Path
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
@@ -9,8 +12,16 @@ from scipy.stats import mannwhitneyu
 from scipy.spatial.distance import pdist
 from sklearn.manifold import TSNE
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from modeling.clustering import get_mean_sem_cluster
 from modeling.generative import run_glm_multi_sess
+from utils_2p.stats import get_mean_sem as shared_get_mean_sem
+from utils_2p.stats import get_norm01_params
+from utils_2p.stats import norm01
+from utils_2p.timing import get_frame_idx_from_time, get_sub_time_idx
 
 #%% general data processing
 
@@ -32,18 +43,6 @@ def rescale(data, upper, lower):
     data = ( data - np.nanmin(data) ) / (np.nanmax(data) - np.nanmin(data))
     data = data * (upper - lower) + lower
     return data
-
-# normalization into [0,1].
-def norm01(data):
-    return (data - np.nanmin(data)) / (np.nanmax(data) - np.nanmin(data) + 1e-5)
-
-# compute the scale parameters when normalizing data into [0,1].
-def get_norm01_params(data):
-    x_scale = 1 / (np.nanmax(data) - np.nanmin(data))
-    x_offset = - np.nanmin(data) / (np.nanmax(data) - np.nanmin(data))
-    x_min = np.nanmin(data)
-    x_max = np.nanmax(data)
-    return x_scale, x_offset, x_min, x_max
 
 # bin data and return bin results.
 def get_bin_stat(x, y, x_range, bin_size):
@@ -96,12 +95,7 @@ def get_mean_sem_win(neu_seq, neu_time, c_time, l_time, r_time, mode='mean'):
 
 # compute mean and sem for 3d array data.
 def get_mean_sem(data, zero_start=False):
-    m = np.nanmean(data.reshape(-1, data.shape[-1]), axis=0)
-    m = m-m[0] if zero_start else m
-    std = np.nanstd(data.reshape(-1, data.shape[-1]), axis=0)
-    count = np.nansum(~np.isnan(data.reshape(-1, data.shape[-1])), axis=0)
-    s = std / np.sqrt(count)
-    return m, s
+    return shared_get_mean_sem(data, method_s='standard error', zero_start=zero_start)
 
 #%% retreating neural data
 
@@ -222,17 +216,6 @@ def get_neu_trial(
             neu_cate, alignment,
             trial_idx=trial_idx, mean_sem=mean_sem)
     return colors, neu_trial, [neu_labels, neu_sig], neu_num
-
-# compute indice with givn time window for df/f.
-def get_frame_idx_from_time(timestamps, c_time, l_time, r_time):
-    l_idx = np.searchsorted(timestamps, c_time+l_time)
-    r_idx = np.searchsorted(timestamps, c_time+r_time)
-    return l_idx, r_idx
-
-# get subsequence index with given start and end.
-def get_sub_time_idx(time, start, end):
-    idx = np.where((time >= start) &(time <= end))[0]
-    return idx
 
 # find expected standard fix interval.
 def get_expect_interval(stim_labels):

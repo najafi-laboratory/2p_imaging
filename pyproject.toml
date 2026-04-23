@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utils_2p"
+version = "0.1.0"
+description = "Shared utility functions for the 2p_imaging repository"
+readme = "utils_2p/README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "h5py",
+    "numpy",
+    "scipy",
+]
+
+[tool.setuptools]
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["utils_2p"]

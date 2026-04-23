@@ -1,7 +1,16 @@
 #!/usr/bin/env python3
 
+import sys
+from pathlib import Path
+
 import numpy as np
 from scipy.interpolate import interp1d
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from utils_2p.alignment import align_neu_seq_utils, pad_seq, trim_seq
 
 
 # get trial outcomes.
@@ -17,54 +26,6 @@ def get_trial_outcome(neural_trials, trials):
     else:
         trial_outcome = -1
     return trial_outcome
-
-
-# cut sequence into the same length as the shortest one given pivots.
-def trim_seq(
-        data,
-        pivots,
-):
-    if len(data[0].shape) == 1:
-        len_l_min = np.min(pivots)
-        len_r_min = np.min([len(data[i])-pivots[i] for i in range(len(data))])
-        data = [data[i][pivots[i]-len_l_min:pivots[i]+len_r_min]
-                for i in range(len(data))]
-    if len(data[0].shape) == 3:
-        len_l_min = np.min(pivots)
-        len_r_min = np.min([len(data[i][0, 0, :])-pivots[i]
-                           for i in range(len(data))])
-        data = [data[i][:, :, pivots[i]-len_l_min:pivots[i]+len_r_min]
-                for i in range(len(data))]
-    return data
-
-
-# pad sequence with time stamps to the longest length with nan.
-def pad_seq(align_data, align_time):
-    pad_time = np.arange(
-        np.min([np.min(t) for t in align_time]),
-        np.max([np.max(t) for t in align_time]) + 1)
-    pad_data = []
-    for data, time in zip(align_data, align_time):
-        aligned_seq = np.full_like(pad_time, np.nan, dtype=float)
-        idx = np.searchsorted(pad_time, time)
-        aligned_seq[idx] = data
-        pad_data.append(aligned_seq)
-    return pad_data, pad_time
-
-
-# align coolected sequences.
-def align_neu_seq_utils(neu_seq, neu_time):
-    # correct neuron time stamps centering at perturbation.
-    neu_time_zero = [np.argmin(np.abs(nt)) for nt in neu_time]
-    neu_time = trim_seq(neu_time, neu_time_zero)
-    neu_seq = trim_seq(neu_seq, neu_time_zero)
-    # concatenate results.
-    neu_time = [nt.reshape(1, -1) for nt in neu_time]
-    neu_seq = np.concatenate(neu_seq, axis=0)
-    neu_time = np.concatenate(neu_time, axis=0)
-    # get mean time stamps.
-    neu_time = np.mean(neu_time, axis=0)
-    return neu_seq, neu_time
 
 
 # align joystick trajectory at given state.
