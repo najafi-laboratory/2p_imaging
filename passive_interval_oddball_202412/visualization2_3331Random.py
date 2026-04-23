@@ -27,6 +27,7 @@ from plot.fig4_3331Random import plotter_main
 
 def run(session_config_list, smooth, cate_list):
     size_scale = 3
+    layout = 'tight'
     target_sess = 'random'
     idx_target_sess = np.array(list(session_config_list['list_session_name'].values())) == target_sess
     print('Found {} {} sessions'.format(np.sum(idx_target_sess), target_sess))
@@ -49,7 +50,7 @@ def run(session_config_list, smooth, cate_list):
             filename = '3331Random_fraction'
             n_row = 1
             n_col = 1
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             ax = plt.subplot(gs[0, 0])
             plotter.plot_neuron_fraction(ax)
@@ -64,7 +65,7 @@ def run(session_config_list, smooth, cate_list):
             filename = '3331Random_interval_distribution'
             n_row = 2
             n_col = 4
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             type_ax01 = plt.subplot(gs[0, 0])
             type_ax02 = plt.subplot(gs[0, 1])
@@ -93,7 +94,7 @@ def run(session_config_list, smooth, cate_list):
             filename = '3331Random_trial_structure'
             n_row = 1
             n_col = 10
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             trial_ax01 = plt.subplot(gs[0, 0])
             trial_ax02 = plt.subplot(gs[0, 1:5])
@@ -117,11 +118,11 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 3
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 10
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
-                a = [plt.subplot(gs[s:s+2, i]) for i in range(10)]
+                a = [plt.subplot(gs[s:s+2, i]) for i in range(8)]
                 axs_all.append(a)
             plotter.cluster_stim_all(axs_all)
             fig.set_size_inches(n_col*size_scale, n_row*size_scale)
@@ -136,7 +137,7 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 4
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 8
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
@@ -155,7 +156,7 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 4
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 5
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
@@ -173,19 +174,23 @@ def run(session_config_list, smooth, cate_list):
             print('-----------------------------------------------')
             print(title)
             filename = '3331Random_cross_sess_adapt'
-            cate_gap = 4
+            cate_gap = 6
             n_row = cate_gap*len(plotter.cate_list)
-            n_col = 10
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            n_col = 11
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
                 a = [plt.subplot(gs[s:s+2, 0])]
                 a+= [plt.subplot(gs[s:s+2, 1:4])]
                 a+= [plt.subplot(gs[s:s+2, 4:7])]
-                a+= [plt.subplot(gs[s:s+2, 7])]
-                a+= [plt.subplot(gs[s:s+2, 8])]
-                a+= [plt.subplot(gs[s:s+2, 9])]
+                a+= [plt.subplot(gs[s:s+2, 7:10])]
+                a+= [plt.subplot(gs[s+2:s+4, 0])]
+                a+= [plt.subplot(gs[s+2:s+4, 1])]
+                a+= [plt.subplot(gs[s+2:s+3, 2:5])]
+                a+= [plt.subplot(gs[s+3:s+4, 2:5])]
+                a+= [plt.subplot(gs[s+4:s+5, 2:5])]
+                a+= [plt.subplot(gs[s+2:s+4, 5])]
                 axs_all.append(a)
             plotter.cross_sess_adapt(axs_all)
             fig.set_size_inches(n_col*size_scale, n_row*size_scale)
@@ -200,7 +205,7 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 4
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 10
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
@@ -219,7 +224,7 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 3
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 20
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
@@ -230,16 +235,33 @@ def run(session_config_list, smooth, cate_list):
             fig.savefig(os.path.join('results', 'temp_'+session_config_list['subject_name'], filename+'.svg'), dpi=300, format='svg')
             plt.close(fig)
             return [filename, n_row, n_col, title]
+        def plot_pupil_all():
+            title = 'pupil traces'
+            print('-----------------------------------------------')
+            print(title)
+            filename = '3331Random_pupil'
+            n_row = 3
+            n_col = 5
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
+            gs = GridSpec(n_row, n_col, figure=fig)
+            axs_all = [plt.subplot(gs[0, 0]),
+                       plt.subplot(gs[0, 1])]
+            plotter.pupil(axs_all)
+            fig.set_size_inches(n_col*size_scale, n_row*size_scale)
+            fig.savefig(os.path.join('results', 'temp_'+session_config_list['subject_name'], filename+'.svg'), dpi=300, format='svg')
+            plt.close(fig)
+            return [filename, n_row, n_col, title]
         fig_all = [
-            plot_cell_fraction(),
-            plot_intervals(),
-            plot_trial(),
+            #plot_cell_fraction(),
+            #plot_intervals(),
+            #plot_trial(),
             plot_cluster_stim_all(),
             plot_cluster_interval_bin_all(),
             #plot_cluster_heatmap_all(),
             plot_cross_sess_adapt(),
             plot_cluster_local_all(),
             plot_latent_all(),
+            #plot_pupil_all(),
             ]
         print('Clearing memory usage')
         del list_labels

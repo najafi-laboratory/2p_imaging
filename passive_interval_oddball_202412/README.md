@@ -637,3 +637,77 @@
 ## 2025.09.10
 - Fixed y label in plot_transition_trial.
 - Changed plot_cluster_standard_time_decode_confusion colorbar.
+
+## 2025.11.07
+- Added pupil processing.
+
+## 2025.11.20
+- Added plot_ramp_type_fraction.
+- Added pupil traces.
+
+## 2026.03.25
+- Rewritten bounds in fit_trf_model.
+- Fixed trf_model.
+- Improved regularization for model.
+- Adjusted r2_gap.
+- Now get_cluster_cate also returns idx.
+
+## 2026.04.01
+- Now clustering_neu_response_mode only has hierachy clustering.
+- Separated run_trf_model.
+- Rewritten remap_cluster_id.
+- Added plot_oddball_jitter_layers.
+- Now get_stat_test handles nan.
+- Rewritten plot_cluster_pred_mod_index_compare.
+- Added get_modulation_index_neu_seq.
+- Rewritten plot_pred_mod_index_box.
+- Added plot_oddball_jitter_early.
+
+## 2026.04.03
+- Added CCA based shared dynamics analysis.
+- Added plot_cate_interaction.
+- Fixed run_clustering sorting.
+- Fixed get_mean_sem_win percentage.
+- Added fit_linear_regression.
+- Added linear regression in plot_trial_quant.
+- Added plot_day1_epoch_2cate.
+
+## 2026.04.10
+- Now plot_heatmap_neuron plots y axis scale bar.
+- Now plot_interval_bin use empty fill for binned stim.
+- Added fit line and stat test in plot_dist_cluster_fraction.
+- Now plot_cluster_mean_sem applies empty box.
+- Fixed plot_cluster_win_mag_dist_compare.
+- Removed plot_oddball_time_decode.
+- Fixed plot_oddball_jitter.
+- Added neu_time to run_trf_model.
+
+## 2026.04.15
+- Removed plot_cluster_standard_params_box.
+- Added PCA to plot_cluster_standard_time_decode_confusion.
+- Added PCA to plot_cluster_standard_time_decode_single.
+- Now plot_standard_ramp_params_all can plot density.
+
+## 2026.04.17
+- Changed plot_block_win_decode_all xlim.
+- Now get_mean_sem_win can specify pct.
+- Fixed plot_ramp_cate_fraction.
+- Fixed plot_ramp_fraction labels.
+- Now get_stat_test can specify methods.
+
+## 2026.04.19
+- Fixed plot_cluster_standard_time_decode_single y axis.
+- Fixed plot_cluster_standard_time_decode_confusion spacing.
+- Changed plot_cluster_standard_time_decode_confusion linestyle.
+- Fixed plot_latent_all.
+- Now get_mean_sem can specify uncertainty computing method.
+- Changed n_pre to 1 in random.
+- Changed all plot_cluster_neu_fraction_in_cluster layouts.
+- Changed plot_interval_bin layouts.
+- Changed plot_dist_cluster_fraction layouts.
+
+## 2026.04.21
+- Fixed plot_block_win_decode layouts.
+- Fixed plot_block_win_decode ylim.
+- Fixed plot_cluster_standard_time_decode_single layouts.
+- Rewritten plot_trial_quant.

@@ -7,15 +7,23 @@ from sklearn.svm import SVC
 from sklearn.svm import LinearSVC
 from sklearn.svm import SVR
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import confusion_matrix
 from sklearn.metrics import r2_score
-from sklearn.metrics import accuracy_score
 from sklearn.metrics import mean_absolute_percentage_error
 from sklearn.model_selection import StratifiedShuffleSplit
+from scipy.stats import linregress
 
 from modeling.utils import norm01
 from modeling.utils import get_frame_idx_from_time
 from modeling.utils import get_mean_sem
+
+# fit a linear regression and report goodness.
+def fit_linear_regression(x, y):
+    idx = ~np.isnan(y)
+    model = linregress(x[idx], y[idx])
+    y_pred = model.intercept + model.slope * x
+    r2 = model.rvalue**2
+    p = model.pvalue
+    return y_pred, r2, p
 
 # fit a line and report goodness.
 def fit_poly_line(x, y, order):
@@ -80,13 +88,13 @@ def multi_sess_decoding_slide_win(
     acc_model = np.concatenate(acc_model, axis=1)
     acc_chance = np.concatenate(acc_chance, axis=1)
     acc_time = neu_time[np.array(acc_time)]
-    acc_model_mean, acc_model_sem = get_mean_sem(acc_model)
-    acc_chance_mean, acc_chance_sem = get_mean_sem(acc_chance)
+    acc_model_mean, acc_model_sem = get_mean_sem(acc_model, method_m='mean', method_s='standard error')
+    acc_chance_mean, acc_chance_sem = get_mean_sem(acc_chance, method_m='mean', method_s='standard error')
     return acc_time, acc_model_mean, acc_model_sem, acc_chance_mean, acc_chance_sem
 
 # decoding time collapse and evaluate confusion matrix.
 def decoding_time_confusion(neu_x, neu_time, bin_times):
-    n_splits = 2
+    n_splits = 25
     test_size = 0.2
     bin_l_idx, bin_r_idx = get_frame_idx_from_time(neu_time, 0, 0, bin_times)
     bin_len = bin_r_idx - bin_l_idx
@@ -153,7 +161,7 @@ def decoding_time_confusion(neu_x, neu_time, bin_times):
 
 # decoding single time point from the rest.
 def decoding_time_single(neu_x, neu_time, bin_times):
-    n_splits = 2
+    n_splits = 25
     test_size = 0.2
     bin_l_idx, bin_r_idx = get_frame_idx_from_time(neu_time, 0, 0, bin_times)
     bin_len = bin_r_idx - bin_l_idx
@@ -209,8 +217,8 @@ def decoding_time_single(neu_x, neu_time, bin_times):
 
 # regression from neural activity to time.
 def regression_time_frac(neu_x, neu_time, bin_times, fracs):
-    n_splits = 50
-    n_sampling = 25
+    n_splits = 2
+    n_sampling = 2
     test_size = 0.3
     bin_l_idx, bin_r_idx = get_frame_idx_from_time(neu_time, 0, 0, bin_times)
     bin_len = bin_r_idx - bin_l_idx
@@ -253,8 +261,3 @@ def regression_time_frac(neu_x, neu_time, bin_times, fracs):
     r2_all = np.nanmean(r2_all, axis=2)
     return r2_all
 
-
-
-
-
-        
