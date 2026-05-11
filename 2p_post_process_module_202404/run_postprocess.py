@@ -36,11 +36,17 @@ def process_session(session_data_path, args):
     QualControlDataIO.run(ops, range_skew, max_connect, range_aspect, range_compact, range_footprint)
     LabelExcInh.run(ops, args.diameter)
     DffTraces.run(ops, correct_pmt=False)
+    print(f'Finished Processing {session_data_path}')
+
+
+def parse_session_paths(session_data_path):
+    """Allow one session path or a comma-separated list of session paths."""
+    return [path.strip() for path in session_data_path.split(',') if path.strip()]
 
 
 def main():
     parser = argparse.ArgumentParser(description='Run suite2p post-processing/QC utilities.')
-    parser.add_argument('--session_data_path', required=True, type=str, help='Folder containing suite2p outputs.')
+    parser.add_argument('--session_data_path', required=True, type=str, help='Folder containing suite2p outputs, or comma-separated folders.')
     parser.add_argument('--range_skew', required=True, type=str, help='Range of skew for quality control (e.g., -5,5).')
     parser.add_argument('--max_connect', required=True, type=str, help='Maximum connectivity for QC (e.g., 1).')
     parser.add_argument('--range_footprint', required=True, type=str, help='Range of footprint sizes (e.g., 1.0,2.0).')
@@ -48,7 +54,9 @@ def main():
     parser.add_argument('--range_compact', required=True, type=str, help='Range of compactness values (e.g., 0,1.06).')
     parser.add_argument('--diameter', required=True, type=float, help='Cellpose diameter for LabelExcInh.')
     args = parser.parse_args()
-    process_session(args.session_data_path, args)
+
+    for session_data_path in parse_session_paths(args.session_data_path):
+        process_session(session_data_path, args)
 
 
 if __name__ == "__main__":
