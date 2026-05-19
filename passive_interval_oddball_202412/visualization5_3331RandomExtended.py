@@ -11,7 +11,6 @@ from matplotlib.gridspec import GridSpec
 
 from modules.ReadResults import filter_session_config_list
 from modules.ReadResults import read_all
-from plot.misc import plot_significance
 from plot.fig3_intervals import plot_standard_type
 from plot.fig3_intervals import plot_fix_jitter_type
 from plot.fig3_intervals import plot_oddball_type
@@ -27,6 +26,7 @@ from plot.fig7_3331RandomExtended import plotter_main
 
 def run(session_config_list, smooth, cate_list):
     size_scale = 3
+    layout = 'tight'
     target_sess = 'extended_random'
     idx_target_sess = np.array(list(session_config_list['list_session_name'].values())) == target_sess
     print('Found {} {} sessions'.format(np.sum(idx_target_sess), target_sess))
@@ -48,11 +48,13 @@ def run(session_config_list, smooth, cate_list):
             print(title)
             filename = '3331RandomExtended_fraction'
             n_row = 1
-            n_col = 1
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            n_col = 5
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             ax = plt.subplot(gs[0, 0])
             plotter.plot_neuron_fraction(ax)
+            ax = plt.subplot(gs[0, 1:3])
+            plotter.plot_ramp_type_cell_fraction_table(ax)
             fig.set_size_inches(n_col*size_scale, n_row*size_scale)
             fig.savefig(os.path.join('results', 'temp_'+session_config_list['subject_name'], filename+'.svg'), dpi=300, format='svg')
             plt.close(fig)
@@ -64,7 +66,7 @@ def run(session_config_list, smooth, cate_list):
             filename = '3331RandomExtended_interval_distribution'
             n_row = 2
             n_col = 4
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             type_ax01 = plt.subplot(gs[0, 0])
             type_ax02 = plt.subplot(gs[0, 1])
@@ -93,7 +95,7 @@ def run(session_config_list, smooth, cate_list):
             filename = '3331RandomExtended_trial_structure'
             n_row = 1
             n_col = 10
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             trial_ax01 = plt.subplot(gs[0, 0])
             trial_ax02 = plt.subplot(gs[0, 1:5])
@@ -116,12 +118,12 @@ def run(session_config_list, smooth, cate_list):
             filename = '3331RandomExtended_cluster_stim_all'
             cate_gap = 3
             n_row = cate_gap*len(plotter.cate_list)
-            n_col = 10
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            n_col = 9
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
-                a = [plt.subplot(gs[s:s+2, i]) for i in range(10)]
+                a = [plt.subplot(gs[s:s+2, i]) for i in range(8)]
                 axs_all.append(a)
             plotter.cluster_stim_all(axs_all)
             fig.set_size_inches(n_col*size_scale, n_row*size_scale)
@@ -136,7 +138,7 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 4
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 8
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
@@ -155,7 +157,7 @@ def run(session_config_list, smooth, cate_list):
             cate_gap = 3
             n_row = cate_gap*len(plotter.cate_list)
             n_col = 20
-            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
+            fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
             gs = GridSpec(n_row, n_col, figure=fig)
             axs_all = []
             for s in cate_gap*np.arange(len(plotter.cate_list)):
@@ -167,11 +169,12 @@ def run(session_config_list, smooth, cate_list):
             plt.close(fig)
             return [filename, n_row, n_col, title]
         fig_all = [
-            plot_intervals(),
-            plot_trial(),
-            plot_cluster_stim_all(),
-            plot_cluster_interval_bin_all(),
-            plot_latent_all(),
+            plot_cell_fraction(),
+            #plot_intervals(),
+            #plot_trial(),
+            #plot_cluster_stim_all(),
+            #plot_cluster_interval_bin_all(),
+            #plot_latent_all(),
             ]
         print('Clearing memory usage')
         del list_labels

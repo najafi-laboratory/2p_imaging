@@ -711,3 +711,100 @@
 - Fixed plot_block_win_decode ylim.
 - Fixed plot_cluster_standard_time_decode_single layouts.
 - Rewritten plot_trial_quant.
+- Adjusted plot_cluster_standard layouts.
+- Adjusted plot_standard_ramp_params_all layouts.
+- Adjusted plot_cluster_standard_pred layouts.
+- Adjusted plot_cluster_standard_time_decode_confusion layouts.
+
+## 2026.04.24
+- Fixed adjust_layout_isi_example_epoch.
+- Adjusted plot_isi_seting layouts.
+- Adjusted plot_isi_example_epoch layouts.
+- Now all fig5_1451ShortLong function units use second.
+- Now all fig6_4131FixJitterOdd function units use second.
+- Now all fig4_3331Random function units use second.
+- Added plot_day1_epoch_2cate_heatmap.
+
+## 2026.04.30
+- Added cramervonmises_2samp to get_stat_test.
+- Fixed fig7_3331RandomExtended.
+- Added plot_baseline_comp.
+- Now plot_dist also returns fractions.
+- Now fit_linear_regression reports slope significance too.
+- Fixed plot_dist nan.
+- Added auc_test.
+
+## 2026.05.04
+- Fixed fig6_4131FixJitterOdd xlabel.
+- Fixed plot_baseline_comp xlabel.
+- Adjusted plot_baseline_comp layouts.
+- Adjusted plot_cluster_pred_mod_index_compare layouts.
+- Adjusted plot_block_win_decode_all layouts.
+- Adjusted adjust_layout_cluster_neu layouts.
+- Adjusted adjust_layout_heatmap layouts.
+- Adjusted add_heatmap_colorbar layouts.
+- Adjusted plot_interval_bin layouts.
+- Adjusted plot_day1_epoch_2cate_heatmap layouts.
+- Adjusted plot_cluster_heatmap_trial layouts.
+- Adjusted adjust_layout_neu layouts.
+- Added add_ax_ticks.
+- Adjusted plot_cluster_standard_time_decode_confusion layouts.
+
+## 2026.05.06
+- Removed plot_cate_interaction.
+- Added plot_tansition_exclude to fig5_1451ShortLong.
+- Added plot_interval_bin_exclude to fig4_3331Random.
+- Added plot_oddball_jitter_exclude to fig6_4131FixJitterOdd.
+- Removed plot_interval_bin_latent.
+- Removed plot_day_epoch_2cate.
+- Removed all plot_cluster_heatmap_all.
+- Adjusted plot_tansition layouts.
+- Removed regression_time_frac.
+- Fixed auc_test nan.
+- Added plot_pred_mod_index_box_trial.
+- Adjusted plot_latent_all layouts.
+- Fixed plot_jitter_global_oddball.
+- Added multi_sess_regression_pop and regression_pop.
+- Added plot_ramp_type_cell_fraction.
+
+## 2026.05.07
+- Adjusted plot_cluster_standard_time_decode_confusion layouts.
+- Adjusted plot_block_win_decode layouts.
+- Adjusted plot_pred_mod_index_dist layouts.
+- Fixed plot_pred_mod_index_box.
+- Removed plot_cluster_pred_mod_index_compare.
+- Fixed plot_cluster_local_all layouts.
+- Adjusted plot_interaction_strength layouts.
+- Adjusted plot_standard_time_decode_all layouts.
+- Adjusted plot_explained_variance_standard layouts.
+
+## 2026.05.08
+- Now plot_cluster_mean_sem can specify y0 line.
+- Fixed all plot_cluster_mean_sem overlapping scalebar.
+- Fixed plot_pred_mod_index_box.
+- Now fit_linear_regression returns slope.
+- Adjusted plot_trial_quant layouts.
+- Fixed plot_latent_all layouts.
+
+## 2026.05.09
+- Separate excluded cluster into one plot.
+- Adjusted plot_corr_time layouts.
+- Added plot_cross_epoch to plot_excluded.
+- Now plot_ramp_fraction also plots excluded cluster.
+- Now plot_ramp_type_cell_fraction_table also shows fractions.
+- Added plot_ramp_cate_fraction to plot_excluded.
+- Adjusted plot_glm_kernel layouts.
+- Adjusted plot_standard_time_decode_all layouts.
+- Adjusted plot_trial_quant layouts.
+- Separate plot_cluster_oddball_jitter_global_modulation.
+- Adjusted plot_pred_mod_index_dist layouts.
+- Rewritten get_modulation_index_neu_seq.
+- Added errorbar to plot_cluster_standard_time_decode_confusion line plot.
+
+## 2026.05.12
+- Rewritten plot_corr_time.
+- Rewritten get_pair_corr.
+
+
+
+
