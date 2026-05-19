@@ -27,7 +27,7 @@ def set_params(args):
     print('===============================================')
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     # read the structured config json file.
-    if args.target_structure not in ['neuron', 'dendrite']:
+    if args.target_structure not in ['neuron', 'neuron_1chan', 'dendrite']:
         raise ValueError('target_structure can only be ppc or crbl')
     elif args.target_structure == 'neuron':
         with open('./config_neuron.json', 'r') as file:
@@ -194,6 +194,9 @@ def move_bpod_mat(args):
     if len(bpod_mat) == 1:
         shutil.copyfile(os.path.join(args.data_path, bpod_mat[0]),
             os.path.join(args.save_path, 'bpod_session_data.mat'))
+    elif getattr(args, 'bpod_mat_path', None) and os.path.isfile(args.bpod_mat_path):
+        shutil.copyfile(args.bpod_mat_path,
+            os.path.join(args.save_path, 'bpod_session_data.mat'))
     else:
         print('Valid bpod session data mat file not found')
 
@@ -207,6 +210,7 @@ if __name__ == "__main__":
     parser.add_argument('--nchannels',        required=True, type=int, help='Specify the number of channels.')
     parser.add_argument('--functional_chan',  required=True, type=int, help='Specify functional channel id.')
     parser.add_argument('--target_structure', required=True, type=str, help='Can only be neuron or dendrites.')
+    parser.add_argument('--bpod_mat_path',    required=False, type=str, default=None, help='Optional explicit path to the matching bpod mat file.')
     args = parser.parse_args()
     ops, db = set_params(args)
     process_vol(args)

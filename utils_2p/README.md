@@ -76,6 +76,68 @@ from utils_2p import norm01, get_frame_idx_from_time
 - `utils_2p.alignment`
 - `utils_2p.matlab`
 - `utils_2p.voltage`
+- `utils_2p.slurm_pipeline`
+
+## Staged Slurm 2p Pipeline
+
+`utils_2p.slurm_pipeline` submits a generic five-stage Slurm chain for each
+session in a CSV/TSV manifest:
+
+```text
+prep CPU -> suite2p GPU -> qc CPU -> label GPU -> dff CPU
+```
+
+Create a manifest with `session_name,data_path,save_path` columns. A
+`bpod_mat_path` column is optional.
+
+```csv
+session_name,data_path,save_path,bpod_mat_path
+example_session,/path/to/raw/session,/path/to/output/session,/path/to/bpod.mat
+```
+
+Preview the generated `sbatch` commands without submitting:
+
+```bash
+utils-2p-slurm-pipeline submit \
+  --manifest sessions.csv \
+  --processing-root /path/to/2p_processing_pipeline_202401 \
+  --postprocess-root /path/to/2p_post_process_module_202404 \
+  --sbatch-dir /path/to/sbatch_runs \
+  --python-bin /path/to/env/bin/python \
+  --dry-run
+```
+
+Remove `--dry-run` to submit the dependency chains.
+
+To resume partially processed sessions, add `--resume`. The launcher inspects
+the output directory and starts each session at the first missing stage:
+
+```bash
+utils-2p-slurm-pipeline submit \
+  --manifest sessions.csv \
+  --processing-root /path/to/2p_processing_pipeline_202401 \
+  --postprocess-root /path/to/2p_post_process_module_202404 \
+  --sbatch-dir /path/to/sbatch_runs \
+  --python-bin /path/to/env/bin/python \
+  --resume
+```
+
+The file markers used for resume/status inference are:
+
+| Stage | Required output markers |
+| --- | --- |
+| `prep` | `raw_voltages.h5`, `suite2p/plane0/ops.npy` |
+| `suite2p` | `suite2p/plane0/F.npy`, `Fneu.npy`, `spks.npy`, `stat.npy`, `iscell.npy`, `redcell.npy` |
+| `qc` | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `move_offset.h5`, `ops.npy` |
+| `label` | `masks.h5` |
+| `dff` | `dff.h5` |
+
+Check a processed session, or all direct children of a processed root:
+
+```bash
+utils-2p-slurm-pipeline status /path/to/output/session
+utils-2p-slurm-pipeline status --children /path/to/processed_root
+```
 
 ## Current limitation
 

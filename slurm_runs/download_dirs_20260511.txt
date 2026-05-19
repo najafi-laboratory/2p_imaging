@@ -1,0 +1,14 @@
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260317_2afc_PFC-1326
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260318_2afc_PFC-1329
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260319_2afc_PFC-1332
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260320_2afc_PFC-1335
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260324_2afc_PFC-1342
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260327_2afc_PFC-1359
+/storage/scratch1/3/grubin6/2p_processing_results/MC11_20260330_2afc_PFC-1377
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed/MC19_20260410
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed/MC19_20260413
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed/MC19_20260414
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed/MC19_20260415
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed/MC19_20260416
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed_New/MC19_ClosedLoop_20260507
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/MC19_Processed_New/MC19_ClosedLoop_20260508

@@ -14,6 +14,9 @@ dependencies = [
     "scipy",
 ]
 
+[project.scripts]
+utils-2p-slurm-pipeline = "utils_2p.slurm_pipeline:main"
+
 [tool.setuptools]
 include-package-data = false
 
