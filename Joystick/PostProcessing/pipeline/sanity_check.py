@@ -31,14 +31,10 @@ import config
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Transient window (frames)
-#   My suggestion  : PRE=3, POST=15  →  100 ms before, 500 ms after peak
-#   User suggestion: PRE=2, POST=3   →  67 ms before,  100 ms after peak
-#   At 30 Hz, GCaMP8s dendritic transients decay over ~300–500 ms,
-#   so POST=15 is the minimum to see the full decay shape.
+# Transient window:  ~367 ms before peak, 900 ms after peak  (at 30 Hz)
 # ─────────────────────────────────────────────────────────────────────────────
-TRANSIENT_PRE  = 3    # frames before peak
-TRANSIENT_POST = 15   # frames after  peak
+TRANSIENT_PRE  = int(round(0.300 * config.FS)) + 2   # 11 frames ≈ 367 ms
+TRANSIENT_POST = int(round(0.900 * config.FS))        # 27 frames = 900 ms
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -105,29 +101,57 @@ def compute_avg_transient(session_path,
         event_times = [np.array(grp[f'roi_{i}/times'])
                        for i in range(dff.shape[0])]
 
-    n_frames  = dff.shape[1]
-    neuron_avgs = []
+    n_frames    = dff.shape[1]
+    neuron_data = []   # list of (per_neuron_mean, per_neuron_sem)
 
     for roi, times in enumerate(event_times):
-        if len(times) < 2:          # need ≥2 events for a meaningful average
+        if len(times) < 2:
             continue
+        # z-score full trace so amplitudes are comparable across neurons
+        trace = dff[roi].astype(np.float64)
+        sd    = trace.std()
+        if sd < 1e-10:
+            continue
+        z_trace = (trace - trace.mean()) / sd
+
         snippets = []
         for t in times.astype(int):
             t0, t1 = t - pre, t + post + 1
             if t0 >= 0 and t1 <= n_frames:
-                snippets.append(dff[roi, t0:t1])
+                snippets.append(z_trace[t0:t1])
         if len(snippets) >= 2:
-            neuron_avgs.append(np.mean(snippets, axis=0))
+            arr      = np.array(snippets)
+            n_mean   = arr.mean(axis=0)
+            n_sem    = arr.std(ddof=1, axis=0) / np.sqrt(len(snippets))
+            neuron_data.append((n_mean, n_sem))
 
-    if len(neuron_avgs) < 2:
-        return None, None, None
+    if len(neuron_data) < 2:
+        return None, None, None, None
 
-    grand_mean = np.mean(neuron_avgs,           axis=0)
-    grand_sem  = (np.std(neuron_avgs, ddof=1, axis=0)
-                  / np.sqrt(len(neuron_avgs)))
-    t_ms = (np.arange(pre + post + 1) - pre) / config.FS * 1000   # ms
+    # ── outlier rejection ────────────────────────────────────────────────────
+    # Exclude neurons whose peak transient amplitude is a MAD outlier.
+    # Threshold = median + 5 × (1.4826 × MAD)  ≈  median + 5 σ_robust
+    peaks     = np.array([np.max(np.abs(m)) for m, _ in neuron_data])
+    med_p     = np.median(peaks)
+    mad_p     = np.median(np.abs(peaks - med_p)) * 1.4826
+    threshold = med_p + 5 * mad_p
+    n_before  = len(neuron_data)
+    neuron_data = [(m, s) for (m, s), pk in zip(neuron_data, peaks)
+                   if pk <= threshold]
+    n_removed = n_before - len(neuron_data)
+    if n_removed > 0:
+        print(f'    [transient] removed {n_removed} outlier neuron(s) '
+              f'(peak > {threshold:.2f} z)')
 
-    return t_ms, grand_mean, grand_sem
+    if len(neuron_data) < 2:
+        return None, None, None, None
+
+    means      = np.array([m for m, _ in neuron_data])
+    grand_mean = means.mean(axis=0)
+    grand_sem  = means.std(ddof=1, axis=0) / np.sqrt(len(means))
+    t_ms       = (np.arange(pre + post + 1) - pre) / config.FS * 1000
+
+    return t_ms, neuron_data, grand_mean, grand_sem
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -182,7 +206,7 @@ def page_rates(session_path):
     n_active = int((rates > 0).sum())
     n_in_cs  = int(((rates >= 1.0) & (rates <= 2.0)).sum())
 
-    t_ms, grand_mean, grand_sem = compute_avg_transient(session_path)
+    t_ms, neuron_data, grand_mean, grand_sem = compute_avg_transient(session_path)
 
     fig, (ax_hist, ax_trans) = plt.subplots(1, 2, figsize=(16, 5))
     fig.suptitle(
@@ -210,33 +234,34 @@ def page_rates(session_path):
 
     # ── right: average transient ──────────────────────────────────────────────
     if grand_mean is not None:
-        n_neurons = len([1 for _ in grand_mean])   # placeholder — count below
-        # recount: rerun to get n_neurons used
-        with h5py.File(os.path.join(session_path, 'manual_qc_results',
-                                    'events.h5'), 'r') as f:
-            grp = f['per_neuron']
-            n_neurons = sum(
-                1 for i in range(len(rates))
-                if len(np.array(grp[f'roi_{i}/times'])) >= 2
-            )
+        n_neurons = len(neuron_data)
 
+        # per-neuron: thin dim lines with individual SEM, random HSV colours
+        rng_c = np.random.default_rng(7)
+        hues  = rng_c.permutation(np.linspace(0, 1, n_neurons, endpoint=False))
+        colors = plt.cm.hsv(hues)
+
+        for (n_mean, n_sem), c in zip(neuron_data, colors):
+            ax_trans.fill_between(t_ms, n_mean - n_sem, n_mean + n_sem,
+                                  color=c, alpha=0.06)
+            ax_trans.plot(t_ms, n_mean, color=c, lw=0.5, alpha=0.35)
+
+        # grand mean in black on top
         ax_trans.fill_between(t_ms,
                               grand_mean - grand_sem,
                               grand_mean + grand_sem,
-                              color='#2980b9', alpha=0.25, label='±SEM')
+                              color='black', alpha=0.18, label='Grand ±SEM')
         ax_trans.plot(t_ms, grand_mean,
-                      color='#2980b9', lw=2, label='Mean')
+                      color='black', lw=2, label=f'Grand mean (n={n_neurons})')
         ax_trans.axvline(0, color='#e74c3c', lw=1.2, linestyle='--',
                          alpha=0.8, label='Peak (t = 0)')
         ax_trans.axhline(0, color='#95a5a6', lw=0.6)
         ax_trans.set_xlabel('Time from peak (ms)', fontsize=11)
-        ax_trans.set_ylabel('ΔF/F', fontsize=11)
+        ax_trans.set_ylabel('z-scored ΔF/F', fontsize=11)
         ax_trans.set_title(
-            f'Average Ca²⁺ transient\n'
-            f'n = {n_neurons} neurons  |  '
-            f'window: −{TRANSIENT_PRE} to +{TRANSIENT_POST} frames '
-            f'(−{TRANSIENT_PRE/config.FS*1000:.0f} to '
-            f'+{TRANSIENT_POST/config.FS*1000:.0f} ms)',
+            f'Average Ca²⁺ transient  —  '
+            f'−{TRANSIENT_PRE/config.FS*1000:.0f} to '
+            f'+{TRANSIENT_POST/config.FS*1000:.0f} ms',
             fontsize=10
         )
         ax_trans.legend(fontsize=9)
