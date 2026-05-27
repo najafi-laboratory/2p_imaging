@@ -1,0 +1,154 @@
+# Processing Quickstart
+
+This page covers the Slurm-based preprocessing/QC utility in `utils_2p`.
+It is intended for launching one or more raw imaging sessions through the
+standard staged pipeline without editing hard-coded session paths.
+
+## Requirements
+
+Run from a checkout of `2p_imaging/main` that includes
+`utils_2p.preprocessing_qc_pipeline`:
+
+```bash
+git checkout main
+git pull upstream main
+```
+
+Use the shared Suite2p-capable environment:
+
+```bash
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
+export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
+```
+
+Jobs use the `embers` QOS by default. `embers` is free but preemptible after
+the QOS runtime limit. Use `--qos inferno` for paid, non-preemptible jobs when
+needed.
+
+## Pipeline Stages
+
+The full processing chain is:
+
+```text
+prep -> suite2p -> qc -> label -> dff -> summary
+```
+
+| Stage | Resource | Main outputs |
+|---|---|---|
+| `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
+| `suite2p` | high-memory CPU | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
+| `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
+| `label` | GPU | `masks.h5` and anatomical Cellpose outputs; skipped for functional-only recordings |
+| `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
+| `summary` | CPU | `{session}_preprocessing_summary.pdf`, `{session}_interactive_fov_roi_dff.html` |
+
+Each session gets its own linked Slurm chain. A failed session does not block
+other submitted sessions.
+
+## Submit Common Runs
+
+Two-channel neuronal sessions use the defaults:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session_1 \
+  --session /path/to/raw/session_2 \
+  --output-root /path/to/processed_outputs
+```
+
+Dendritic sessions should explicitly select the dendrite target structure:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure dendrite
+```
+
+Functional-only, single-channel sessions should disable anatomical labeling:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --nchannels 1 \
+  --functional-chan 1 \
+  --target-structure dendrite \
+  --no-label
+```
+
+Use `generate` instead of `submit` to write the `.sbatch` files without
+submitting them:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline generate \
+  --sessions-file raw_sessions.txt \
+  --output-root /path/to/processed_outputs
+```
+
+Generated Slurm files are written below:
+
+```text
+{output_root}/.preprocessing_qc_jobs/{timestamp}_{username}/
+```
+
+## Rerun Selected Stages
+
+Use `--stages` when upstream outputs already exist. For example, to regenerate
+raw dF/F and the QC summary files:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/existing_processed_outputs \
+  --stages dff,summary
+```
+
+Available stages are:
+
+```text
+prep
+suite2p
+qc
+label
+dff
+summary
+```
+
+Selected stages are always ordered according to the pipeline. Downstream-only
+runs assume the required upstream files already exist.
+
+## QOS Controls
+
+Default generated jobs include:
+
+```bash
+#SBATCH --qos=embers
+```
+
+Use inferno for all stages:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --qos inferno
+```
+
+Or split CPU and GPU stages:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --qos-cpu embers \
+  --qos-gpu inferno
+```
+
+## Notes
+
+The utility reuses the versioned Suite2p configuration files in
+`2p_processing_pipeline_202401/config_*.json` and the existing QC/label
+algorithms in `2p_post_process_module_202404/modules/QualControlDataIO.py` and
+`LabelExcInh.py`. The orchestration, voltage extraction, raw dF/F creation, and
+preprocessing summary outputs live in `utils_2p`.

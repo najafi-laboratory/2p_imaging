@@ -19,6 +19,7 @@ nav:
   - Home: index.md
   - 2p Data Preparation Workflow:
       - Overview: workflow.md
+      - Processing Quickstart: processing-quickstart.md
       - Preprocessing: preprocessing.md
       - Postprocessing: postprocessing.md
   - Experiments and Analyses:
