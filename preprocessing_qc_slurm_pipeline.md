@@ -129,6 +129,9 @@ values either with CLI options or environment variables:
 |---|---|---|
 | Suite2p-capable Python | `--python-bin` | `TWO_P_PYTHON` |
 | Slurm account | `--account` | `TWO_P_SLURM_ACCOUNT` |
+| Slurm QOS for all stages | `--qos` | `TWO_P_SLURM_QOS` |
+| Slurm QOS for CPU stages | `--qos-cpu` | `TWO_P_SLURM_QOS_CPU` |
+| Slurm QOS for GPU stages | `--qos-gpu` | `TWO_P_SLURM_QOS_GPU` |
 | Failure email | `--mail-user` | `TWO_P_SLURM_MAIL_USER` |
 | Numba cache location | `--numba-cache-dir` | `TWO_P_NUMBA_CACHE_DIR` |
 
@@ -137,9 +140,25 @@ Example:
 ```bash
 export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
 export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
+export TWO_P_SLURM_QOS=embers
 export TWO_P_SLURM_MAIL_USER="$USER@gatech.edu"
 export TWO_P_NUMBA_CACHE_DIR="$TMPDIR/2p_numba_cache"
 ```
+
+Generated jobs request the `embers` QOS by default. On PACE, this keeps the
+single-session stage jobs free but preemptible after the QOS runtime limit. Use
+`--qos inferno` when a run should be guaranteed to complete and the paid QOS is
+appropriate:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --qos inferno
+```
+
+If CPU and GPU stages should use different QOS values, use `--qos-cpu` and
+`--qos-gpu` instead of `--qos`.
 
 If neither `--python-bin` nor `TWO_P_PYTHON` is specified, the generator will
 only use the currently running Python when it can import `suite2p`; it fails

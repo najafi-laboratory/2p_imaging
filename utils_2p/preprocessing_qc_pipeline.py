@@ -137,6 +137,8 @@ class PipelineConfig:
     username: str = ""
     mail_user: str | None = None
     numba_cache_dir: Path | str = ""
+    qos_cpu: str = ""
+    qos_gpu: str = ""
     partition_cpu: str | None = None
     partition_gpu: str | None = None
 
@@ -167,6 +169,9 @@ class PipelineConfig:
         account = self.account or os.environ.get("TWO_P_SLURM_ACCOUNT", "gts-fnajafi3")
         username = self.username or os.environ.get("USER", "unknown")
         mail_user = self.mail_user or os.environ.get("TWO_P_SLURM_MAIL_USER") or None
+        qos = os.environ.get("TWO_P_SLURM_QOS", "embers")
+        qos_cpu = self.qos_cpu or os.environ.get("TWO_P_SLURM_QOS_CPU") or qos
+        qos_gpu = self.qos_gpu or os.environ.get("TWO_P_SLURM_QOS_GPU") or qos
         cache = (
             Path(self.numba_cache_dir).expanduser().resolve()
             if self.numba_cache_dir
@@ -190,6 +195,8 @@ class PipelineConfig:
             username=username,
             mail_user=mail_user,
             numba_cache_dir=cache,
+            qos_cpu=qos_cpu,
+            qos_gpu=qos_gpu,
             partition_cpu=self.partition_cpu,
             partition_gpu=self.partition_gpu,
         )
@@ -260,10 +267,12 @@ def _sbatch_text(
     else:
         cpus, mem, walltime = resources.cpu_cpus, resources.cpu_mem, resources.cpu_time
     partition = config.partition_gpu if is_gpu else config.partition_cpu
+    qos = config.qos_gpu if is_gpu else config.qos_cpu
     directives = [
         "#!/bin/bash",
         f"#SBATCH --job-name=2p-{stage}",
         f"#SBATCH --account={config.account}",
+        f"#SBATCH --qos={qos}",
         "#SBATCH --nodes=1",
         "#SBATCH --ntasks=1",
         f"#SBATCH --cpus-per-task={cpus}",
@@ -667,6 +676,8 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         username=args.username or "",
         mail_user=args.mail_user,
         numba_cache_dir=args.numba_cache_dir or "",
+        qos_cpu=args.qos_cpu or args.qos or "",
+        qos_gpu=args.qos_gpu or args.qos or "",
         partition_cpu=args.partition_cpu,
         partition_gpu=args.partition_gpu,
     )
@@ -706,6 +717,9 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--username", default=None)
     parser.add_argument("--mail-user", default=None)
     parser.add_argument("--numba-cache-dir", default=None)
+    parser.add_argument("--qos", default=None, help="Slurm QOS for all stages; defaults to embers.")
+    parser.add_argument("--qos-cpu", default=None, help="Slurm QOS for CPU stages; overrides --qos.")
+    parser.add_argument("--qos-gpu", default=None, help="Slurm QOS for GPU stages; overrides --qos.")
     parser.add_argument("--partition-cpu", default=None)
     parser.add_argument("--partition-gpu", default=None)
 
