@@ -47,17 +47,18 @@ other submitted sessions.
 
 ## Submit Common Runs
 
-The repository includes a reproducible YH24 pipeline test script. By default it
-generates the Slurm scripts without submitting:
+The repository includes a reproducible YH24 pipeline test script with editable
+Python variables at the top. By default it generates the Slurm scripts without
+submitting:
 
 ```bash
-scripts/run_yh24_preprocessing_pipeline_test.sh
+python scripts/run_yh24_preprocessing_pipeline_test.py
 ```
 
 Submit the same test chain with:
 
 ```bash
-scripts/run_yh24_preprocessing_pipeline_test.sh --submit
+python scripts/run_yh24_preprocessing_pipeline_test.py --submit
 ```
 
 Two-channel neuronal sessions use the defaults:
