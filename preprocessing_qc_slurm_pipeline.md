@@ -32,7 +32,9 @@ for the Cellpose anatomical-labeling stage, which explicitly enables GPU use.
 
 ## Submit A Run
 
-Two-channel neuronal sessions use the defaults:
+Neuronal sessions use the defaults. Channel count is detected from TIFF names;
+two-channel recordings use Ch2 as functional and Ch1 as anatomical, while
+single-channel recordings use the only detected channel as functional:
 
 ```bash
 python -m utils_2p.preprocessing_qc_pipeline submit \
@@ -56,9 +58,7 @@ For a functional-only, single-channel session:
 python -m utils_2p.preprocessing_qc_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
-  --nchannels 1 \
-  --target-structure dendrite \
-  --no-label
+  --target-structure dendrite
 ```
 
 Use `generate` instead of `submit` to review the `.sbatch` scripts first:
