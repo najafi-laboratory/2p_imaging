@@ -14,6 +14,7 @@ to raw storage.
 from __future__ import annotations
 
 import argparse
+import inspect
 import importlib.util
 import json
 import os
@@ -60,6 +61,43 @@ def _env_path(name: str, default: Path | str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(os.environ.get(name, str(default))))).resolve()
 
 
+def _detect_imaging_channels(raw_path: Path) -> dict[str, int]:
+    """Infer Suite2p channel settings from TIFF names.
+
+    Bruker OME TIFFs in this project are usually split into Ch1 anatomical and
+    Ch2 functional files. Some functional-only recordings still use Ch2 file
+    names. Suite2p's Bruker reader needs ``functional_chan=2`` for those files
+    even when ``nchannels=1`` so the single available channel becomes the
+    primary binary stream.
+    """
+
+    ch1 = 0
+    ch2 = 0
+    unlabeled = 0
+    for directory, dirnames, filenames in os.walk(raw_path):
+        current = Path(directory)
+        if len(current.relative_to(raw_path).parts) > 2:
+            dirnames[:] = []
+            continue
+        for filename in filenames:
+            if not filename.lower().endswith((".tif", ".tiff")):
+                continue
+            lower = filename.lower()
+            if "ch1" in lower or re.search(r"channel[\s_-]*1", lower):
+                ch1 += 1
+            elif "ch2" in lower or re.search(r"channel[\s_-]*2", lower):
+                ch2 += 1
+            else:
+                unlabeled += 1
+    if ch1 and ch2:
+        return {"nchannels": 2, "functional_chan": 2}
+    if ch1:
+        return {"nchannels": 1, "functional_chan": 1}
+    if ch2 or unlabeled:
+        return {"nchannels": 1, "functional_chan": 2}
+    return {"nchannels": 2, "functional_chan": 2}
+
+
 @dataclass(frozen=True)
 class SessionSpec:
     """Inputs and modality settings for a raw imaging session."""
@@ -67,8 +105,8 @@ class SessionSpec:
     raw_path: Path | str
     name: str | None = None
     target_structure: str = "neuron"
-    nchannels: int = 2
-    functional_chan: int = 2
+    nchannels: int | None = None
+    functional_chan: int | None = None
     denoise: int | None = None
     spatial_scale: int | None = None
     bpod_mat_path: Path | str | None = None
@@ -81,9 +119,16 @@ class SessionSpec:
             raise FileNotFoundError(f"Raw session directory does not exist: {raw_path}")
         if self.target_structure not in QC_PRESETS:
             raise ValueError(f"target_structure must be one of {sorted(QC_PRESETS)}")
-        if self.nchannels not in (1, 2):
+        detected = _detect_imaging_channels(raw_path)
+        nchannels = self.nchannels if self.nchannels is not None else detected["nchannels"]
+        functional_chan = (
+            self.functional_chan if self.functional_chan is not None else detected["functional_chan"]
+        )
+        if nchannels not in (1, 2):
             raise ValueError("nchannels must be 1 or 2")
-        if self.functional_chan < 1 or self.functional_chan > self.nchannels:
+        if functional_chan not in (1, 2):
+            raise ValueError("functional_chan must be 1 or 2")
+        if nchannels == 2 and functional_chan > nchannels:
             raise ValueError("functional_chan must identify an available channel")
         bpod = None if self.bpod_mat_path is None else Path(self.bpod_mat_path).expanduser().resolve()
         if bpod is not None and not bpod.is_file():
@@ -91,14 +136,14 @@ class SessionSpec:
         name = (self.name or raw_path.name).rstrip()
         if not name:
             raise ValueError(f"Cannot derive an output session name from {raw_path}")
-        run_label = self.run_label if self.run_label is not None else self.nchannels == 2
+        run_label = self.run_label if self.run_label is not None else nchannels == 2
         stages = _normalize_stages(self.stages, run_label=run_label)
         return SessionSpec(
             raw_path=raw_path,
             name=name,
             target_structure=self.target_structure,
-            nchannels=self.nchannels,
-            functional_chan=self.functional_chan,
+            nchannels=nchannels,
+            functional_chan=functional_chan,
             denoise=self.denoise,
             spatial_scale=self.spatial_scale,
             bpod_mat_path=bpod,
@@ -137,10 +182,12 @@ class PipelineConfig:
     username: str = ""
     mail_user: str | None = None
     numba_cache_dir: Path | str = ""
+    fast_disk: Path | str = ""
     qos_cpu: str = ""
     qos_gpu: str = ""
     partition_cpu: str | None = None
     partition_gpu: str | None = None
+    suite2p_gpu: bool = False
 
     def normalized(self, output_root: Path) -> "PipelineConfig":
         repo = Path(self.repo_root).expanduser().resolve() if self.repo_root else _repo_root()
@@ -156,7 +203,7 @@ class PipelineConfig:
         )
         configured_python = self.python_bin or os.environ.get("TWO_P_PYTHON")
         if configured_python:
-            python_bin = Path(configured_python).expanduser().resolve()
+            python_bin = Path(configured_python).expanduser()
         elif importlib.util.find_spec("suite2p") is not None:
             python_bin = Path(sys.executable).resolve()
         else:
@@ -177,6 +224,11 @@ class PipelineConfig:
             if self.numba_cache_dir
             else _env_path("TWO_P_NUMBA_CACHE_DIR", output_root / ".cache" / "numba")
         )
+        fast_disk = (
+            Path(self.fast_disk).expanduser()
+            if self.fast_disk
+            else None
+        )
         for required in (
             processing / "config_neuron.json",
             processing / "config_neuron_1chan.json",
@@ -195,10 +247,12 @@ class PipelineConfig:
             username=username,
             mail_user=mail_user,
             numba_cache_dir=cache,
+            fast_disk=fast_disk or "",
             qos_cpu=qos_cpu,
             qos_gpu=qos_gpu,
             partition_cpu=self.partition_cpu,
             partition_gpu=self.partition_gpu,
+            suite2p_gpu=self.suite2p_gpu,
         )
 
 
@@ -257,7 +311,7 @@ def _sbatch_text(
     config: PipelineConfig,
     resources: SlurmResources,
 ) -> str:
-    is_gpu = stage == "label"
+    is_gpu = stage == "label" or (stage == "suite2p" and config.suite2p_gpu)
     if stage == "summary":
         cpus, mem, walltime = resources.cpu_cpus, resources.summary_mem, resources.summary_time
     elif stage == "suite2p":
@@ -266,7 +320,7 @@ def _sbatch_text(
         cpus, mem, walltime = resources.gpu_cpus, resources.gpu_mem, resources.gpu_time
     else:
         cpus, mem, walltime = resources.cpu_cpus, resources.cpu_mem, resources.cpu_time
-    partition = config.partition_gpu if is_gpu else config.partition_cpu
+    partition = config.partition_cpu
     qos = config.qos_gpu if is_gpu else config.qos_cpu
     directives = [
         "#!/bin/bash",
@@ -345,9 +399,9 @@ def generate_preprocessing_qc_jobs(
 ) -> GeneratedRun:
     """Write Slurm job files and a submission script without submitting jobs.
 
-    Bare paths use the default `SessionSpec`: two-channel neuronal recording,
-    functional channel 2. Use `SessionSpec` for dendrite or single-channel
-    sessions so the QC preset is explicit.
+    Bare paths use the default `SessionSpec`: channel count and functional
+    channel are inferred from TIFF filenames. Use `SessionSpec` when the target
+    structure, channel settings, or stage list need explicit overrides.
     """
 
     if not sessions:
@@ -468,8 +522,182 @@ def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict
         ops["denoise"] = session["denoise"]
     if session.get("spatial_scale") is not None:
         ops["spatial_scale"] = session["spatial_scale"]
+    ops.setdefault("delete_bin", True)
+    torch_device = os.environ.get("TWO_P_SUITE2P_TORCH_DEVICE")
+    if torch_device:
+        ops["torch_device"] = torch_device
+    fast_disk = os.environ.get("TWO_P_SUITE2P_FAST_DISK")
+    if fast_disk:
+        ops["fast_disk"] = fast_disk
+    else:
+        source_disk = Path(session["raw_path"]) / ".suite2p_fast_disk"
+        fallback_disk = Path(session["output_path"]) / ".suite2p_fast_disk"
+        ops["fast_disk"] = str(source_disk if os.access(session["raw_path"], os.W_OK) else fallback_disk)
     db = {"data_path": [session["raw_path"]], "save_path0": session["output_path"]}
     return ops, db
+
+
+def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Translate the legacy flat Suite2p 0.14 ops into Suite2p 1.x settings/db."""
+
+    from suite2p.parameters import default_db, default_settings
+
+    settings = default_settings()
+    new_db = default_db()
+
+    new_db.update(
+        {
+            "data_path": db["data_path"],
+            "save_path0": db["save_path0"],
+            "look_one_level_down": bool(ops.get("look_one_level_down", False)),
+            "input_format": ops.get("input_format", "tif"),
+            "keep_movie_raw": bool(ops.get("keep_movie_raw", False)),
+            "nplanes": int(ops.get("nplanes", 1)),
+            "nchannels": int(ops.get("nchannels", 1)),
+            "functional_chan": int(ops.get("functional_chan", 1)),
+            "subfolders": ops.get("subfolders") or None,
+            "save_folder": ops.get("save_folder") or "suite2p",
+            "fast_disk": ops.get("fast_disk") or None,
+            "h5py_key": ops.get("h5py_key", "data"),
+            "nwb_driver": ops.get("nwb_driver", ""),
+            "nwb_series": ops.get("nwb_series", ""),
+            "ignore_flyback": ops.get("ignore_flyback") or None,
+            "force_sktiff": bool(ops.get("force_sktiff", False)),
+            "bruker_bidirectional": bool(ops.get("bruker_bidirectional", False)),
+            "batch_size": int(ops.get("batch_size", new_db.get("batch_size", 500))),
+        }
+    )
+
+    if ops.get("torch_device"):
+        settings["torch_device"] = ops["torch_device"]
+    settings["tau"] = float(ops.get("tau", settings["tau"]))
+    settings["fs"] = float(ops.get("fs", settings["fs"]))
+    settings["diameter"] = ops.get("diameter", settings["diameter"])
+
+    settings["run"].update(
+        {
+            "do_registration": int(ops.get("do_registration", settings["run"]["do_registration"])),
+            "do_regmetrics": bool(ops.get("do_regmetrics", True)),
+            "do_detection": bool(ops.get("roidetect", settings["run"]["do_detection"])),
+            "do_deconvolution": bool(ops.get("spikedetect", settings["run"]["do_deconvolution"])),
+            "multiplane_parallel": bool(ops.get("multiplane_parallel", False)),
+        }
+    )
+    align_by_chan = int(ops.get("align_by_chan", 1))
+    settings["registration"].update(
+        {
+            "align_by_chan2": align_by_chan == 2 and int(ops.get("nchannels", 1)) > 1,
+            "nimg_init": int(ops.get("nimg_init", settings["registration"]["nimg_init"])),
+            "maxregshift": float(ops.get("maxregshift", settings["registration"]["maxregshift"])),
+            "do_bidiphase": bool(ops.get("do_bidiphase", settings["registration"]["do_bidiphase"])),
+            "bidiphase": float(ops.get("bidiphase", settings["registration"]["bidiphase"])),
+            "batch_size": int(ops.get("batch_size", settings["registration"]["batch_size"])),
+            "nonrigid": bool(ops.get("nonrigid", settings["registration"]["nonrigid"])),
+            "maxregshiftNR": float(ops.get("maxregshiftNR", settings["registration"]["maxregshiftNR"])),
+            "block_size": tuple(ops.get("block_size", settings["registration"]["block_size"])),
+            "smooth_sigma_time": float(ops.get("smooth_sigma_time", settings["registration"]["smooth_sigma_time"])),
+            "smooth_sigma": float(ops.get("smooth_sigma", settings["registration"]["smooth_sigma"])),
+            "spatial_taper": float(ops.get("spatial_taper", settings["registration"]["spatial_taper"])),
+            "th_badframes": float(ops.get("th_badframes", settings["registration"]["th_badframes"])),
+            "norm_frames": bool(ops.get("norm_frames", settings["registration"]["norm_frames"])),
+            "snr_thresh": float(ops.get("snr_thresh", settings["registration"]["snr_thresh"])),
+            "subpixel": int(ops.get("subpixel", settings["registration"]["subpixel"])),
+            "two_step_registration": bool(
+                ops.get("two_step_registration", settings["registration"]["two_step_registration"])
+            ),
+            "reg_tif": bool(ops.get("reg_tif", settings["registration"]["reg_tif"])),
+            "reg_tif_chan2": bool(ops.get("reg_tif_chan2", settings["registration"]["reg_tif_chan2"])),
+        }
+    )
+    settings["detection"].update(
+        {
+            "denoise": bool(ops.get("denoise", settings["detection"]["denoise"])),
+            "block_size": tuple(ops.get("block_size", settings["detection"]["block_size"])),
+            "highpass_time": int(ops.get("high_pass", settings["detection"]["highpass_time"])),
+            "threshold_scaling": float(
+                ops.get("threshold_scaling", settings["detection"]["threshold_scaling"])
+            ),
+            "max_overlap": float(ops.get("max_overlap", settings["detection"]["max_overlap"])),
+            "soma_crop": bool(ops.get("soma_crop", settings["detection"]["soma_crop"])),
+            "chan2_threshold": float(ops.get("chan2_thres", settings["detection"]["chan2_threshold"])),
+        }
+    )
+    settings["detection"]["sparsery_settings"].update(
+        {
+            "highpass_neuropil": int(
+                ops.get("spatial_hp_detect", settings["detection"]["sparsery_settings"]["highpass_neuropil"])
+            ),
+            "spatial_scale": int(ops.get("spatial_scale", settings["detection"]["sparsery_settings"]["spatial_scale"])),
+        }
+    )
+    settings["detection"]["sourcery_settings"].update(
+        {
+            "connected": bool(ops.get("connected", settings["detection"]["sourcery_settings"]["connected"])),
+            "max_iterations": int(
+                ops.get("max_iterations", settings["detection"]["sourcery_settings"]["max_iterations"])
+            ),
+        }
+    )
+    settings["detection"]["cellpose_settings"].update(
+        {
+            "highpass_spatial": float(
+                ops.get("spatial_hp_cp", settings["detection"]["cellpose_settings"]["highpass_spatial"])
+            ),
+            "flow_threshold": float(
+                ops.get("flow_threshold", settings["detection"]["cellpose_settings"]["flow_threshold"])
+            ),
+            "cellprob_threshold": float(
+                ops.get("cellprob_threshold", settings["detection"]["cellpose_settings"]["cellprob_threshold"])
+            ),
+        }
+    )
+    settings["classification"].update(
+        {
+            "classifier_path": ops.get("classifier_path") or None,
+            "use_builtin_classifier": bool(
+                ops.get("use_builtin_classifier", settings["classification"]["use_builtin_classifier"])
+            ),
+            "preclassify": float(ops.get("preclassify", settings["classification"]["preclassify"])),
+        }
+    )
+    settings["extraction"].update(
+        {
+            "batch_size": int(ops.get("batch_size", settings["extraction"]["batch_size"])),
+            "neuropil_extract": bool(ops.get("neuropil_extract", settings["extraction"]["neuropil_extract"])),
+            "neuropil_coefficient": float(
+                ops.get("neucoeff", settings["extraction"]["neuropil_coefficient"])
+            ),
+            "inner_neuropil_radius": int(
+                ops.get("inner_neuropil_radius", settings["extraction"]["inner_neuropil_radius"])
+            ),
+            "min_neuropil_pixels": int(
+                ops.get("min_neuropil_pixels", settings["extraction"]["min_neuropil_pixels"])
+            ),
+            "lam_percentile": float(ops.get("lam_percentile", settings["extraction"]["lam_percentile"])),
+            "allow_overlap": bool(ops.get("allow_overlap", settings["extraction"]["allow_overlap"])),
+        }
+    )
+    settings["dcnv_preprocess"].update(
+        {
+            "baseline": ops.get("baseline", settings["dcnv_preprocess"]["baseline"]),
+            "win_baseline": float(ops.get("win_baseline", settings["dcnv_preprocess"]["win_baseline"])),
+            "sig_baseline": float(ops.get("sig_baseline", settings["dcnv_preprocess"]["sig_baseline"])),
+            "prctile_baseline": float(
+                ops.get("prctile_baseline", settings["dcnv_preprocess"]["prctile_baseline"])
+            ),
+        }
+    )
+    settings["io"].update(
+        {
+            "combined": bool(ops.get("combined", settings["io"]["combined"])),
+            "save_mat": bool(ops.get("save_mat", settings["io"]["save_mat"])),
+            "save_NWB": bool(ops.get("save_NWB", settings["io"]["save_NWB"])),
+            "delete_bin": bool(ops.get("delete_bin", settings["io"]["delete_bin"])),
+            "move_bin": bool(ops.get("move_bin", settings["io"]["move_bin"])),
+            "save_ops_orig": True,
+        }
+    )
+    return settings, new_db
 
 
 def _read_ops(session: dict[str, Any]):
@@ -478,6 +706,8 @@ def _read_ops(session: dict[str, Any]):
     path = Path(session["output_path"]) / "suite2p" / "plane0" / "ops.npy"
     ops = np.load(path, allow_pickle=True).item()
     ops["save_path0"] = session["output_path"]
+    if "neucoeff" not in ops and isinstance(ops.get("extraction"), dict):
+        ops["neucoeff"] = ops["extraction"].get("neuropil_coefficient", 0.7)
     return ops
 
 
@@ -490,8 +720,6 @@ def _write_raw_voltages(raw_path: Path, output_path: Path) -> None:
     if not candidates:
         print("Valid voltage recordings csv file not found")
         return
-    frame = pd.read_csv(candidates[0], engine="python")
-    time = frame["Time(ms)"].to_numpy()
     channels = {
         "vol_start": (" Input 0", 1.0),
         "vol_stim_vis": (" Input 1", 1.0),
@@ -503,14 +731,47 @@ def _write_raw_voltages(raw_path: Path, output_path: Path) -> None:
         "vol_led": (" Input 7", 1.0),
         "vol_2p_stim": (" Input 8", None),
     }
+    csv_path = candidates[0]
+    header = pd.read_csv(csv_path, nrows=0)
+    available_columns = set(header.columns)
+    usecols = ["Time(ms)"] + [column for column, _ in channels.values() if column in available_columns]
+    chunksize = 250_000
     with h5py.File(output_path / "raw_voltages.h5", "w") as output:
         raw = output.create_group("raw")
-        raw["vol_time"] = time
-        for name, (column, threshold) in channels.items():
-            values = frame[column].to_numpy() if column in frame.columns else np.zeros_like(time)
-            if threshold is not None:
-                values = (values > threshold).astype(values.dtype)
-            raw[name] = values
+        datasets: dict[str, Any] = {}
+        for chunk in pd.read_csv(csv_path, usecols=usecols, chunksize=chunksize):
+            time = chunk["Time(ms)"].to_numpy()
+            if "vol_time" not in datasets:
+                datasets["vol_time"] = raw.create_dataset(
+                    "vol_time",
+                    shape=(0,),
+                    maxshape=(None,),
+                    dtype=time.dtype,
+                    chunks=True,
+                )
+            time_ds = datasets["vol_time"]
+            start = time_ds.shape[0]
+            end = start + len(time)
+            time_ds.resize((end,))
+            time_ds[start:end] = time
+            for name, (column, threshold) in channels.items():
+                if name not in datasets:
+                    template = chunk[column].to_numpy() if column in chunk.columns else np.zeros_like(time)
+                    datasets[name] = raw.create_dataset(
+                        name,
+                        shape=(0,),
+                        maxshape=(None,),
+                        dtype=template.dtype,
+                        chunks=True,
+                    )
+                values = chunk[column].to_numpy() if column in chunk.columns else np.zeros_like(time)
+                if threshold is not None:
+                    values = (values > threshold).astype(values.dtype)
+                ds = datasets[name]
+                start = ds.shape[0]
+                end = start + len(values)
+                ds.resize((end,))
+                ds[start:end] = values
 
 
 def _run_prep(data: dict[str, Any], session: dict[str, Any]) -> None:
@@ -534,7 +795,13 @@ def _run_suite2p(data: dict[str, Any], session: dict[str, Any]) -> None:
     from suite2p import run_s2p
 
     ops, db = _processing_ops(data, session)
-    run_s2p(ops=ops, db=db)
+    if ops.get("fast_disk"):
+        Path(ops["fast_disk"]).mkdir(parents=True, exist_ok=True)
+    if "ops" in inspect.signature(run_s2p).parameters:
+        run_s2p(ops=ops, db=db)
+    else:
+        settings, new_db = _suite2p_v1_settings_db(ops, db)
+        run_s2p(db=new_db, settings=settings)
 
 
 def _run_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
@@ -652,11 +919,7 @@ def _specs_from_args(args: argparse.Namespace) -> list[SessionSpec]:
             path,
             target_structure=args.target_structure,
             nchannels=args.nchannels,
-            functional_chan=(
-                args.functional_chan
-                if args.functional_chan is not None
-                else (1 if args.nchannels == 1 else 2)
-            ),
+            functional_chan=args.functional_chan,
             denoise=args.denoise,
             spatial_scale=args.spatial_scale,
             run_label=False if args.no_label else None,
@@ -676,10 +939,12 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         username=args.username or "",
         mail_user=args.mail_user,
         numba_cache_dir=args.numba_cache_dir or "",
+        fast_disk=args.fast_disk or "",
         qos_cpu=args.qos_cpu or args.qos or "",
         qos_gpu=args.qos_gpu or args.qos or "",
         partition_cpu=args.partition_cpu,
         partition_gpu=args.partition_gpu,
+        suite2p_gpu=args.suite2p_gpu,
     )
 
 
@@ -688,12 +953,23 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--sessions-file", help="Text file containing one raw session directory per line.")
     parser.add_argument("--output-root", required=True, help="Directory where processed sessions will be written.")
     parser.add_argument("--target-structure", choices=sorted(QC_PRESETS), default="neuron")
-    parser.add_argument("--nchannels", type=int, choices=(1, 2), default=2)
+    parser.add_argument(
+        "--nchannels",
+        type=int,
+        choices=(1, 2),
+        default=None,
+        help="Override channel count. Default: infer from TIFF filenames.",
+    )
     parser.add_argument(
         "--functional-chan",
         type=int,
         default=None,
-        help="Functional channel index. Default: 2 for two-channel or 1 for one-channel sessions.",
+        choices=(1, 2),
+        help=(
+            "Override functional channel index. Default: infer from TIFF filenames; "
+            "two-channel recordings use Ch2 functional/Ch1 anatomical, and "
+            "single-channel recordings use the only detected channel as functional."
+        ),
     )
     parser.add_argument("--denoise", type=int, choices=(0, 1), default=None)
     parser.add_argument(
@@ -717,11 +993,17 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--username", default=None)
     parser.add_argument("--mail-user", default=None)
     parser.add_argument("--numba-cache-dir", default=None)
+    parser.add_argument("--fast-disk", default=None, help="Suite2p fast_disk location for temporary binary files.")
     parser.add_argument("--qos", default=None, help="Slurm QOS for all stages; defaults to embers.")
     parser.add_argument("--qos-cpu", default=None, help="Slurm QOS for CPU stages; overrides --qos.")
     parser.add_argument("--qos-gpu", default=None, help="Slurm QOS for GPU stages; overrides --qos.")
     parser.add_argument("--partition-cpu", default=None)
     parser.add_argument("--partition-gpu", default=None)
+    parser.add_argument(
+        "--suite2p-gpu",
+        action="store_true",
+        help="Request a GPU for the suite2p stage using --gres=gpu:1.",
+    )
 
 
 def main() -> None:
