@@ -1,65 +1,91 @@
 #!/usr/bin/env python3
-"""Run a prefilled YH24 preprocessing-pipeline CLI test.
+"""Reproducible YH24 test for the staged preprocessing pipeline.
 
-This script intentionally calls the same command-line interface a user would
-run by hand:
+Edit the variables below, then run this file from the repository root:
 
-    python -m utils_2p.preprocessing_qc_pipeline generate ...
+    python scripts/run_yh24_preprocessing_pipeline_test.py
 
-Default mode is `generate`, which writes Slurm files but does not submit jobs.
-Use `--submit` to submit the linked Slurm chain.
+By default this only generates the Slurm scripts. Set MODE = "submit" or pass
+--submit to actually submit the linked job chain.
 """
 
 from __future__ import annotations
 
 import argparse
 import getpass
-import os
-import shlex
-import subprocess
+import sys
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
-# Prefilled test inputs. Edit these values when testing a different session.
-PYTHON_BIN = Path("/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python")
+from utils_2p.preprocessing_qc_pipeline import (
+    PipelineConfig,
+    SessionSpec,
+    generate_preprocessing_qc_jobs,
+    submit_preprocessing_qc_jobs,
+)
+
+
+# -----------------------------
+# User-editable test parameters
+# -----------------------------
+
+MODE = "generate"  # "generate" writes sbatch files; "submit" submits them.
+
 RAW_SESSION = Path(
     "/storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/"
     "YH24LG_Processed/YH24LG_CRBL_lobulev_20250609_EBC-442"
 )
-OUTPUT_ROOT = Path(f"/storage/scratch1/3/{getpass.getuser()}/2p_pipeline_tests/yh24_preprocessing")
-RUN_NAME = "yh24_lobulev_20250609_pipeline_cli_test"
-SLURM_ACCOUNT = "gts-fnajafi3"
-SLURM_QOS = "embers"
 
-# This YH24 session has only a functional channel, so anatomical labeling is
-# detected automatically and the label/GPU stage is omitted.
-PREFILLED_PIPELINE_ARGS = [
-    "--session",
-    str(RAW_SESSION),
-    "--output-root",
-    str(OUTPUT_ROOT),
-    "--run-name",
-    RUN_NAME,
-    "--target-structure",
-    "dendrite",
-    "--python-bin",
-    str(PYTHON_BIN),
-    "--account",
-    SLURM_ACCOUNT,
-    "--qos",
-    SLURM_QOS,
-]
+OUTPUT_ROOT = Path(f"/storage/scratch1/3/{getpass.getuser()}/2p_pipeline_tests/yh24_preprocessing")
+
+PYTHON_BIN = Path(
+    "/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python"
+)
+
+SLURM_ACCOUNT = "gts-fnajafi3"
+SLURM_QOS = "embers"  # Use "inferno" for paid, non-preemptible jobs.
+RUN_NAME = "yh24_lobulev_20250609_pipeline_test"
+
+# This default YH24 test session has Ch2 TIFFs only, so it is configured as a
+# functional-only dendrite/EBC recording and skips anatomical labeling.
+SESSION = SessionSpec(
+    RAW_SESSION,
+    target_structure="dendrite",
+    nchannels=1,
+    functional_chan=1,
+    run_label=False,
+    stages=("prep", "suite2p", "qc", "dff", "summary"),
+)
+
+CONFIG = PipelineConfig(
+    python_bin=PYTHON_BIN,
+    account=SLURM_ACCOUNT,
+    qos_cpu=SLURM_QOS,
+    qos_gpu=SLURM_QOS,
+)
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument("--generate", action="store_const", const="generate", dest="mode")
-    mode.add_argument("--submit", action="store_const", const="submit", dest="mode")
-    parser.set_defaults(mode="generate")
+    parser.add_argument("--generate", action="store_true", help="Generate sbatch files without submitting.")
+    parser.add_argument("--submit", action="store_true", help="Submit the linked Slurm chain.")
     return parser.parse_args()
+
+
+def _mode_from_args(args: argparse.Namespace) -> str:
+    if args.generate and args.submit:
+        raise SystemExit("Use only one of --generate or --submit.")
+    if args.generate:
+        return "generate"
+    if args.submit:
+        return "submit"
+    if MODE not in {"generate", "submit"}:
+        raise SystemExit('MODE must be "generate" or "submit".')
+    return MODE
 
 
 def _validate_inputs() -> None:
@@ -70,22 +96,36 @@ def _validate_inputs() -> None:
 
 
 def main() -> None:
-    args = _parse_args()
+    mode = _mode_from_args(_parse_args())
     _validate_inputs()
 
-    command = [
-        str(PYTHON_BIN),
-        "-m",
-        "utils_2p.preprocessing_qc_pipeline",
-        args.mode,
-        *PREFILLED_PIPELINE_ARGS,
-    ]
-    env = os.environ.copy()
-    env["PYTHONPATH"] = f"{REPO_ROOT}{os.pathsep}{env['PYTHONPATH']}" if env.get("PYTHONPATH") else str(REPO_ROOT)
+    print(f"Mode: {mode}")
+    print(f"Raw session: {RAW_SESSION}")
+    print(f"Output root: {OUTPUT_ROOT}")
+    print(f"Python: {PYTHON_BIN}")
+    print(f"Slurm account: {SLURM_ACCOUNT}")
+    print(f"Slurm QOS: {SLURM_QOS}")
 
-    print("Running:")
-    print(" ".join(shlex.quote(part) for part in command))
-    subprocess.run(command, cwd=REPO_ROOT, env=env, check=True)
+    if mode == "generate":
+        generated = generate_preprocessing_qc_jobs(
+            [SESSION],
+            OUTPUT_ROOT,
+            config=CONFIG,
+            run_name=RUN_NAME,
+        )
+        print(f"Generated job directory: {generated.run_dir}")
+        print(f"Submit with: bash {generated.submit_script}")
+        return
+
+    submitted = submit_preprocessing_qc_jobs(
+        [SESSION],
+        OUTPUT_ROOT,
+        config=CONFIG,
+        run_name=RUN_NAME,
+    )
+    print("Submitted jobs:")
+    for session_name, jobs in submitted.items():
+        print(f"  {session_name}: {jobs}")
 
 
 if __name__ == "__main__":

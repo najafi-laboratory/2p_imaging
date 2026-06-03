@@ -1,6 +1,8 @@
 *.png
 *.pdf
 *.csv
+*.out
+.venv/
 slurm_runs/
 __pycache__/
 *.py[cod]

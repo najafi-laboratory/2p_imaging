@@ -1,0 +1,257 @@
+Current 2P Preprocessing Pipeline Summary
+=========================================
+
+High-Level Flow
+---------------
+
+raw session folder
+  -> prep                  CPU
+  -> suite2p               GPU
+  -> QC                    CPU
+  -> optional label        GPU-ish / Cellpose, optional
+  -> dF/F                  CPU
+  -> preprocessing charts  CPU
+
+The original non-Slurm code is split across:
+
+- Processing / Suite2p:
+  2p_processing_pipeline_202401/run_suite2p_pipeline.py
+- Postprocessing:
+  2p_post_process_module_202404/run_postprocess.py
+
+The current Slurm version splits those monolithic calls into stage-specific jobs:
+
+- Processing stage runner:
+  slurm_runs/mc19_closedloop_20260511_20260519/run_processing_stage.py
+- Postprocess stage runner:
+  slurm_runs/mc19_closedloop_20260511_20260519/run_postprocess_stage.py
+- Example linked job chain:
+  passive_closed_loop/scripts/reproduce_vw01_20260520_processing.sh
+
+
+Stage Map
+---------
+
+1. Prep config + voltage/Bpod
+
+   Original function / script:
+     set_params, process_vol, move_bpod_mat in
+     2p_processing_pipeline_202401/run_suite2p_pipeline.py
+
+   Slurm stage:
+     STAGE=prep
+
+   Compute:
+     CPU
+
+   Main inputs:
+     raw TIFF folder, voltage CSV, Bpod .mat, config JSON
+
+   Main outputs:
+     raw_voltages.h5
+     bpod_session_data.mat
+
+
+2. Suite2p
+
+   Original function / script:
+     run_s2p(ops, db) in
+     2p_processing_pipeline_202401/run_suite2p_pipeline.py
+
+   Slurm stage:
+     STAGE=suite2p
+
+   Compute:
+     GPU
+
+   Main inputs:
+     raw TIFFs, Suite2p ops/db
+
+   Main outputs:
+     suite2p/plane0/ops.npy
+     suite2p/plane0/F.npy
+     suite2p/plane0/Fneu.npy
+     suite2p/plane0/stat.npy
+     registered Suite2p outputs
+     motion offsets stored in ops.npy
+
+
+3. QC
+
+   Original function / script:
+     QualControlDataIO.run(...)
+
+   Slurm stage:
+     STAGE=qc
+
+   Compute:
+     CPU
+
+   Main inputs:
+     suite2p/plane0/F.npy
+     suite2p/plane0/Fneu.npy
+     suite2p/plane0/stat.npy
+     suite2p/plane0/ops.npy
+
+   Main outputs:
+     qc_results/fluo.npy
+     qc_results/neuropil.npy
+     qc_results/stat.npy
+     qc_results/masks.npy
+     ops.npy at the session root
+     move_offset.h5
+
+
+4. Anatomical labeling
+
+   Original function / script:
+     LabelExcInh.run(...)
+
+   Slurm stage:
+     STAGE=label
+
+   Compute:
+     GPU preferred, because Cellpose is used for anatomical channel masks
+
+   Main inputs:
+     QC masks
+     Suite2p red/green traces and images
+
+   Main outputs:
+     masks.h5
+     cellpose/
+     labels
+     functional/anatomical masks and images
+
+   Notes:
+     This stage is optional for the chart and dF/F path. It is needed when
+     anatomical-channel labeling, such as inhibitory/excitatory assignment, is
+     part of the analysis.
+
+
+5. dF/F
+
+   Original function / script:
+     DffTraces.run(...)
+
+   Slurm stage:
+     STAGE=dff
+
+   Compute:
+     CPU
+
+   Main inputs:
+     qc_results/fluo.npy
+     qc_results/neuropil.npy
+     ops["neucoeff"]
+
+   Main outputs:
+     dff.h5 at the session root, containing:
+       dff
+       fluo
+
+   Notes:
+     The current implementation writes non-z-scored dF/F by default.
+
+
+6. Charts / QC summaries
+
+   Original function / script:
+     PreprocessingSummary.run(...)
+
+   Slurm stage:
+     STAGE=summary
+
+   Compute:
+     CPU
+
+   Main inputs:
+     ops.npy
+     qc_results/fluo.npy
+     qc_results/neuropil.npy
+     qc_results/stat.npy
+     qc_results/masks.npy
+     masks.h5, when available
+     dff.h5
+     move_offset.h5
+
+   Main outputs:
+     preprocessing_fov_summary.pdf
+     preprocessing_fov_summary.png
+     motion_correction_summary.pdf
+     motion_correction_summary.png
+     interactive_preprocessing_qc.html
+
+
+Important Implementation Detail
+-------------------------------
+
+The Slurm processing runner currently imports the scratch pipeline copy at:
+
+  /storage/scratch1/3/grubin6/2p_processing_pipeline_20250522
+
+not the repo copy under:
+
+  2p_processing_pipeline_202401
+
+The postprocessing and chart code is coming from this repo's:
+
+  2p_post_process_module_202404
+
+
+Old vs Slurm Translation
+------------------------
+
+Originally, run_suite2p_pipeline.py did prep and Suite2p in one process:
+
+  set_params(args)
+  process_vol(args)
+  move_bpod_mat(args)
+  run_s2p(ops=ops, db=db)
+
+The Slurm runner splits that into:
+
+  prep job:
+    set_params -> process_vol -> move_bpod_mat
+
+  suite2p job:
+    set_params -> run_s2p
+
+Originally, run_postprocess.py --stage all could run:
+
+  qc -> label -> dff -> summary
+
+The Slurm runner splits those into separate afterok jobs, so failed stages stop
+downstream stages cleanly and GPU-heavy pieces can be isolated.
+
+For VW01, the current reproducible chain is:
+
+  prep CPU -> suite2p GPU -> qc CPU -> dff CPU -> summary CPU
+
+The label stage exists but was skipped for VW01 because the dF/F and summary
+figures do not require anatomical labels. For two-channel sessions where
+inhibitory/excitatory labeling matters, label should be inserted after qc and
+before summary.
+
+
+Current Chart Generation
+------------------------
+
+The chart stage is implemented in:
+
+  2p_post_process_module_202404/modules/PreprocessingSummary.py
+
+It produces:
+
+  preprocessing_fov_summary.pdf
+  preprocessing_fov_summary.png
+  motion_correction_summary.pdf
+  motion_correction_summary.png
+  interactive_preprocessing_qc.html
+
+The FOV summary uses green functional and red anatomical images when available,
+overlays ROI outlines in white, and includes ROI count in the title.
+
+The motion summary uses Suite2p xoff/yoff frame offsets from move_offset.h5,
+with raw black x/y traces, offset histograms, cumulative distributions, and
+absolute-shift cumulative distributions with 16 px and 20 px reference lines.

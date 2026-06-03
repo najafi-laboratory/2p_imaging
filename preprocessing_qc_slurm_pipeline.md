@@ -9,7 +9,7 @@ data in place and write all processed results under a selected output root.
 | Stage | Resource | Main output |
 |---|---|---|
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
-| `suite2p` | High-memory CPU | `suite2p/plane0/ops.npy`, fluorescence traces, ROI statistics, registered projections |
+| `suite2p` | High-memory CPU; optional GPU request | `suite2p/plane0/ops.npy`, fluorescence traces, ROI statistics, registered projections |
 | `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
 | `label` | GPU | `masks.h5` and anatomical Cellpose outputs; Cellpose is invoked with GPU enabled and is omitted for single-channel data or with `--no-label` |
 | `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
@@ -25,10 +25,23 @@ existing `2p_post_process_module_202404/modules/QualControlDataIO.py` and
 `LabelExcInh.py` algorithms already on `main`, so these established algorithms
 do not need duplicate copies.
 
-The prior scratch wrapper requested a GPU for Suite2p, but the checked
-`suite2p 0.14.6` configuration does not expose a GPU execution option. This
-submitter requests high-memory CPU resources for Suite2p and reserves a GPU
-for the Cellpose anatomical-labeling stage, which explicitly enables GPU use.
+Suite2p writes its temporary binary movie to node-local `$TMPDIR` by default
+and deletes that binary when Suite2p finishes. This is the canonical execution
+mode for raw TIFF sessions because it avoids writing tens of GB of intermediate
+data to Cedar or project storage. Use `--fast-disk /path/to/workdir` only when
+node-local tmp is too small or unavailable.
+
+For Suite2p 1.x runs, the default batch tuning separates binary conversion from
+GPU processing: TIFF-to-binary conversion uses `5000` frames per batch, while
+registration and extraction use `500` frames per batch. These can be overridden
+with `--suite2p-binary-batch-size`, `--suite2p-registration-batch-size`, and
+`--suite2p-extraction-batch-size`.
+
+Suite2p requests a GPU allocation by default. TIFF conversion is still
+CPU/storage-bound, but Suite2p 1.x can use CUDA for registration and extraction
+after the temporary binary is written. Use `--no-suite2p-gpu` for CPU-only
+Suite2p runs. The Cellpose anatomical labeling stage also explicitly enables
+GPU use.
 
 ## Submit A Run
 

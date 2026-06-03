@@ -48,6 +48,19 @@ QC_PRESETS: dict[str, dict[str, Any]] = {
         "diameter": 6,
         "source": "2p_post_process_module_202404/run_postprocess.py dendrites preset",
     },
+    "cerebellum_lax": {
+        "range_skew": [0.4, 2.5],
+        "max_connect": 30,
+        "range_aspect": [0.0, 55.0],
+        "range_footprint": [1.0, 2.0],
+        "range_compact": [1.0, 5.0],
+        "diameter": 6,
+        "source": "Joystick/PostProcessing/config.py cerebellum dendrite tuning",
+    },
+}
+
+SUITE2P_CONFIG_TARGETS = {
+    "cerebellum_lax": "dendrite",
 }
 
 STAGE_ORDER = ("prep", "suite2p", "qc", "label", "dff", "summary")
@@ -187,7 +200,11 @@ class PipelineConfig:
     qos_gpu: str = ""
     partition_cpu: str | None = None
     partition_gpu: str | None = None
-    suite2p_gpu: bool = False
+    suite2p_gpu: bool | None = True
+    suite2p_batch_size: int | None = None
+    suite2p_binary_batch_size: int | None = 5000
+    suite2p_registration_batch_size: int | None = 500
+    suite2p_extraction_batch_size: int | None = 500
 
     def normalized(self, output_root: Path) -> "PipelineConfig":
         repo = Path(self.repo_root).expanduser().resolve() if self.repo_root else _repo_root()
@@ -224,10 +241,21 @@ class PipelineConfig:
             if self.numba_cache_dir
             else _env_path("TWO_P_NUMBA_CACHE_DIR", output_root / ".cache" / "numba")
         )
-        fast_disk = (
-            Path(self.fast_disk).expanduser()
-            if self.fast_disk
-            else None
+        fast_disk = self.fast_disk or os.environ.get("TWO_P_SUITE2P_FAST_DISK") or "tmp"
+        if str(fast_disk).lower() not in {"tmp", "local_tmp", "slurm_tmp"}:
+            fast_disk = Path(fast_disk).expanduser()
+        suite2p_binary_batch_size = (
+            self.suite2p_binary_batch_size if self.suite2p_binary_batch_size is not None else 5000
+        )
+        suite2p_registration_batch_size = (
+            self.suite2p_registration_batch_size
+            if self.suite2p_registration_batch_size is not None
+            else 500
+        )
+        suite2p_extraction_batch_size = (
+            self.suite2p_extraction_batch_size
+            if self.suite2p_extraction_batch_size is not None
+            else 500
         )
         for required in (
             processing / "config_neuron.json",
@@ -252,7 +280,11 @@ class PipelineConfig:
             qos_gpu=qos_gpu,
             partition_cpu=self.partition_cpu,
             partition_gpu=self.partition_gpu,
-            suite2p_gpu=self.suite2p_gpu,
+            suite2p_gpu=True if self.suite2p_gpu is None else self.suite2p_gpu,
+            suite2p_batch_size=self.suite2p_batch_size,
+            suite2p_binary_batch_size=suite2p_binary_batch_size,
+            suite2p_registration_batch_size=suite2p_registration_batch_size,
+            suite2p_extraction_batch_size=suite2p_extraction_batch_size,
         )
 
 
@@ -351,15 +383,38 @@ def _sbatch_text(
         f"export MPLCONFIGDIR={_quote(matplotlib_cache_dir)}",
         'export MPLBACKEND="Agg"',
         f"export PYTHONPATH={_quote(config.repo_root)}${{PYTHONPATH:+:${{PYTHONPATH}}}}",
-        ': "${SESSION_INDEX:?SESSION_INDEX is required}"',
-        f"mkdir -p {_quote(run_dir / 'logs')} {_quote(config.numba_cache_dir)} {_quote(matplotlib_cache_dir)}",
-        f"cd {_quote(config.repo_root)}",
-        (
-            f"{_quote(config.python_bin)} -m utils_2p.preprocessing_qc_pipeline run-stage "
-            f"--manifest {_quote(manifest)} --index \"${{SESSION_INDEX}}\" --stage {stage}"
-        ),
-        "",
     ]
+    if stage == "suite2p" and config.suite2p_gpu:
+        body.append('export TWO_P_SUITE2P_TORCH_DEVICE="cuda"')
+    if stage == "suite2p" and str(config.fast_disk).lower() in {"tmp", "local_tmp", "slurm_tmp"}:
+        body.append('export TWO_P_SUITE2P_FAST_DISK="${TMPDIR:-/tmp}/suite2p_fast_disk_${SLURM_JOB_ID:-manual}"')
+    if stage == "suite2p":
+        body.append(f"export HOME={_quote(run_dir / 'home')}")
+    if stage == "suite2p" and config.suite2p_gpu:
+        gpu_log = run_dir / "logs" / "gpu_${SLURM_JOB_ID:-manual}.log"
+        body.extend(
+            [
+                f'GPU_LOG="{gpu_log}"',
+                'if command -v nvidia-smi >/dev/null 2>&1; then',
+                '  nvidia-smi > "${GPU_LOG}" || true',
+                '  (while true; do date; nvidia-smi --query-gpu=timestamp,utilization.gpu,memory.used,power.draw --format=csv,noheader,nounits; sleep 60; done >> "${GPU_LOG}" 2>&1) &',
+                "  GPU_MONITOR_PID=$!",
+                '  trap \'kill "${GPU_MONITOR_PID}" 2>/dev/null || true\' EXIT',
+                "fi",
+            ]
+        )
+    body.extend(
+        [
+            ': "${SESSION_INDEX:?SESSION_INDEX is required}"',
+            f"mkdir -p {_quote(run_dir / 'logs')} {_quote(run_dir / 'home')} {_quote(config.numba_cache_dir)} {_quote(matplotlib_cache_dir)}",
+            f"cd {_quote(config.repo_root)}",
+            (
+                f"{_quote(config.python_bin)} -m utils_2p.preprocessing_qc_pipeline run-stage "
+                f"--manifest {_quote(manifest)} --index \"${{SESSION_INDEX}}\" --stage {stage}"
+            ),
+            "",
+        ]
+    )
     return "\n".join(directives + body)
 
 
@@ -500,7 +555,12 @@ def _session_runtime(manifest: Path, index: int) -> tuple[dict[str, Any], dict[s
 def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
     processing_root = Path(data["pipeline"]["processing_root"])
     target = session["target_structure"]
-    config_name = "config_neuron_1chan.json" if target == "neuron" and session["nchannels"] == 1 else f"config_{target}.json"
+    config_target = SUITE2P_CONFIG_TARGETS.get(target, target)
+    config_name = (
+        "config_neuron_1chan.json"
+        if config_target == "neuron" and session["nchannels"] == 1
+        else f"config_{config_target}.json"
+    )
     config_path = processing_root / config_name
     with config_path.open("r", encoding="utf-8") as handle:
         nested = json.load(handle)
@@ -522,11 +582,26 @@ def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict
         ops["denoise"] = session["denoise"]
     if session.get("spatial_scale") is not None:
         ops["spatial_scale"] = session["spatial_scale"]
+    batch_size = data["pipeline"].get("suite2p_batch_size")
+    if batch_size is not None:
+        ops["batch_size"] = int(batch_size)
+    binary_batch_size = data["pipeline"].get("suite2p_binary_batch_size")
+    if binary_batch_size is not None:
+        ops["binary_batch_size"] = int(binary_batch_size)
+    registration_batch_size = data["pipeline"].get("suite2p_registration_batch_size")
+    if registration_batch_size is not None:
+        ops["registration_batch_size"] = int(registration_batch_size)
+    extraction_batch_size = data["pipeline"].get("suite2p_extraction_batch_size")
+    if extraction_batch_size is not None:
+        ops["extraction_batch_size"] = int(extraction_batch_size)
     ops.setdefault("delete_bin", True)
     torch_device = os.environ.get("TWO_P_SUITE2P_TORCH_DEVICE")
     if torch_device:
         ops["torch_device"] = torch_device
-    fast_disk = os.environ.get("TWO_P_SUITE2P_FAST_DISK")
+    fast_disk = os.environ.get("TWO_P_SUITE2P_FAST_DISK") or data["pipeline"].get("fast_disk")
+    if str(fast_disk).lower() in {"tmp", "local_tmp", "slurm_tmp"}:
+        job_id = os.environ.get("SLURM_JOB_ID", "manual")
+        fast_disk = str(Path(os.environ.get("TMPDIR", "/tmp")) / f"suite2p_fast_disk_{job_id}")
     if fast_disk:
         ops["fast_disk"] = fast_disk
     else:
@@ -535,6 +610,39 @@ def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict
         ops["fast_disk"] = str(source_disk if os.access(session["raw_path"], os.W_OK) else fallback_disk)
     db = {"data_path": [session["raw_path"]], "save_path0": session["output_path"]}
     return ops, db
+
+
+def _suite2p_file_list(raw_path: Path, input_format: str) -> list[str]:
+    """Return explicit input filenames for Suite2p 1.x db["file_list"]."""
+
+    patterns = ["*.ome.tif", "*.ome.TIF"] if input_format == "bruker" else ["*.tif", "*.tiff", "*.TIF", "*.TIFF"]
+    files: list[Path] = []
+    for pattern in patterns:
+        files.extend(raw_path.glob(pattern))
+    return [path.name for path in sorted(files)]
+
+
+def _suite2p_v1_diameter(ops: Mapping[str, Any]) -> float | list[float]:
+    """Return a finite diameter for Suite2p 1.x ROI stats.
+
+    Suite2p 0.14 allowed ``diameter=0`` with forced ``spatial_scale``. Suite2p
+    1.x passes diameter directly into ROI-stat normalization, where zero causes
+    divide-by-zero and NaNs. Match sparse detection's scale-to-pixels estimate
+    when the legacy config leaves diameter unset.
+    """
+
+    diameter = ops.get("diameter")
+    if isinstance(diameter, (list, tuple)):
+        values = [float(value) for value in diameter]
+        if values and all(value > 0 for value in values):
+            return values
+    elif diameter is not None:
+        value = float(diameter)
+        if value > 0:
+            return value
+    spatial_scale = int(ops.get("spatial_scale", 1))
+    estimated = float(3 * (2**max(spatial_scale, 0)))
+    return [estimated, estimated]
 
 
 def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -555,6 +663,7 @@ def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[di
             "nplanes": int(ops.get("nplanes", 1)),
             "nchannels": int(ops.get("nchannels", 1)),
             "functional_chan": int(ops.get("functional_chan", 1)),
+            "align_by_chan": int(ops.get("align_by_chan", ops.get("functional_chan", 1))),
             "subfolders": ops.get("subfolders") or None,
             "save_folder": ops.get("save_folder") or "suite2p",
             "fast_disk": ops.get("fast_disk") or None,
@@ -564,15 +673,19 @@ def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[di
             "ignore_flyback": ops.get("ignore_flyback") or None,
             "force_sktiff": bool(ops.get("force_sktiff", False)),
             "bruker_bidirectional": bool(ops.get("bruker_bidirectional", False)),
-            "batch_size": int(ops.get("batch_size", new_db.get("batch_size", 500))),
+            "batch_size": int(ops.get("binary_batch_size", ops.get("batch_size", new_db.get("batch_size", 500)))),
         }
     )
+    file_list = _suite2p_file_list(Path(db["data_path"][0]), str(new_db["input_format"]))
+    if file_list:
+        new_db["file_list"] = file_list
 
     if ops.get("torch_device"):
+        settings["device"] = ops["torch_device"]
         settings["torch_device"] = ops["torch_device"]
     settings["tau"] = float(ops.get("tau", settings["tau"]))
     settings["fs"] = float(ops.get("fs", settings["fs"]))
-    settings["diameter"] = ops.get("diameter", settings["diameter"])
+    settings["diameter"] = _suite2p_v1_diameter(ops)
 
     settings["run"].update(
         {
@@ -591,7 +704,9 @@ def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[di
             "maxregshift": float(ops.get("maxregshift", settings["registration"]["maxregshift"])),
             "do_bidiphase": bool(ops.get("do_bidiphase", settings["registration"]["do_bidiphase"])),
             "bidiphase": float(ops.get("bidiphase", settings["registration"]["bidiphase"])),
-            "batch_size": int(ops.get("batch_size", settings["registration"]["batch_size"])),
+            "batch_size": int(
+                ops.get("registration_batch_size", ops.get("batch_size", settings["registration"]["batch_size"]))
+            ),
             "nonrigid": bool(ops.get("nonrigid", settings["registration"]["nonrigid"])),
             "maxregshiftNR": float(ops.get("maxregshiftNR", settings["registration"]["maxregshiftNR"])),
             "block_size": tuple(ops.get("block_size", settings["registration"]["block_size"])),
@@ -662,7 +777,9 @@ def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[di
     )
     settings["extraction"].update(
         {
-            "batch_size": int(ops.get("batch_size", settings["extraction"]["batch_size"])),
+            "batch_size": int(
+                ops.get("extraction_batch_size", ops.get("batch_size", settings["extraction"]["batch_size"]))
+            ),
             "neuropil_extract": bool(ops.get("neuropil_extract", settings["extraction"]["neuropil_extract"])),
             "neuropil_coefficient": float(
                 ops.get("neucoeff", settings["extraction"]["neuropil_coefficient"])
@@ -791,15 +908,35 @@ def _run_prep(data: dict[str, Any], session: dict[str, Any]) -> None:
     provenance.write_text(json.dumps(session, indent=2) + "\n", encoding="ascii")
 
 
+def _remove_empty_suite2p_binaries(output_path: Path, fast_disk: Path) -> None:
+    """Remove failed-run binary placeholders before Suite2p sees them."""
+
+    candidates = []
+    for root in (output_path, fast_disk):
+        plane = root / "suite2p" / "plane0"
+        candidates.extend((plane / "data.bin", plane / "data_chan2.bin"))
+    for path in candidates:
+        if path.is_file() and path.stat().st_size == 0:
+            path.unlink()
+            print(f"Removed stale empty Suite2p binary: {path}")
+
+
 def _run_suite2p(data: dict[str, Any], session: dict[str, Any]) -> None:
     from suite2p import run_s2p
 
     ops, db = _processing_ops(data, session)
     if ops.get("fast_disk"):
         Path(ops["fast_disk"]).mkdir(parents=True, exist_ok=True)
+    _remove_empty_suite2p_binaries(Path(session["output_path"]), Path(ops["fast_disk"]))
     if "ops" in inspect.signature(run_s2p).parameters:
         run_s2p(ops=ops, db=db)
     else:
+        try:
+            from suite2p.run_s2p import logger_setup
+
+            logger_setup(str(Path(session["output_path"]) / "suite2p"))
+        except Exception as error:
+            print(f"Suite2p logger setup skipped: {error}")
         settings, new_db = _suite2p_v1_settings_db(ops, db)
         run_s2p(db=new_db, settings=settings)
 
@@ -945,6 +1082,10 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         partition_cpu=args.partition_cpu,
         partition_gpu=args.partition_gpu,
         suite2p_gpu=args.suite2p_gpu,
+        suite2p_batch_size=args.suite2p_batch_size,
+        suite2p_binary_batch_size=args.suite2p_binary_batch_size,
+        suite2p_registration_batch_size=args.suite2p_registration_batch_size,
+        suite2p_extraction_batch_size=args.suite2p_extraction_batch_size,
     )
 
 
@@ -1002,7 +1143,38 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--suite2p-gpu",
         action="store_true",
+        default=None,
         help="Request a GPU for the suite2p stage using --gres=gpu:1.",
+    )
+    parser.add_argument(
+        "--no-suite2p-gpu",
+        action="store_false",
+        dest="suite2p_gpu",
+        help="Run the suite2p stage without requesting a GPU.",
+    )
+    parser.add_argument(
+        "--suite2p-batch-size",
+        type=int,
+        default=None,
+        help="Override Suite2p batch_size globally for benchmarking or memory tuning.",
+    )
+    parser.add_argument(
+        "--suite2p-binary-batch-size",
+        type=int,
+        default=None,
+        help="Override Suite2p 1.x TIFF-to-binary batch size. Default: 5000.",
+    )
+    parser.add_argument(
+        "--suite2p-registration-batch-size",
+        type=int,
+        default=None,
+        help="Override Suite2p 1.x registration batch size. Default: 500.",
+    )
+    parser.add_argument(
+        "--suite2p-extraction-batch-size",
+        type=int,
+        default=None,
+        help="Override Suite2p 1.x extraction/deconvolution batch size. Default: 500.",
     )
 
 

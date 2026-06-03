@@ -25,6 +25,18 @@ Jobs use the `embers` QOS by default. `embers` is free but preemptible after
 the QOS runtime limit. Use `--qos inferno` for paid, non-preemptible jobs when
 needed.
 
+Suite2p writes its large temporary binary movie to node-local `$TMPDIR` by
+default and deletes it when Suite2p finishes. This avoids writing tens of GB of
+intermediate `.bin` data back to Cedar or project storage. Override with
+`--fast-disk /path/to/workdir` only when node-local tmp does not have enough
+free space.
+
+For Suite2p 1.x runs, the pipeline defaults to a larger TIFF-to-binary batch
+and smaller GPU processing batches: binary conversion uses `5000` frames per
+batch, while registration and extraction use `500` frames per batch. Override
+with `--suite2p-binary-batch-size`, `--suite2p-registration-batch-size`, or
+`--suite2p-extraction-batch-size` when benchmarking a different node type.
+
 ## Pipeline Stages
 
 The full processing chain is:
@@ -36,7 +48,7 @@ prep -> suite2p -> qc -> label -> dff -> summary
 | Stage | Resource | Main outputs |
 |---|---|---|
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
-| `suite2p` | high-memory CPU | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
+| `suite2p` | high-memory CPU; optional GPU request | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
 | `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
 | `label` | GPU | `masks.h5` and anatomical Cellpose outputs; skipped for functional-only recordings |
 | `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
@@ -80,6 +92,10 @@ python -m utils_2p.preprocessing_qc_pipeline submit \
   --output-root /path/to/processed_outputs \
   --target-structure dendrite
 ```
+
+Suite2p requests a GPU by default. TIFF conversion is still CPU/storage-bound,
+but Suite2p 1.x can use CUDA for registration and extraction after the
+temporary binary is written. Add `--no-suite2p-gpu` for CPU-only Suite2p runs.
 
 Functional-only, single-channel sessions do not need channel arguments unless
 the TIFF naming is unusual:
