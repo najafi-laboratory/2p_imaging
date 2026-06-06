@@ -1,4 +1,6 @@
 Outputs/
+__pycache__/
+*.py[cod]
 Figures/
 alignment_validation/
 aligned_dff_behavior/

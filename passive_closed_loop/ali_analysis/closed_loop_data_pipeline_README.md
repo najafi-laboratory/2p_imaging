@@ -67,7 +67,7 @@ The large Prairie voltage CSV is not loaded by default. The pipeline reads only
 its path and columns. To inspect a small sample:
 
 ```python
-from closed_loop_data_pipeline import read_voltage_csv_sample
+from ali_analysis.closed_loop_data_pipeline import read_voltage_csv_sample
 
 sample = read_voltage_csv_sample(session.voltages.voltage_csv_path, nrows=1000)
 ```
@@ -86,7 +86,7 @@ data_dir = Path("/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_
 if str(code_dir) not in sys.path:
     sys.path.insert(0, str(code_dir))
 
-from closed_loop_data_pipeline import (
+from ali_analysis.closed_loop_data_pipeline import (
     load_closed_loop_session,
     h5_dataset_summary,
     npy_array_summary,

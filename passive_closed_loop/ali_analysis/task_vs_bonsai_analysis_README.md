@@ -53,7 +53,7 @@ Bonsai output contains 9 more standard rows than the task CSV block-2 boundary.
 ## Command-Line Usage
 
 ```bash
-python task_vs_bonsai_analysis.py \
+python ali_analysis/task_vs_bonsai_analysis.py \
   --data-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556" \
   --output-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556"
 ```
@@ -74,7 +74,7 @@ data_dir = Path("/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_
 output_dir = data_dir
 
 sys.path.insert(0, str(code_dir))
-from task_vs_bonsai_analysis import run_analysis
+from ali_analysis.task_vs_bonsai_analysis import run_analysis
 
 result = run_analysis(
     data_dir=data_dir,

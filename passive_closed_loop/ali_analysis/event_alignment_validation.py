@@ -406,14 +406,15 @@ def build_analysis_trial_table(
     events: pd.DataFrame,
     standard_exclusion_sec: float = 1.0,
 ) -> pd.DataFrame:
-    """Build trial-level table for neural alignment.
+    """Build the trial-level table for neural alignment.
 
-    The performed event table has one row per short stimulus presentation. For
-    dF/F analysis we instead align to meaningful block-2 trials:
+    The Bonsai output contains one UUID-paired ``StimStart``/``StimEnd`` row
+    per visual frame update during standard closed-loop visual flow. A trial
+    for neural analysis is a stimulus presentation, not one frame update:
 
-    * all motor oddball events, 35 per oddball condition in this session;
-    * standard-control trial starts, defined as the first valid 0 deg standard
-      ``StimStart`` between each pair of consecutive oddball rows.
+    * contiguous standard frame-update rows are collapsed into one standard
+      presentation;
+    * each non-standard motor oddball row is kept as its own presentation.
     """
     events = events.copy()
     if "Duration_Outlier" not in events:
@@ -422,18 +423,83 @@ def build_analysis_trial_table(
     events["Orientation_Mod180"] = np.mod(events["Orientation_Deg"], 180)
     events["Source_Event_Row"] = np.arange(len(events), dtype=int)
 
-    valid_events = events[~events["Duration_Outlier"]].copy()
-    oddballs = valid_events[valid_events["Trial_Type"].isin(ANALYSIS_CONDITION_BY_TRIAL_TYPE)].copy()
-    oddballs["Analysis_Condition"] = oddballs["Trial_Type"].map(ANALYSIS_CONDITION_BY_TRIAL_TYPE)
-    oddballs["Selection_Rule"] = "all validated motor-oddball events"
+    valid = events[
+        events["Stim_Start_sec"].notna()
+        & events["Stim_End_sec"].notna()
+        & events["Id"].notna()
+    ].sort_values("Stim_Start_sec").reset_index(drop=True).copy()
+    if valid.empty:
+        return valid
 
-    standard_control = standard_trial_starts_between_oddballs(valid_events)
-    standard_control["Analysis_Condition"] = "standard_control"
-    standard_control["Selection_Rule"] = "first valid standard 0 deg StimStart between consecutive oddballs"
+    trial_type = valid["Trial_Type"].astype(str)
+    new_presentation = trial_type.ne(trial_type.shift()) | trial_type.ne("standard")
+    valid["Presentation_Run"] = new_presentation.cumsum()
 
-    analysis = pd.concat([standard_control, oddballs], ignore_index=True, sort=False)
+    first_cols = [
+        "Contrast",
+        "Delay",
+        "DiameterX",
+        "DiameterY",
+        "Orientation",
+        "Spatial_Frequency",
+        "Temporal_Frequency",
+        "X",
+        "Y",
+        "Phase",
+        "Trial_Type",
+        "Block_Type",
+        "Block_Number",
+        "Block_Label",
+        "Sequence_Number",
+        "Trial_In_Sequence",
+        "Stim_Start_sec",
+        "Logger_Start_Frame",
+        "Nearest_Dff_Frame",
+        "Nearest_Dff_Time_sec",
+        "Stim_To_Dff_Frame_Delta_sec",
+        "Nearest_Dff_Frame_In_Range",
+        "Imaging_Frame_Source",
+        "Imaging_Frame_Edge_Count",
+        "Orientation_Deg",
+        "Orientation_Mod180",
+        "Source_Event_Row",
+    ]
+    agg = {col: (col, "first") for col in first_cols if col in valid.columns}
+    agg.update(
+        {
+            "Id": ("Id", "first"),
+            "Presentation_Start_Id": ("Id", "first"),
+            "Presentation_End_Id": ("Id", "last"),
+            "Trial_Number": ("Trial_Number", "first"),
+            "Presentation_End_Trial_Number": ("Trial_Number", "last"),
+            "Stim_End_sec": ("Stim_End_sec", "last"),
+            "Logger_End_Frame": ("Logger_End_Frame", "last"),
+            "Duration": ("Duration", "sum"),
+            "Logger_Duration_sec": ("Logger_Duration_sec", "sum"),
+            "Duration_Error_sec": ("Duration_Error_sec", "sum"),
+            "Duration_Outlier": ("Duration_Outlier", "any"),
+            "Source_Update_Rows": ("Id", "size"),
+            "Source_Event_End_Row": ("Source_Event_Row", "last"),
+        }
+    )
+
+    analysis = valid.groupby("Presentation_Run", as_index=False).agg(**agg)
     if analysis.empty:
         return analysis
+
+    analysis["Analysis_Condition"] = analysis["Trial_Type"].map(ANALYSIS_CONDITION_BY_TRIAL_TYPE)
+    analysis.loc[
+        analysis["Analysis_Condition"].isna()
+        & analysis["Trial_Type"].eq("standard")
+        & np.isclose(analysis["Orientation_Mod180"], 0.0, atol=1e-4),
+        "Analysis_Condition",
+    ] = "standard_control"
+    analysis["Analysis_Condition"] = analysis["Analysis_Condition"].fillna(analysis["Trial_Type"].astype(str))
+    analysis["Selection_Rule"] = np.where(
+        analysis["Trial_Type"].eq("standard"),
+        "contiguous standard frame-update presentation",
+        "single motor-oddball StimStart/StimEnd presentation",
+    )
 
     condition_order = {
         "standard_control": 0,
@@ -443,7 +509,7 @@ def build_analysis_trial_table(
         "orientation_45": 4,
     }
     analysis["Analysis_Condition_Order"] = analysis["Analysis_Condition"].map(condition_order).fillna(99).astype(int)
-    analysis = analysis.sort_values(["Analysis_Condition_Order", "Stim_Start_sec"]).reset_index(drop=True)
+    analysis = analysis.sort_values(["Stim_Start_sec", "Analysis_Condition_Order"]).reset_index(drop=True)
     analysis["Analysis_Trial"] = np.arange(1, len(analysis) + 1, dtype=int)
     analysis["Analysis_Trial_In_Condition"] = analysis.groupby("Analysis_Condition").cumcount() + 1
     analysis["Is_Analysis_Trial"] = True
@@ -455,7 +521,11 @@ def build_analysis_trial_table(
         "Analysis_Condition_Order",
         "Selection_Rule",
         "Is_Analysis_Trial",
+        "Source_Update_Rows",
         "Source_Event_Row",
+        "Source_Event_End_Row",
+        "Presentation_Start_Id",
+        "Presentation_End_Id",
     ]
     remaining = [col for col in analysis.columns if col not in front_cols]
     return analysis[front_cols + remaining]
@@ -891,6 +961,11 @@ def make_validation_checks(
     )
     max_event_frame_delta_ms = float(events["Stim_To_Dff_Frame_Delta_sec"].abs().max() * 1000)
     all_events_in_frame_range = bool(events["Nearest_Dff_Frame_In_Range"].all())
+    source_update_rows = (
+        int(analysis_trial_table["Source_Update_Rows"].sum())
+        if "Source_Update_Rows" in analysis_trial_table.columns
+        else 0
+    )
 
     rows = [
         {
@@ -914,7 +989,18 @@ def make_validation_checks(
             "value": f"{events['Nearest_Dff_Frame_In_Range'].sum():,}/{len(events):,}",
         },
         {
-            "check": "Trial-level analysis table contains standard starts and oddballs",
+            "check": "Presentation-level trial table covers all UUID-paired frame updates",
+            "status": status(
+                source_update_rows == len(events)
+                and source_update_rows == len(bonsai_ids)
+                and bonsai_ids == start_ids
+                and bonsai_ids == end_ids,
+                warn=True,
+            ),
+            "value": f"presentation_trials={len(analysis_trial_table):,}, source_uuid_frame_updates={source_update_rows:,}, logger_starts={len(start_ids):,}, logger_ends={len(end_ids):,}",
+        },
+        {
+            "check": "Trial-level analysis table contains standard trials and oddballs",
             "status": status(
                 {"standard_control", "omission", "halt", "orientation_90", "orientation_45"}.issubset(
                     set(analysis_trial_table.get("Analysis_Condition", pd.Series(dtype=str)))
@@ -1026,7 +1112,7 @@ def write_markdown_report(
         [
             "## Event Table Summary",
             "",
-            f"Performed block-2 stimulus presentations: {len(event_table):,}",
+            f"Performed block-2 UUID-paired frame-update rows: {len(event_table):,}",
             f"Imaging frame source: {event_table['Imaging_Frame_Source'].iloc[0] if 'Imaging_Frame_Source' in event_table else 'not recorded'}",
             f"First event start: {event_table['Stim_Start_sec'].min():.6f} sec",
             f"Last event end: {event_table['Stim_End_sec'].max():.6f} sec",
@@ -1034,12 +1120,13 @@ def write_markdown_report(
             "",
             "## Trial-Level Analysis Table",
             "",
-            "This table is intended for neural alignment. It does not use every 33 ms standard stimulus presentation.",
-            "Standard 0 deg rows are trial starts: the first valid standard `StimStart` between consecutive oddball rows.",
+            "This table is intended for neural alignment. Each row is one stimulus-presentation trial.",
+            "Contiguous standard frame-update rows are collapsed into one standard presentation; each motor oddball row is one presentation.",
             markdown_table(
                 analysis_trial_table.groupby("Analysis_Condition", as_index=False)
                 .agg(
                     trials=("Analysis_Trial", "size"),
+                    source_update_rows=("Source_Update_Rows", "sum"),
                     first_start_sec=("Stim_Start_sec", "min"),
                     last_start_sec=("Stim_Start_sec", "max"),
                     selection_rule=("Selection_Rule", "first"),

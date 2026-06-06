@@ -102,7 +102,7 @@ def resolve_event_table(data_dir: Path, output_path: Path, event_table_path: str
             return candidate.resolve()
     raise FileNotFoundError(
         "Could not find block2_analysis_trials_with_dff_frames.csv or block2_performed_events_with_dff_frames.csv. "
-        "Run event_alignment_validation.py first or pass event_table_path."
+        "Run ali_analysis/event_alignment_validation.py first or pass event_table_path."
     )
 
 

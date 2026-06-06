@@ -17,7 +17,7 @@ The analysis produces:
 The public entry point is ``run_analysis``. It can be imported from a notebook or
 called from the command line:
 
-    python task_vs_bonsai_analysis.py --data-dir /path/to/session
+    python ali_analysis/task_vs_bonsai_analysis.py --data-dir /path/to/session
 
 The plotting code intentionally disables vertical grid lines and hides the top
 and right spines to keep the figures clean.
@@ -282,7 +282,7 @@ def load_stimulus_csv(
 
 
 def make_block_summary(df: pd.DataFrame) -> pd.DataFrame:
-    """Summarize each block: boundaries, durations, rows, trials, and trial types."""
+    """Summarize each block: boundaries, durations, UUID trials, and trial types."""
     block_summary = (
         df.groupby(["Block_Number", "Block_Label", "Block_Type"], dropna=False, as_index=False)
         .agg(
@@ -317,6 +317,7 @@ def make_source_summary(df: pd.DataFrame, source_label: str) -> dict:
     return {
         "Source": source_label,
         "Rows": int(len(df)),
+        "Unique_Ids": int(df["Id"].nunique()) if "Id" in df.columns else np.nan,
         "Blocks": int(df["Block_Number"].nunique(dropna=True)),
         "Trial_Start": int(df["Trial_Number"].min()),
         "Trial_End": int(df["Trial_Number"].max()),
@@ -345,6 +346,7 @@ def block2_metrics(df: pd.DataFrame, label: str) -> dict:
     return {
         "Source": label,
         "Rows": int(len(block)),
+        "Unique_Ids": int(block["Id"].nunique()) if "Id" in block.columns else np.nan,
         "Trial_Start": int(block["Trial_Number"].min()),
         "Trial_End": int(block["Trial_Number"].max()),
         "Declared_Min": float(block["Block_Duration_Minutes"].dropna().iloc[0])
@@ -366,9 +368,10 @@ def make_block2_difference_table(task_df: pd.DataFrame, bonsai_df: pd.DataFrame)
     bonsai_metrics = block2_metrics(bonsai_df, "Bonsai output block 2")
 
     metric_specs = [
-        ("Rows/trials", "Rows", ",.0f"),
-        ("First trial", "Trial_Start", ",.0f"),
-        ("Last trial", "Trial_End", ",.0f"),
+        ("Trials", "Rows", ",.0f"),
+        ("Unique trial UUIDs", "Unique_Ids", ",.0f"),
+        ("First Bonsai TrialNumber", "Trial_Start", ",.0f"),
+        ("Last Bonsai TrialNumber", "Trial_End", ",.0f"),
         ("Standards", "standard", ",.0f"),
         ("Omissions", "omission", ",.0f"),
         ("Halts", "halt", ",.0f"),
@@ -397,24 +400,33 @@ def make_block2_difference_table(task_df: pd.DataFrame, bonsai_df: pd.DataFrame)
 
 def make_quality_checks(task_df: pd.DataFrame, bonsai_df: pd.DataFrame, diff_table: pd.DataFrame) -> pd.DataFrame:
     """Create concise quality checks that flag the block-2 boundary mismatch."""
-    row_diff = int(diff_table.loc[diff_table["Metric"].eq("Rows/trials"), "Difference"].iloc[0])
-    last_trial_diff = int(diff_table.loc[diff_table["Metric"].eq("Last trial"), "Difference"].iloc[0])
+    row_diff = int(diff_table.loc[diff_table["Metric"].eq("Trials"), "Difference"].iloc[0])
+    uuid_diff_value = diff_table.loc[diff_table["Metric"].eq("Unique trial UUIDs"), "Difference"].iloc[0]
+    uuid_diff = int(uuid_diff_value) if pd.notna(uuid_diff_value) else np.nan
+    last_trial_diff = int(diff_table.loc[diff_table["Metric"].eq("Last Bonsai TrialNumber"), "Difference"].iloc[0])
 
     return pd.DataFrame(
         [
             {
-                "Check": "Task CSV trial numbers are unique and monotonic",
+                "Check": "Task CSV Bonsai TrialNumber values are unique and monotonic",
                 "Status": "OK"
                 if task_df["Trial_Number"].is_unique and task_df["Trial_Number"].is_monotonic_increasing
                 else "WARN",
                 "Value": f"{task_df['Trial_Number'].min():.0f}-{task_df['Trial_Number'].max():.0f}",
             },
             {
-                "Check": "Bonsai output trial numbers are unique and monotonic",
+                "Check": "Bonsai output TrialNumber values are unique and monotonic",
                 "Status": "OK"
                 if bonsai_df["Trial_Number"].is_unique and bonsai_df["Trial_Number"].is_monotonic_increasing
                 else "WARN",
                 "Value": f"{bonsai_df['Trial_Number'].min():.0f}-{bonsai_df['Trial_Number'].max():.0f}",
+            },
+            {
+                "Check": "Bonsai output has one unique UUID per trial row",
+                "Status": "OK"
+                if "Id" in bonsai_df.columns and bonsai_df["Id"].nunique() == len(bonsai_df)
+                else "WARN",
+                "Value": f"unique_ids={bonsai_df['Id'].nunique() if 'Id' in bonsai_df.columns else 0:,}, rows={len(bonsai_df):,}",
             },
             {
                 "Check": "Bonsai output rows matched to logger StimStart/StimEnd IDs",
@@ -425,14 +437,19 @@ def make_quality_checks(task_df: pd.DataFrame, bonsai_df: pd.DataFrame, diff_tab
                 "Value": f"{bonsai_df['Logger_Start_sec_abs'].notna().sum():,}/{len(bonsai_df):,}",
             },
             {
-                "Check": "Block 2 row count difference, Bonsai minus task CSV",
+                "Check": "Block 2 trial row difference, Bonsai minus task CSV",
                 "Status": "WARN" if row_diff != 0 else "OK",
-                "Value": f"{row_diff:+d} rows",
+                "Value": f"{row_diff:+d} trials",
             },
             {
-                "Check": "Block 2 last-trial difference, Bonsai minus task CSV",
+                "Check": "Block 2 trial UUID difference, Bonsai minus task CSV",
+                "Status": "WARN" if pd.isna(uuid_diff) or uuid_diff != 0 else "OK",
+                "Value": "n/a" if pd.isna(uuid_diff) else f"{uuid_diff:+d} UUIDs",
+            },
+            {
+                "Check": "Block 2 last Bonsai TrialNumber difference, Bonsai minus task CSV",
                 "Status": "WARN" if last_trial_diff != 0 else "OK",
-                "Value": f"{last_trial_diff:+d} trials",
+                "Value": f"{last_trial_diff:+d}",
             },
         ]
     )
@@ -447,10 +464,11 @@ def source_summary_lines(df: pd.DataFrame, source_label: str) -> list[str]:
         f"omission {summary['omission']:,}, halt {summary['halt']:,}, "
         f"90 {summary['orientation_90']:,}, 45 {summary['orientation_45']:,}"
     )
+    uuid_text = "n/a" if pd.isna(summary["Unique_Ids"]) else f"{int(summary['Unique_Ids']):,}"
 
     return [
-        f"Rows/trials: {summary['Rows']:,}    Blocks: {summary['Blocks']:,}",
-        f"Trial range: {summary['Trial_Start']:,} to {summary['Trial_End']:,}",
+        f"Trials: {summary['Rows']:,}    Unique trial UUIDs: {uuid_text}    Blocks: {summary['Blocks']:,}",
+        f"Bonsai TrialNumber range: {summary['Trial_Start']:,} to {summary['Trial_End']:,}",
         f"CSV duration sum: {summary['Csv_Duration_sec'] / 60:.2f} min",
         f"Plotted span: {summary['Plotted_Span_sec'] / 60:.2f} min ({summary['Time_Source']})",
         f"Oddball counts: {oddball_text}",

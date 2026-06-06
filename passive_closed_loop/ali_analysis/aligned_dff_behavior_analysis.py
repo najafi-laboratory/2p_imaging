@@ -2,23 +2,21 @@
 Create event-aligned dF/F and wheel-speed figures.
 
 This module uses the validated alignment output from
-``event_alignment_validation.py``. The preferred input is:
+``ali_analysis/event_alignment_validation.py``. The preferred input is:
 
     block2_analysis_trials_with_dff_frames.csv
 
-That table contains trial-level alignment rows: standard 0 degree trial starts
-and motor oddball trials. The lower-level
+That table contains one row per stimulus-presentation trial. Contiguous
+standard frame-update rows are collapsed into one standard presentation, and
+each motor oddball row is one presentation. The lower-level
 ``block2_performed_events_with_dff_frames.csv`` still exists for timing
-validation, but it has one row per short stimulus presentation and is not used
-for neural trial averaging when the trial-level table is available.
+validation and contains UUID-paired frame-update rows.
 
 For the current session, only block 2 has validated performed event timing in
 the Bonsai output/logger files. The code therefore treats "all blocks" as
 "all validated performed blocks available in the event table". With the current
-files this is block 2. When both validation tables are available, 0 degree
-standard plots use standard trial starts from the full performed-event table:
-the first valid standard 0 deg ``StimStart`` between consecutive oddballs.
-Oddball plots use the trial-level table.
+files this is block 2. When the trial-level table is available, all plots use
+the presentation-level trial rows from that table.
 
 The output is one multi-page PDF. Page 1 contains orientation-aligned
 conditions in ascending orientation order. Page 2 contains the block-2
@@ -195,7 +193,7 @@ def find_event_table(data_dir: Path, output_dir: Path, event_table_path: Optiona
             return candidate
     raise FileNotFoundError(
         "Could not find block2_analysis_trials_with_dff_frames.csv or block2_performed_events_with_dff_frames.csv. "
-        "Run event_alignment_validation.py first or pass event_table_path explicitly."
+        "Run ali_analysis/event_alignment_validation.py first or pass event_table_path explicitly."
     )
 
 
@@ -655,10 +653,11 @@ def run_aligned_dff_behavior_analysis(
 
     event_table_path = find_event_table(data_dir, output_dir, event_table_path)
     events = load_events(event_table_path)
+    using_analysis_trials = "Analysis_Condition" in events.columns
     performed_event_table_path = find_performed_event_table(data_dir, output_dir, event_table_path)
     performed_events = (
         load_events(performed_event_table_path)
-        if use_standard_trial_starts and performed_event_table_path is not None
+        if use_standard_trial_starts and not using_analysis_trials and performed_event_table_path is not None
         else None
     )
 
@@ -671,7 +670,6 @@ def run_aligned_dff_behavior_analysis(
     z_dff = zscore_dff(dff)
     population_z_trace = z_dff.mean(axis=0)
     wheel_speed_trace = load_wheel_speed(data_dir, dff_frame_times)
-    using_analysis_trials = "Analysis_Condition" in events.columns
     standard_trial_events = None
     if performed_events is not None:
         block2_performed_events = performed_events[performed_events["Block_Number"].eq(2)].copy()
@@ -684,14 +682,12 @@ def run_aligned_dff_behavior_analysis(
     orientation_condition_data: list[ConditionAlignmentData] = []
     block2_condition_data: list[ConditionAlignmentData] = []
 
-    # Orientation figure set. When possible, 0 deg uses standard trial starts
-    # between oddballs and the 45/90 deg rows use motor orientation oddballs.
+    # Orientation figure set. With a trial-level table, each row is one
+    # stimulus-presentation trial.
     for orientation in ORIENTATION_SET_DEG:
         condition = f"orientation_{str(orientation).replace('.', 'p')}_deg_all_validated_blocks"
         title = (
-            f"{orientation:g} deg standard trial starts between oddballs, block 2"
-            if using_analysis_trials and orientation == 0.0 and standard_trial_events is not None
-            else f"{orientation:g} deg aligned analysis trials, block 2"
+            f"{orientation:g} deg aligned presentation trials, block 2"
             if using_analysis_trials
             else f"{orientation:g} deg aligned trials, all validated performed blocks"
         )
@@ -745,7 +741,7 @@ def run_aligned_dff_behavior_analysis(
                 orientation_deg=0.0,
                 exclude_duration_outliers=exclude_duration_outliers,
             )
-            title = "Block 2 standard 0 deg trial starts between oddballs"
+            title = "Block 2 standard 0 deg presentation trials"
         elif using_analysis_trials:
             selected = filter_events_for_condition(
                 block2_events,

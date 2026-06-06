@@ -58,7 +58,7 @@ physical_health = output_dir / "alignment_validation" / "physical_voltage_input_
 if str(code_dir) not in sys.path:
     sys.path.insert(0, str(code_dir))
 
-import interactive_voltage_validation_viewer
+from ali_analysis import interactive_voltage_validation_viewer
 importlib.reload(interactive_voltage_validation_viewer)
 
 result = interactive_voltage_validation_viewer.create_interactive_voltage_validation_viewer(
@@ -92,7 +92,7 @@ result = interactive_voltage_validation_viewer.create_interactive_voltage_valida
 ```bash
 cd /home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Code/2p
 
-.venv/bin/python interactive_voltage_validation_viewer.py \
+.venv/bin/python ali_analysis/interactive_voltage_validation_viewer.py \
   --data-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556" \
   --output-path "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/interactive_voltage_validation_viewer_0_60s.html" \
   --event-table "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/alignment_validation/block2_analysis_trials_with_dff_frames.csv" \

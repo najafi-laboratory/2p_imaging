@@ -30,7 +30,7 @@ output_dir.mkdir(parents=True, exist_ok=True)
 if str(code_dir) not in sys.path:
     sys.path.insert(0, str(code_dir))
 
-import interactive_dff_roi_viewer
+from ali_analysis import interactive_dff_roi_viewer
 importlib.reload(interactive_dff_roi_viewer)
 
 html_path = interactive_dff_roi_viewer.create_interactive_dff_viewer(
@@ -47,7 +47,7 @@ display(HTML(f'<a href="{html_path}" target="_blank">Open interactive dF/F viewe
 ```bash
 cd /home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Code/2p
 
-.venv/bin/python interactive_dff_roi_viewer.py \
+.venv/bin/python ali_analysis/interactive_dff_roi_viewer.py \
   --data-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556" \
   --output "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/interactive_dff_roi_viewer.html"
 ```

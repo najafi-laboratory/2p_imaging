@@ -74,7 +74,7 @@ event_table = Path("/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW
 if str(code_dir) not in sys.path:
     sys.path.insert(0, str(code_dir))
 
-import aligned_dff_behavior_analysis
+from ali_analysis import aligned_dff_behavior_analysis
 importlib.reload(aligned_dff_behavior_analysis)
 
 result = aligned_dff_behavior_analysis.run_aligned_dff_behavior_analysis(
@@ -99,7 +99,7 @@ print("Skipped conditions:", result.skipped_conditions_path)
 ```bash
 cd /home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Code/2p
 
-.venv/bin/python aligned_dff_behavior_analysis.py \
+.venv/bin/python ali_analysis/aligned_dff_behavior_analysis.py \
   --data-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556" \
   --output-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/aligned_dff_behavior" \
   --event-table "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/alignment_validation/block2_analysis_trials_with_dff_frames.csv"

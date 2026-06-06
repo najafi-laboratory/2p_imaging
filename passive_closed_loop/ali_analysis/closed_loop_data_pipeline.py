@@ -29,7 +29,7 @@ Typical notebook usage:
     data_dir = Path("/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556")
 
     sys.path.insert(0, str(code_dir))
-    from closed_loop_data_pipeline import load_closed_loop_session
+    from ali_analysis.closed_loop_data_pipeline import load_closed_loop_session
 
     session = load_closed_loop_session(data_dir)
     session.summary()

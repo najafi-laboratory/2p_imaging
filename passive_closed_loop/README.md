@@ -24,13 +24,16 @@ Run the analysis in this order:
 
 ## Code Files
 
+Ali Shamsnia's analysis modules and their companion documentation are grouped
+under `ali_analysis/`.
+
 | File | Purpose |
 | --- | --- |
-| `closed_loop_data_pipeline.py` | Loads CSV, H5, NPY, Suite2p, QC, behavior, and voltage files into structured session objects. |
-| `task_vs_bonsai_analysis.py` | Compares the task file Bonsai reads with the stimulus file Bonsai generated, including block-2 checks. |
-| `interactive_dff_roi_viewer.py` | Generates a shareable HTML viewer for mean images, ROI masks, raw dF/F, and z-scored dF/F. |
-| `event_alignment_validation.py` | Validates logger timestamps, voltage health, dF/F frame counts, and produces both the low-level performed-event QC table and the trial-level analysis table. |
-| `aligned_dff_behavior_analysis.py` | Produces one ordered PDF with event-aligned population z-dF/F and wheel-speed traces. |
+| `ali_analysis/closed_loop_data_pipeline.py` | Loads CSV, H5, NPY, Suite2p, QC, behavior, and voltage files into structured session objects. |
+| `ali_analysis/task_vs_bonsai_analysis.py` | Compares the task file Bonsai reads with the stimulus file Bonsai generated, including block-2 checks. |
+| `ali_analysis/interactive_dff_roi_viewer.py` | Generates a shareable HTML viewer for mean images, ROI masks, raw dF/F, and z-scored dF/F. |
+| `ali_analysis/event_alignment_validation.py` | Validates logger timestamps, voltage health, dF/F frame counts, and produces both the low-level performed-event QC table and the trial-level analysis table. |
+| `ali_analysis/aligned_dff_behavior_analysis.py` | Produces one ordered PDF with event-aligned population z-dF/F and wheel-speed traces. |
 
 Each script also has a companion `*_README.md` with script-specific usage.
 
@@ -180,7 +183,7 @@ if str(code_dir) not in sys.path:
 Then run each script from the notebook:
 
 ```python
-import task_vs_bonsai_analysis
+from ali_analysis import task_vs_bonsai_analysis
 importlib.reload(task_vs_bonsai_analysis)
 
 task_result = task_vs_bonsai_analysis.run_analysis(
@@ -194,7 +197,7 @@ display(task_result.checks)
 ```
 
 ```python
-import event_alignment_validation
+from ali_analysis import event_alignment_validation
 importlib.reload(event_alignment_validation)
 
 validation_result = event_alignment_validation.run_event_alignment_validation(
@@ -210,7 +213,7 @@ display(validation_result.analysis_trial_table.groupby("Analysis_Condition").siz
 ```
 
 ```python
-import aligned_dff_behavior_analysis
+from ali_analysis import aligned_dff_behavior_analysis
 importlib.reload(aligned_dff_behavior_analysis)
 
 aligned_result = aligned_dff_behavior_analysis.run_aligned_dff_behavior_analysis(
@@ -248,5 +251,6 @@ the Bonsai output and logger files:
   checks instead.
 
 These numbers are session-specific and should not be hard-coded into new
-analyses. Use the validation CSVs produced by `event_alignment_validation.py`
+analyses. Use the validation CSVs produced by
+`ali_analysis/event_alignment_validation.py`
 for each session.

@@ -61,7 +61,7 @@ output_dir.mkdir(parents=True, exist_ok=True)
 if str(code_dir) not in sys.path:
     sys.path.insert(0, str(code_dir))
 
-import event_alignment_validation
+from ali_analysis import event_alignment_validation
 importlib.reload(event_alignment_validation)
 
 result = event_alignment_validation.run_event_alignment_validation(
@@ -167,7 +167,7 @@ So for this session:
 ```bash
 cd /home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Code/2p
 
-.venv/bin/python event_alignment_validation.py \
+.venv/bin/python ali_analysis/event_alignment_validation.py \
   --data-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556" \
   --output-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/alignment_validation"
 ```
@@ -176,7 +176,7 @@ To skip the large physical voltage CSV scan and fall back to processed
 `raw_voltages.h5/raw/vol_img`:
 
 ```bash
-.venv/bin/python event_alignment_validation.py \
+.venv/bin/python ali_analysis/event_alignment_validation.py \
   --data-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/2p_Data/VW01_20260520_Closed_Loop_test-1556" \
   --output-dir "/home/ihsan/Desktop/data/Georgia_Tech/Closed_loop/Figures/VW01_20260520_Closed_Loop_test-1556/alignment_validation" \
   --skip-voltage-csv-scan
