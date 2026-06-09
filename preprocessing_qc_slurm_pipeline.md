@@ -43,6 +43,84 @@ after the temporary binary is written. Use `--no-suite2p-gpu` for CPU-only
 Suite2p runs. The Cellpose anatomical labeling stage also explicitly enables
 GPU use.
 
+## Manual ROI Review
+
+The interactive HTML summary includes manual **Good** and **Bad** controls for
+each displayed ROI. Use the buttons or the `G` and `B` keyboard shortcuts;
+left/right arrow keys move between ROIs. FOV masks remain white outlines; the
+selected ROI is filled translucent white. Stacked traces retain their
+per-ROI color palette.
+
+The **Morphology filter sandbox** uses the same `stat.npy` fields and threshold
+logic as the preprocessing `qc` stage: `skew`, connectivity components,
+`aspect_ratio`, `compact`, and `footprint`. The controls initialize from the
+session's saved `qc_results/qc_parameters.json` when that file is present.
+Built-in `neuron`, `dendrite`, and `cerebellum_lax` presets come directly from
+the pipeline's `QC_PRESETS`. Changing thresholds previews the pass/fail count.
+The preview does not change labels until **Apply filter to labels** is clicked.
+Custom presets can be named and saved in the browser's local storage.
+
+ROI review uses three states: Good, Bad, and Unlabeled. Sessions initialize
+with morphology failures marked Bad and morphology passers Unlabeled. Good and
+Unlabeled ROI outlines/traces are visible; Bad ROIs are hidden. Marking an ROI
+Bad or applying morphology thresholds updates the FOV and trace list
+immediately. **Show excluded ROIs** temporarily reveals Bad ROIs, and
+**Mark all visible as good** accepts the current visible set. The exclusion
+report is generated from the current morphology settings and current labels.
+Unlabeled exports preserve the original Suite2p `iscell.npy` row in the
+separate reviewed output.
+
+The target-structure morphology parameters belong to the post-Suite2p QC stage;
+they are not passed into Suite2p ROI detection. The HTML embeds all original
+Suite2p ROIs. **Clear all labels / show all ROIs** removes both manual and
+morphology-derived reviewer labels, restores the pending export rows from the
+original `iscell.npy`, and reveals the complete Suite2p ROI set. Select a
+preset and click **Apply filter to labels** to restore morphology filtering.
+
+Suite2p stores ROI classifications in `suite2p/plane0/iscell.npy`, an
+`N x 2` floating-point array:
+
+- Column 0 is the binary classification used by downstream code: `1` means
+  cell/good ROI and `0` means non-cell/bad ROI.
+- Column 1 is Suite2p's classifier probability. Manual labels set this to
+  `1.0` for good and `0.0` for bad so the final manual decision is explicit.
+
+The preprocessing summary contains the post-QC subset of ROIs, while
+`iscell.npy` contains every original Suite2p ROI. Summary generation therefore
+matches each displayed ROI back to its original `stat.npy` row by pixel
+coordinates. Export preserves all Suite2p rows that were not displayed.
+
+The **Save iscell_qc.npy** button creates a complete Suite2p-shaped reviewed
+file without replacing Suite2p's classifier output. Browsers cannot silently
+overwrite local files, so supported browsers show a save-file prompt;
+otherwise the file is downloaded. Save or move it to
+`suite2p/plane0/iscell_qc.npy`.
+
+The **Export label JSON** button creates a smaller auditable label file. Apply
+it from the repository with:
+
+```bash
+python -m utils_2p.roi_labels \
+  SESSION_manual_roi_labels.json \
+  /path/to/session/suite2p/plane0
+```
+
+This validates ROI indices, preserves unreviewed rows, reads the original
+`iscell.npy`, and writes `iscell_qc.npy`. An existing QC file is backed up as
+`iscell_qc.npy.bak_YYYYMMDD_HHMMSS`.
+Downstream analysis can then select good ROIs with:
+
+```python
+import numpy as np
+
+plane = "/path/to/session/suite2p/plane0"
+iscell_qc = np.load(f"{plane}/iscell_qc.npy")
+good = iscell_qc[:, 0].astype(bool)
+F_good = np.load(f"{plane}/F.npy")[good]
+Fneu_good = np.load(f"{plane}/Fneu.npy")[good]
+stat_good = np.load(f"{plane}/stat.npy", allow_pickle=True)[good]
+```
+
 ## Submit A Run
 
 Neuronal sessions use the defaults. Channel count is detected from TIFF names;
