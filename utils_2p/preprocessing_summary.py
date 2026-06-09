@@ -631,7 +631,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <button id="openExclusions">Open exclusion reasons</button>
       <button id="saveIscell">Save iscell_qc.npy</button>
       <button id="exportLabels">Export label JSON</button>
-      <a class="docs-link" href="https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/feature/interactive-roi-labels/docs/roi-reviewer-exports.md" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
       <span class="note">Saving requires a browser file prompt. Existing unreviewed Suite2p rows are preserved.</span>
     </div>
   </div>
