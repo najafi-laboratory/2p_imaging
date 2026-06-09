@@ -22,6 +22,7 @@ nav:
       - Processing Quickstart: processing-quickstart.md
       - Preprocessing: preprocessing.md
       - Postprocessing: postprocessing.md
+      - ROI Reviewer Exports: roi-reviewer-exports.md
   - Experiments and Analyses:
       - Passive: passive.md
       - 2AFC: twoafc.md

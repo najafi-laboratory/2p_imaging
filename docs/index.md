@@ -23,6 +23,10 @@ Most downstream projects assume these outputs already exist in each session dire
 - `dff.h5`
 - often `neural_trials.h5` after trialization
 
+The [ROI reviewer export guide](roi-reviewer-exports.md) explains how manual
+good/bad/unlabeled decisions map back to Suite2p arrays and to the downstream
+loading conventions used across this repository.
+
 ## Experiment families
 
 - `passive_interval_oddball_202412/`: passive visual oddball and interval paradigms with HTML report generation
