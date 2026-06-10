@@ -79,17 +79,6 @@ Here, `1` means good, `0` means bad, and `null` means unlabeled.
 row shown in the reviewer and should not be used to index original Suite2p
 files.
 
-On the lab cluster, the notebook defaults to this existing 46-ROI processed
-test session:
-
-```text
-/storage/scratch1/3/grubin6/2p_pipeline_tests/yh26_staged_tiff_bin_benchmark/YH26LG_CRBL_crus2_20251211_EBC-869
-```
-
-The example passes its original `iscell.npy` explicitly only to demonstrate
-the external `label_path` argument. After review, omit `label_path` and the
-loader will use `suite2p/plane0/iscell_qc.npy`.
-
 ## Initial reviewer state
 
 Suite2p first detects the complete ROI set and writes `stat.npy`, `F.npy`,
@@ -155,97 +144,36 @@ Always confirm that the downloaded array has the same number of rows as
 `stat.npy`. The JSON route performs the stronger fingerprint check and is
 therefore safer.
 
-## Directory assumptions found in this repository
+## Standard Suite2p session example
 
-### Ali Shamsnia: 2AFC
-
-Example: `2p_2AFC_double_block_version/Modules/reader.py`, introduced in commit
-`01194f0f`.
-
-This reader treats each configured path as a processed session directory. It
-loads `ops.npy`, `dff.h5`, `masks.h5`, and `neural_trials.h5` from the session
-root. Its `dff.h5` loader does not inspect Suite2p `iscell.npy`.
-
-Consequences:
-
-1. Adding `suite2p/plane0/iscell_qc.npy` does not retroactively filter an
-   existing root-level `dff.h5`.
-2. The safest low-storage adaptation is to load Suite2p `F.npy` and `Fneu.npy`,
-   select rows with the reviewed mask, and pass the resulting dF/F array into
-   the analysis.
-3. If the unmodified reader must be used, rerun the postprocessing stage that
-   creates root-level `dff.h5`, `masks.h5`, and `neural_trials.h5` after
-   installing the reviewed labels.
-
-Do not apply an original Suite2p-length mask directly to an older `dff.h5`
-unless that file is known to contain every original Suite2p ROI in the same
-order.
-
-### Sana Aminaji: joystick processing
-
-Example: `JoystickProcessing2026/PostProcessing/spike_deconvolve/main.py`,
-introduced in commit `301f5bb1`.
-
-This script loads:
+Start with a processed session that contains the original Suite2p arrays and
+the reviewed classification file:
 
 ```text
-<session>/suite2p/plane0/F.npy
-<session>/suite2p/plane0/Fneu.npy
-<session>/suite2p/plane0/iscell_qc.npy
+/path/to/session/
+└── suite2p/
+    └── plane0/
+        ├── F.npy
+        ├── Fneu.npy
+        ├── stat.npy
+        ├── ops.npy
+        ├── iscell.npy
+        └── iscell_qc.npy
 ```
 
-Sana's script currently loads `iscell.npy`. To preserve the original classifier
-output, point it at `iscell_qc.npy` or use `load_reviewed_dff`. An existing
-`ROI_label.h5` takes precedence and must be removed, renamed, or regenerated if
-the reviewer labels should control selection.
-
-Sana's older manual workflow uses `ROI_label.h5` indices relative to
-`qc_results/`, not necessarily original Suite2p indices. Those index spaces
-must not be mixed. Prefer `iscell_qc.npy` or use the notebook to filter the
-original Suite2p arrays.
-
-### Yicong Huang: passive interval oddball
-
-Example: `passive_interval_oddball_202412/modules/ReadResults.py`, introduced
-in commit `2ccefbe3` and later updated by Yicong.
-
-Session paths are constructed as:
-
-```text
-results/<session_folder>/<session_name>/
-```
-
-The loader reads `suite2p/plane0/ops.npy`, but neural traces and masks come
-from root-level `dff.h5`, `masks.h5`, and `neural_trials.h5`. As with Ali's
-reader, adding `iscell_qc.npy` alone does not alter files already generated at
-the session root.
-
-Use one of these approaches:
-
-1. Apply the reviewer labels and rerun postprocessing/trialization so the
-   root-level files all use the same ROI rows.
-2. During exploratory analysis, use the notebook's direct Suite2p loader and
-   pass the filtered dF/F array forward.
-
-Regenerate `neural_trials.h5` whenever its dF/F dataset was built from an older
-ROI set. Filtering only `dff.h5` would leave inconsistent ROI dimensions.
-
-## Loading reviewed dF/F
-
-### Default: `iscell_qc.npy` in the session
-
-Use the shared loader after placing `iscell_qc.npy` in
-`suite2p/plane0/`:
+Load analysis-ready dF/F directly from that session:
 
 ```python
 from utils_2p.roi_labels import load_reviewed_dff
 
 reviewed = load_reviewed_dff(
-    "/path/to/processed/session",
+    "/path/to/session",
     policy="good_only",
 )
+
 dff = reviewed["dff"]
 suite2p_roi_indices = reviewed["roi_indices"]
+stat = reviewed["stat"]
 ```
 
 The main returned values are:
@@ -259,30 +187,10 @@ The main returned values are:
 | `ops` | Loaded Suite2p operations dictionary |
 | `label_path` | Label file actually used |
 
-### JSON or file stored elsewhere
-
-Pass `label_path` when the export has not been moved into the session:
-
-```python
-reviewed = load_reviewed_dff(
-    "/path/to/processed/session",
-    label_path="/downloads/session_manual_roi_labels.json",
-    policy="good_only",
-)
-```
-
-The same argument accepts an external `iscell_qc.npy`:
-
-```python
-reviewed = load_reviewed_dff(
-    "/path/to/processed/session",
-    label_path="/shared/reviews/iscell_qc.npy",
-)
-```
-
-The loader never silently uses Suite2p's original `iscell.npy`. Use
-`policy="good_only"` for a finalized review or `policy="not_bad"` to retain
-unlabeled JSON rows while excluding bad ROIs.
+If the reviewer JSON or `iscell_qc.npy` is stored elsewhere, pass its path with
+`label_path`. The loader never silently substitutes Suite2p's original
+`iscell.npy`. Use `policy="good_only"` for a finalized review or
+`policy="not_bad"` to retain unlabeled JSON rows while excluding bad ROIs.
 
 ## Row-order rule
 
