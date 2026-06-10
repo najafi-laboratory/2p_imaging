@@ -23,6 +23,7 @@ from matplotlib.backends.backend_pdf import PdfPages
 
 from utils_2p.preprocessing_qc_pipeline import QC_PRESETS
 from utils_2p.roi_labels import (
+    dff_qc_metrics,
     load_iscell,
     map_qc_to_suite2p_rois,
     morphology_exclusion_reasons,
@@ -495,6 +496,14 @@ def _write_html(
     frame_rate: float,
 ) -> None:
     rois = _roi_table(stat, mask, dff.shape[0])
+    dff_metrics: list[dict[str, float | None]] = []
+    for metrics in dff_qc_metrics(dff):
+        dff_metrics.append(
+            {
+                key: (float(value) if np.isfinite(value) else None)
+                for key, value in metrics.items()
+            }
+        )
     red_available = mean_red is not None
     image_height, image_width = np.asarray(mean_green).shape[:2]
     payload = {
@@ -517,6 +526,7 @@ def _write_html(
         "presetExclusionReasons": preset_exclusion_reasons,
         "qcParameters": qc_parameters,
         "targetStructure": target_structure,
+        "dffMetrics": dff_metrics,
         "morphologyPresets": {
             name: {
                 "skewMin": values["range_skew"][0],
@@ -594,6 +604,11 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 #traceCanvas {{ height: 250px; cursor: grab; }}
 #traceCanvas.dragging {{ cursor: grabbing; }}
 .plots {{ display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }}
+.trace-sort {{ display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; margin: 6px 0 10px; padding: 8px 10px; background: #f8fafc; border: 1px solid #d0d5dd; border-radius: 6px; }}
+.trace-sort label {{ font-size: 12px; color: #475467; }}
+.trace-sort select {{ display: block; margin-top: 3px; min-width: 180px; width: auto; }}
+.metric-formula {{ flex: 1 1 320px; }}
+.metric-formula summary {{ cursor: pointer; font-weight: 700; color: #344054; }}
 .note {{ margin-top: 6px; color: #667085; font-size: 12px; }}
 .docs-link {{ display: inline-block; color: #175cd3; font-size: 13px; font-weight: 600; text-decoration: none; }}
 .docs-link:hover {{ text-decoration: underline; }}
@@ -673,7 +688,35 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <button id="reset">Reset zoom</button>
       </div>
     </div>
-    <div class="panel"><div class="title" id="stackTitle">dF/F, stacked ROIs</div><canvas id="stackCanvas"></canvas><div class="note">Wheel to zoom time. Use First/Last ROI to choose the displayed rows. Click a trace row to select an ROI.</div></div>
+    <div class="panel">
+      <div class="title" id="stackTitle">dF/F, stacked ROIs</div>
+      <div class="trace-sort">
+        <label>Sort visible ROIs by
+          <select id="sortMetric">
+            <option value="event_snr" selected>Event SNR</option>
+            <option value="temporal_snr">Temporal smoothness</option>
+            <option value="original">Original Suite2p index</option>
+          </select>
+        </label>
+        <label>Sort order
+          <select id="sortDirection">
+            <option value="desc" selected>Highest first</option>
+            <option value="asc">Lowest first</option>
+          </select>
+        </label>
+        <button id="applySort">Apply sort</button>
+        <details class="metric-formula">
+          <summary>Metric formula used for sorting</summary>
+          <div class="note">
+            Event SNR = (P95(dF/F) - P50(dF/F)) / noise SD, where noise SD is the MAD-based estimate from the smoothed-trace residual.
+            Temporal smoothness = 1 - var(diff(dF/F)) / (2 * var(dF/F)).
+          </div>
+        </details>
+      </div>
+      <canvas id="stackCanvas"></canvas>
+      <div class="note">Change the dropdowns and click Apply sort to reorder the stacked traces. The First/Last ROI range follows the applied row order, not the Suite2p index.</div>
+      <div class="note">Wheel to zoom time. Use First/Last ROI to choose the displayed rows in the applied sorted order. Stack labels and ROI readouts use the original Suite2p ROI index.</div>
+    </div>
   </div>
 </div>
 <script id="payload" type="application/json">{json.dumps(payload, separators=(",", ":"))}</script>
@@ -726,6 +769,8 @@ let customPresets = {{}};
 try {{ customPresets = JSON.parse(localStorage.getItem(customPresetKey) || "{{}}"); }} catch (_error) {{}}
 const defaultFilter = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.neuron;
 let selected = 0, x0 = 0, x1 = data.nFrames - 1, y0 = 0, y1 = 0, visibleRois = [];
+let appliedSortMetric = "event_snr";
+let appliedSortDirection = "desc";
 
 function fit(canvas) {{
   const r = window.devicePixelRatio || 1, box = canvas.getBoundingClientRect();
@@ -734,6 +779,31 @@ function fit(canvas) {{
 }}
 function trace(roi) {{ return dff.subarray(roi * data.nFrames, (roi + 1) * data.nFrames); }}
 function val(roi, frame) {{ return dff[roi * data.nFrames + frame]; }}
+function metricValue(roi, metric) {{
+  if (metric === "event_snr") return data.dffMetrics[roi].event_snr;
+  if (metric === "temporal_snr") return data.dffMetrics[roi].temporal_snr;
+  if (metric === "original" || metric === "suite2p_index") return data.suite2pIndices[roi];
+  return roi;
+}}
+function sortVisibleRois(rois) {{
+  const metric = appliedSortMetric;
+  const direction = appliedSortDirection;
+  return rois.slice().sort((a, b) => {{
+    const av = metricValue(a, metric);
+    const bv = metricValue(b, metric);
+    const aFinite = Number.isFinite(av);
+    const bFinite = Number.isFinite(bv);
+    if (aFinite !== bFinite) return aFinite ? -1 : 1;
+    if (!aFinite && !bFinite) return a - b;
+    if (av === bv) return a - b;
+    return direction === "asc" ? av - bv : bv - av;
+  }});
+}}
+function applySort() {{
+  appliedSortMetric = document.getElementById("sortMetric").value;
+  appliedSortDirection = document.getElementById("sortDirection").value;
+  updateVisibleRois();
+}}
 function syncTimeInputs() {{
   document.getElementById("timeStart").value = (x0 / data.frameRate).toFixed(3);
   document.getElementById("timeEnd").value = (x1 / data.frameRate).toFixed(3);
@@ -763,16 +833,19 @@ function setSelected(roi) {{
   selected = Math.max(0, Math.min(data.nRois - 1, Math.round(roi)));
   document.getElementById("roiInput").value = selected;
   const metrics = data.morphology[selected];
-  document.getElementById("readout").textContent = `Selected ROI ${{selected}} | ${{data.nRois}} total ROIs | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}}`;
-  document.getElementById("traceTitle").textContent = `Selected ROI ${{selected}} ${{data.dffLabel}}`;
+  const dffMetrics = data.dffMetrics[selected];
+  const suite2pRoi = data.suite2pIndices[selected];
+  document.getElementById("readout").textContent = `Selected Suite2p ROI ${{suite2pRoi}} (summary row ${{selected}}) | ${{data.nRois}} total ROIs | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(dffMetrics.event_snr)}} | temporal ${{fmt(dffMetrics.temporal_snr)}}`;
+  document.getElementById("traceTitle").textContent = `Selected Suite2p ROI ${{suite2pRoi}} ${{data.dffLabel}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
   draw();
 }}
 function updateVisibleRois() {{
   const showAll = document.getElementById("showAllRois").checked;
-  visibleRois = [];
-  for (let roi = 0; roi < data.nRois; roi++) if (showAll || labels[roi] !== 0) visibleRois.push(roi);
+  const rois = [];
+  for (let roi = 0; roi < data.nRois; roi++) if (showAll || labels[roi] !== 0) rois.push(roi);
+  visibleRois = sortVisibleRois(rois);
   if (!visibleRois.length) visibleRois = Array.from({{length: data.nRois}}, (_v, roi) => roi);
   document.getElementById("yStart").max = visibleRois.length - 1;
   document.getElementById("yEnd").max = visibleRois.length - 1;
@@ -782,7 +855,12 @@ function updateVisibleRois() {{
   document.getElementById("yEnd").value = y1;
   let good = 0, bad = 0, unlabeled = 0;
   for (const label of labels) {{ if (label === 1) good++; else if (label === 0) bad++; else unlabeled++; }}
-  document.getElementById("sessionMessage").textContent = `Target structure: ${{data.targetStructure}}. Embedded ${{data.nRois}} original Suite2p ROIs. ${{good}} good, ${{bad}} bad, ${{unlabeled}} unlabeled; ${{visibleRois.length}} ROIs are visible.`;
+  const sortMetric = appliedSortMetric;
+  const sortDirection = appliedSortDirection;
+  const sortLabel = sortMetric === "original"
+    ? `original Suite2p index (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`
+    : `${{sortMetric.replace("_", " ")}} (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`;
+  document.getElementById("sessionMessage").textContent = `Target structure: ${{data.targetStructure}}. Embedded ${{data.nRois}} original Suite2p ROIs. ${{good}} good, ${{bad}} bad, ${{unlabeled}} unlabeled; ${{visibleRois.length}} ROIs are visible. Sorting: ${{sortLabel}}.`;
   document.querySelectorAll(".roi").forEach(path => {{
     const roi = Number(path.dataset.roi);
     path.style.display = (showAll || labels[roi] !== 0) ? "" : "none";
@@ -800,7 +878,9 @@ function updateLabelControls() {{
   document.getElementById("labelCounts").textContent = `${{good}} good | ${{bad}} bad | ${{unlabeled}} unlabeled`;
 }}
 function fmt(value) {{
-  return Number.isFinite(Number(value)) ? Number(value).toFixed(3) : "nan";
+  if (value === null || value === undefined) return "nan";
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(3) : "nan";
 }}
 function filterValue(id) {{
   const value = Number(document.getElementById(id).value);
@@ -1024,7 +1104,7 @@ function drawStack() {{
     ctx.stroke();
     if (count <= 80) {{
       ctx.fillStyle = color; ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText(String(roi), l - 8, baseline);
+      ctx.fillText(String(data.suite2pIndices[roi]), l - 8, baseline);
     }}
   }}
   ctx.restore();
@@ -1078,6 +1158,7 @@ document.getElementById("clearLabels").addEventListener("click", clearAllLabels)
 document.getElementById("previousRoi").addEventListener("click", () => moveVisible(-1));
 document.getElementById("nextRoi").addEventListener("click", () => moveVisible(1));
 document.getElementById("showAllRois").addEventListener("change", updateVisibleRois);
+document.getElementById("applySort").addEventListener("click", applySort);
 document.getElementById("openExclusions").addEventListener("click", () => {{
   const filter = readFilter();
   const rows = data.morphology.map((metrics, roi) => {{
@@ -1085,10 +1166,11 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === -1 && reasons.length === 0) reasons.push("unlabeled");
     const text = reasons.join("; ") || "included";
-    return `<tr><td>${{roi}}</td><td>${{data.suite2pIndices[roi]}}</td><td>${{text}}</td></tr>`;
+    const dffMetrics = data.dffMetrics[roi];
+    return `<tr><td>${{roi}}</td><td>${{data.suite2pIndices[roi]}}</td><td>${{fmt(dffMetrics.event_snr)}}</td><td>${{fmt(dffMetrics.temporal_snr)}}</td><td>${{text}}</td></tr>`;
   }}).join("");
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI exclusions</title><style>body{{font-family:Arial,sans-serif;margin:20px}}td,th{{border:1px solid #ddd;padding:4px 7px}}table{{border-collapse:collapse}}</style><h1>${{data.session}} ROI exclusion reasons</h1><p>Target structure: ${{data.targetStructure}}</p><table><thead><tr><th>ROI</th><th>Suite2p row</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI exclusions</title><style>body{{font-family:Arial,sans-serif;margin:20px}}td,th{{border:1px solid #ddd;padding:4px 7px}}table{{border-collapse:collapse}}</style><h1>${{data.session}} ROI exclusion reasons</h1><p>Target structure: ${{data.targetStructure}}</p><table><thead><tr><th>ROI</th><th>Suite2p row</th><th>Event SNR</th><th>Temporal SNR</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table>`);
   win.document.close();
 }});
 function npyBlob(values, rows) {{
@@ -1190,7 +1272,7 @@ window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=d
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
 window.addEventListener("resize", draw);
-makeOverlays(); syncTimeInputs(); resetFilter(); updateVisibleRois(); setSelected(visibleRois[0]);
+makeOverlays(); syncTimeInputs(); resetFilter(); applySort(); setSelected(visibleRois[0]);
 </script>
 </body>
 </html>
