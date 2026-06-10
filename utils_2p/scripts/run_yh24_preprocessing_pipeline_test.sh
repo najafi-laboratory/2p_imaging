@@ -5,7 +5,7 @@ set -euo pipefail
 # Default mode generates the Slurm scripts without submitting them.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 RAW_SESSION="${RAW_SESSION:-/storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/YH24LG_Processed/YH24LG_CRBL_lobulev_20250609_EBC-442}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/storage/scratch1/3/${USER}/2p_pipeline_tests/yh24_preprocessing}"
@@ -18,7 +18,7 @@ MODE="generate"
 usage() {
     cat <<'USAGE'
 Usage:
-  scripts/run_yh24_preprocessing_pipeline_test.sh [--generate|--submit]
+  utils_2p/scripts/run_yh24_preprocessing_pipeline_test.sh [--generate|--submit]
 
 Environment overrides:
   RAW_SESSION       Raw YH24 session directory to process.

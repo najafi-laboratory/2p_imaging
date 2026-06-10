@@ -3,7 +3,7 @@
 
 Edit the variables below, then run this file from the repository root:
 
-    python scripts/run_yh24_preprocessing_pipeline_test.py
+    python utils_2p/scripts/run_yh24_preprocessing_pipeline_test.py
 
 By default this only generates the Slurm scripts. Set MODE = "submit" or pass
 --submit to actually submit the linked job chain.
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
