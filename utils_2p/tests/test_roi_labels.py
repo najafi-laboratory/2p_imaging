@@ -1,3 +1,5 @@
+"""Tests for ROI reviewer label loading and export."""
+
 import json
 import tempfile
 import unittest

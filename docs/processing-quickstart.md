@@ -64,13 +64,13 @@ pipeline command-line interface with prefilled arguments. By default it
 generates the Slurm scripts without submitting:
 
 ```bash
-python scripts/run_yh24_preprocessing_pipeline_test.py
+python utils_2p/scripts/run_yh24_preprocessing_pipeline_test.py
 ```
 
 Submit the same test chain with:
 
 ```bash
-python scripts/run_yh24_preprocessing_pipeline_test.py --submit
+python utils_2p/scripts/run_yh24_preprocessing_pipeline_test.py --submit
 ```
 
 Neuronal sessions use the defaults. Channel count is detected from TIFF names;
