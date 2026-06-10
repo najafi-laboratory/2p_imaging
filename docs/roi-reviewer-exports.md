@@ -1,5 +1,74 @@
 # Using ROI Reviewer Output
 
+## Generating the summaries
+
+The summary step creates both:
+
+```text
+<session>_preprocessing_summary.pdf
+<session>_interactive_fov_roi_dff.html
+```
+
+Run the commands below from the `2p_imaging` repository root with the
+preprocessing QC environment available.
+
+### Already processed session: local
+
+For a session that already contains its Suite2p and morphology QC results:
+
+```bash
+python -m utils_2p.preprocessing_summary /path/to/processed/session
+```
+
+The PDF and interactive HTML are written into the processed session directory.
+
+### Already processed session: PACE
+
+Submit the same summary generation as a small CPU job instead of running it on
+a PACE login node:
+
+```bash
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
+
+sbatch \
+  --account=gts-fnajafi3 \
+  --qos=embers \
+  --cpus-per-task=4 \
+  --mem=24G \
+  --time=02:00:00 \
+  --job-name=preprocessing_summary \
+  --wrap="$TWO_P_PYTHON -m utils_2p.preprocessing_summary /path/to/processed/session"
+```
+
+### As part of the preprocessing pipeline
+
+The full PACE preprocessing pipeline includes the `summary` stage by default:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure neuron
+```
+
+Change `--target-structure` to the appropriate preset, such as `dendrite` or
+`cerebellum_lax`.
+
+To regenerate only the summaries for an existing pipeline output:
+
+```bash
+python -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/existing_processed_outputs \
+  --target-structure neuron \
+  --stages summary
+```
+
+The processed session must be located at
+`/path/to/existing_processed_outputs/<raw-session-directory-name>/`.
+
+## Reviewer output
+
 The interactive preprocessing summary lets a reviewer mark each Suite2p ROI as
 **Good**, **Bad**, or **Unlabeled**. It can export the review in two formats:
 
