@@ -229,7 +229,7 @@ values either with CLI options or environment variables:
 Example:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
 export TWO_P_SLURM_QOS=embers
 export TWO_P_SLURM_MAIL_USER="$USER@gatech.edu"
@@ -252,19 +252,24 @@ If CPU and GPU stages should use different QOS values, use `--qos-cpu` and
 `--qos-gpu` instead of `--qos`.
 
 If neither `--python-bin` nor `TWO_P_PYTHON` is specified, the generator will
-only use the currently running Python when it can import `suite2p`; it fails
-early instead of creating Slurm jobs with an unusable system Python.
+use the version selected by `--suite2p-version` and falls back to the versioned
+shared environment alias for that Suite2p release. The default is `1.x`.
 
 ## Shared Conda Environment
 
 A shared environment can be stored on project storage and referenced through
 `TWO_P_PYTHON`. Existing Suite2p environments in user project directories are
 about 8 to 9 GB, so capacity should be checked before creating another copy.
-The repository includes [environment-preprocessing-qc.yml](environment-preprocessing-qc.yml),
-which pins the currently validated core package versions. The environment
+The repository includes versioned YAMLs in `utils_2p/`:
+
+- `utils_2p/environment-preprocessing-qc-suite2p-0x.yml`
+- `utils_2p/environment-preprocessing-qc-suite2p-1x.yml`
+
+The default shared alias is `.../2p_preprocessing_qc_suite2p_1x`, and the
+legacy alias is `.../2p_preprocessing_qc_suite2p_0x`. The environment
 currently used for pipeline tests has a CUDA 12.8 PyTorch build
 (`torch 2.9.1+cu128`); validate GPU availability on a compute node after
-creating a shared environment.
+creating or updating a shared environment.
 
 Recommended lab-managed setup:
 
@@ -275,15 +280,15 @@ mkdir -p /storage/project/r-fnajafi3-0/grubin6/shared_envs
 
 PYTHONNOUSERSITE=1 \
 conda env create \
-  --prefix /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1 \
-  --file environment-preprocessing-qc.yml
+  --prefix /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x \
+  --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
 
 chmod -R g+rX,o-rwx \
-  /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1
+  /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x
 
 PYTHONNOUSERSITE=1 NUMBA_CACHE_DIR="$TMPDIR/2p_numba_cache" \
 MPLCONFIGDIR="$TMPDIR/2p_matplotlib_cache" \
-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python -c \
+/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python -c \
   "import suite2p, cellpose, torch; print(torch.__version__, torch.version.cuda)"
 ```
 
@@ -305,7 +310,7 @@ the submitting user's home directory.
 The current shared environment was installed at:
 
 ```text
-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1
+/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x
 ```
 
 It is group-readable/executable by `pace-fnajafi3` and occupies approximately
@@ -313,7 +318,7 @@ It is group-readable/executable by `pace-fnajafi3` and occupies approximately
 the creator's personal user site. The missing in-environment dependencies were
 installed with `PYTHONNOUSERSITE=1`, and the creation command above includes
 that setting so a future versioned install is self-contained from the start.
-Validation with personal user packages disabled imported `suite2p 0.14.6`,
+Validation with personal user packages disabled imported `suite2p 1.0.0.1`,
 `cellpose 4.0.7`, `torch 2.9.1+cu128`, and `numba 0.62.1`; `pip check`
 reported no broken requirements. The login node reports no available CUDA
 device, so execution against a GPU remains a compute-job validation step.
@@ -321,7 +326,7 @@ device, so execution against a GPU remains a compute-job validation step.
 Use it in the job generator with:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 ```
 
 ### Numba Cache

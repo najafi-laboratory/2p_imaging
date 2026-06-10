@@ -184,7 +184,7 @@ Submit summary generation as a small CPU job instead of running it on a PACE
 login node:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 
 sbatch \
   --account=gts-fnajafi3 \
