@@ -17,8 +17,38 @@ git pull upstream main
 Use the shared Suite2p-capable environment:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
+```
+
+The versioned aliases make it easy to switch between Suite2p 0.x and 1.x.
+The pipeline defaults to `--suite2p-version 1.x` when `TWO_P_PYTHON` is not
+set. Use `--suite2p-version 0.x` when you want the legacy Suite2p 0.14-based
+environment instead.
+
+## Local Install
+
+To install the pipeline locally, create one of the versioned environments from
+the repository-provided YAML files:
+
+```bash
+conda env create \
+  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
+  --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
+```
+
+For the legacy 0.x environment, use:
+
+```bash
+conda env create \
+  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_0x \
+  --file utils_2p/environment-preprocessing-qc-suite2p-0x.yml
+```
+
+Then point the pipeline at the environment you want:
+
+```bash
+export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
 ```
 
 Jobs use the `embers` QOS by default. `embers` is free but preemptible after

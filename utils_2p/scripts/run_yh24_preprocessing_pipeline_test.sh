@@ -9,7 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
 RAW_SESSION="${RAW_SESSION:-/storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/YH24LG_Processed/YH24LG_CRBL_lobulev_20250609_EBC-442}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/storage/scratch1/3/${USER}/2p_pipeline_tests/yh24_preprocessing}"
-PYTHON_BIN="${TWO_P_PYTHON:-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python}"
+PYTHON_BIN="${TWO_P_PYTHON:-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python}"
 ACCOUNT="${TWO_P_SLURM_ACCOUNT:-gts-fnajafi3}"
 QOS="${TWO_P_SLURM_QOS:-embers}"
 RUN_NAME="${RUN_NAME:-yh24_lobulev_20250609_pipeline_test}"

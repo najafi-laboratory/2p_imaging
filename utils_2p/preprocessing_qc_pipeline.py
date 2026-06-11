@@ -22,7 +22,6 @@ import re
 import shlex
 import shutil
 import subprocess
-import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -63,11 +62,24 @@ SUITE2P_CONFIG_TARGETS = {
     "cerebellum_lax": "dendrite",
 }
 
+SUITE2P_SHARED_ENV_ROOT = Path("/storage/project/r-fnajafi3-0/grubin6/shared_envs")
+SUITE2P_VERSIONED_PYTHONS = {
+    "0.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_0x" / "bin" / "python",
+    "1.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
+}
+
 STAGE_ORDER = ("prep", "suite2p", "qc", "label", "dff", "summary")
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _suite2p_python_path(version: str) -> Path:
+    try:
+        return SUITE2P_VERSIONED_PYTHONS[version]
+    except KeyError as error:
+        raise ValueError(f"suite2p_version must be one of {sorted(SUITE2P_VERSIONED_PYTHONS)}") from error
 
 
 def _env_path(name: str, default: Path | str) -> Path:
@@ -191,6 +203,7 @@ class PipelineConfig:
     processing_root: Path | str = ""
     postprocess_root: Path | str = ""
     python_bin: Path | str = ""
+    suite2p_version: str = "1.x"
     account: str = ""
     username: str = ""
     mail_user: str | None = None
@@ -221,13 +234,8 @@ class PipelineConfig:
         configured_python = self.python_bin or os.environ.get("TWO_P_PYTHON")
         if configured_python:
             python_bin = Path(configured_python).expanduser()
-        elif importlib.util.find_spec("suite2p") is not None:
-            python_bin = Path(sys.executable).resolve()
         else:
-            raise ValueError(
-                "No Suite2p job environment configured. Activate a Suite2p environment, "
-                "set TWO_P_PYTHON, or supply PipelineConfig(python_bin=...) / --python-bin."
-            )
+            python_bin = _suite2p_python_path(self.suite2p_version).expanduser()
         if not python_bin.exists():
             raise FileNotFoundError(f"Configured Python executable does not exist: {python_bin}")
         account = self.account or os.environ.get("TWO_P_SLURM_ACCOUNT", "gts-fnajafi3")
@@ -271,6 +279,7 @@ class PipelineConfig:
             processing_root=processing,
             postprocess_root=postprocess,
             python_bin=python_bin,
+            suite2p_version=self.suite2p_version,
             account=account,
             username=username,
             mail_user=mail_user,
@@ -1072,6 +1081,7 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         processing_root=args.processing_root or "",
         postprocess_root=args.postprocess_root or "",
         python_bin=args.python_bin or "",
+        suite2p_version=args.suite2p_version,
         account=args.account or "",
         username=args.username or "",
         mail_user=args.mail_user,
@@ -1129,6 +1139,12 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--repo-root", default=None)
     parser.add_argument("--processing-root", default=None)
     parser.add_argument("--postprocess-root", default=None)
+    parser.add_argument(
+        "--suite2p-version",
+        choices=sorted(SUITE2P_VERSIONED_PYTHONS),
+        default="1.x",
+        help="Default Suite2p environment to use when --python-bin is not supplied.",
+    )
     parser.add_argument("--python-bin", default=None, help="Python executable in a Suite2p-capable environment.")
     parser.add_argument("--account", default=None, help="Slurm account; defaults to TWO_P_SLURM_ACCOUNT or gts-fnajafi3.")
     parser.add_argument("--username", default=None)

@@ -43,7 +43,7 @@ RAW_SESSION = Path(
 OUTPUT_ROOT = Path(f"/storage/scratch1/3/{getpass.getuser()}/2p_pipeline_tests/yh24_preprocessing")
 
 PYTHON_BIN = Path(
-    "/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_v1/bin/python"
+    "/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python"
 )
 
 SLURM_ACCOUNT = "gts-fnajafi3"
