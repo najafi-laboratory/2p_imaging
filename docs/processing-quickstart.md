@@ -10,10 +10,7 @@ The full pipeline is:
 prep -> suite2p -> qc -> label -> dff -> summary
 ```
 
-The launcher generates linked Slurm jobs. Use it on PACE or another Slurm
-cluster to execute the full pipeline. A local workstation can install the same
-environment and generate or inspect the job files, but direct non-Slurm
-execution of the full chain is not currently provided by this command.
+The launcher generates linked Slurm jobs and is designed to run on PACE.
 
 ## Get the repository
 
@@ -33,17 +30,22 @@ For an existing laboratory checkout configured with an `upstream` remote, use
 
 The
 [`preprocessing_pipeline_quickstart.ipynb`](https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_pipeline_quickstart.ipynb)
-notebook provides editable `PACE` versus `LOCAL` and `SINGLE` versus `BATCH`
-variables. It builds the corresponding pipeline command, creates a sessions
-file for batch mode, and keeps command execution disabled until
-`RUN_COMMAND = True`.
+notebook provides editable `SINGLE` versus `BATCH` variables. It builds the
+corresponding PACE pipeline command, creates a sessions file for batch mode,
+and keeps command execution disabled until `RUN_COMMAND = True`.
 
-## Install the Python environment
+## Install the Python environment on PACE
 
 Suite2p 1.x is the default and recommended environment. The repository also
 provides a legacy Suite2p 0.x environment for reproducing older processing.
 
-### Install from a repository checkout
+Make Conda available:
+
+```bash
+module load anaconda3/2023.03
+```
+
+### Install from the repository checkout
 
 ```bash
 conda env create \
@@ -85,19 +87,13 @@ conda env create \
   --file environment-preprocessing-qc-suite2p-0x.yml
 ```
 
-On PACE, make Conda available before creating a personal environment:
-
-```bash
-module load anaconda3/2023.03
-```
-
 ## Choose the correct Python
 
 The Python executable used to launch the command must contain the pipeline
 dependencies. The generated jobs must also be given that executable through
 `--python-bin` or `TWO_P_PYTHON`.
 
-PACE users can use the shared Suite2p 1.x environment:
+Use the shared Suite2p 1.x environment:
 
 ```bash
 export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
@@ -106,7 +102,7 @@ export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
 "$TWO_P_PYTHON" -c "import suite2p; print(suite2p.__version__)"
 ```
 
-For a locally installed environment:
+For a personal environment installed on PACE:
 
 ```bash
 export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
@@ -255,32 +251,6 @@ Suite2p requests a GPU by default. Add `--no-suite2p-gpu` to run Suite2p on
 CPU-only resources. The anatomical `label` stage still requires a GPU when it
 is enabled.
 
-## Prepare a run locally
-
-A local workstation can use its installed environment to validate the inputs
-and generate the same manifest and `.sbatch` files:
-
-```bash
-cd /path/to/2p_imaging
-
-export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
-
-"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline generate \
-  --session /local/path/to/raw/session \
-  --output-root /local/path/to/processed_outputs \
-  --target-structure neuron \
-  --python-bin "$TWO_P_PYTHON" \
-  --account gts-fnajafi3 \
-  --qos embers \
-  --run-name local_preview
-```
-
-This does not execute Suite2p or the downstream stages. It writes the resolved
-manifest, stage scripts, and `submit_jobs.sh`. To execute them, move to a Slurm
-system where the repository, Python executable, session, and output paths are
-all valid. On a local machine that already has Slurm configured, `submit` can
-be used instead of `generate`.
-
 ## Launch multiple sessions
 
 ### Repeat `--session`
@@ -375,9 +345,9 @@ The command prints the generated job directory and the corresponding
 bash /path/to/processed_outputs/.preprocessing_qc_jobs/neuron_manifest_${USER}/submit_jobs.sh
 ```
 
-This is also the supported local workflow: install the environment, run
-`generate`, and inspect the resolved manifest and jobs. Executing those jobs
-still requires Slurm and filesystem paths accessible from the compute nodes.
+Run both `generate` and the resulting submission script on PACE so all
+repository, Python, session, and output paths are accessible to the compute
+nodes.
 
 ## Important optional arguments
 
