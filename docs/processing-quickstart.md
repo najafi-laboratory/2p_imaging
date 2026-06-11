@@ -1,43 +1,59 @@
 # Processing Quickstart
 
-This page covers the Slurm-based preprocessing/QC utility in `utils_2p`.
-It is intended for launching one or more raw imaging sessions through the
-standard staged pipeline without editing hard-coded session paths.
+This guide covers the complete staged preprocessing and QC pipeline in
+`utils_2p.preprocessing_qc_pipeline`, including environment installation,
+single-session submission, and multi-session submission.
 
-## Requirements
+The full pipeline is:
 
-Run from a checkout of `2p_imaging/main` that includes
-`utils_2p.preprocessing_qc_pipeline`:
+```text
+prep -> suite2p -> qc -> label -> dff -> summary
+```
+
+The launcher generates linked Slurm jobs. Use it on PACE or another Slurm
+cluster to execute the full pipeline. A local workstation can install the same
+environment and generate or inspect the job files, but direct non-Slurm
+execution of the full chain is not currently provided by this command.
+
+## Get the repository
+
+Run the launcher from the root of a current `2p_imaging` checkout:
 
 ```bash
+git clone https://github.com/najafi-laboratory/2p_imaging.git
+cd 2p_imaging
 git checkout main
-git pull upstream main
+git pull origin main
 ```
 
-Use the shared Suite2p-capable environment:
+For an existing laboratory checkout configured with an `upstream` remote, use
+`git pull upstream main`.
 
-```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
-export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
-```
+## Companion notebook
 
-The versioned aliases make it easy to switch between Suite2p 0.x and 1.x.
-The pipeline defaults to `--suite2p-version 1.x` when `TWO_P_PYTHON` is not
-set. Use `--suite2p-version 0.x` when you want the legacy Suite2p 0.14-based
-environment instead.
+The
+[`preprocessing_pipeline_quickstart.ipynb`](https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_pipeline_quickstart.ipynb)
+notebook provides editable `PACE` versus `LOCAL` and `SINGLE` versus `BATCH`
+variables. It builds the corresponding pipeline command, creates a sessions
+file for batch mode, and keeps command execution disabled until
+`RUN_COMMAND = True`.
 
-## Local Install
+## Install the Python environment
 
-To install the pipeline locally, create one of the versioned environments from
-the repository-provided YAML files:
+Suite2p 1.x is the default and recommended environment. The repository also
+provides a legacy Suite2p 0.x environment for reproducing older processing.
+
+### Install from a repository checkout
 
 ```bash
 conda env create \
   --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
   --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
+
+conda activate ~/conda/envs/2p_preprocessing_qc_suite2p_1x
 ```
 
-For the legacy 0.x environment, use:
+For legacy Suite2p 0.x:
 
 ```bash
 conda env create \
@@ -45,170 +61,380 @@ conda env create \
   --file utils_2p/environment-preprocessing-qc-suite2p-0x.yml
 ```
 
-Then point the pipeline at the environment you want:
+### Download a YAML without cloning the repository
+
+Download the Suite2p 1.x YAML and rebuild the environment:
+
+```bash
+curl -L -o environment-preprocessing-qc-suite2p-1x.yml \
+  https://raw.githubusercontent.com/najafi-laboratory/2p_imaging/main/utils_2p/environment-preprocessing-qc-suite2p-1x.yml
+
+conda env create \
+  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
+  --file environment-preprocessing-qc-suite2p-1x.yml
+```
+
+For Suite2p 0.x:
+
+```bash
+curl -L -o environment-preprocessing-qc-suite2p-0x.yml \
+  https://raw.githubusercontent.com/najafi-laboratory/2p_imaging/main/utils_2p/environment-preprocessing-qc-suite2p-0x.yml
+
+conda env create \
+  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_0x \
+  --file environment-preprocessing-qc-suite2p-0x.yml
+```
+
+On PACE, make Conda available before creating a personal environment:
+
+```bash
+module load anaconda3/2023.03
+```
+
+## Choose the correct Python
+
+The Python executable used to launch the command must contain the pipeline
+dependencies. The generated jobs must also be given that executable through
+`--python-bin` or `TWO_P_PYTHON`.
+
+PACE users can use the shared Suite2p 1.x environment:
+
+```bash
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
+
+"$TWO_P_PYTHON" -c "import suite2p; print(suite2p.__version__)"
+```
+
+For a locally installed environment:
 
 ```bash
 export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
+
+"$TWO_P_PYTHON" -c "import suite2p; print(suite2p.__version__)"
 ```
 
-Jobs use the `embers` QOS by default. `embers` is free but preemptible after
-the QOS runtime limit. Use `--qos inferno` for paid, non-preemptible jobs when
-needed.
+Use the 0.x environment path and `--suite2p-version 0.x` only when an older
+Suite2p result must be reproduced. An explicit `--python-bin` takes precedence
+over `--suite2p-version`.
 
-Suite2p writes its large temporary binary movie to node-local `$TMPDIR` by
-default and deletes it when Suite2p finishes. This avoids writing tens of GB of
-intermediate `.bin` data back to Cedar or project storage. Override with
-`--fast-disk /path/to/workdir` only when node-local tmp does not have enough
-free space.
+## PACE storage and job-submission guidance
 
-For Suite2p 1.x runs, the pipeline defaults to a larger TIFF-to-binary batch
-and smaller GPU processing batches: binary conversion uses `5000` frames per
-batch, while registration and extraction use `500` frames per batch. Override
-with `--suite2p-binary-batch-size`, `--suite2p-registration-batch-size`, or
-`--suite2p-extraction-batch-size` when benchmarking a different node type.
-
-## Pipeline Stages
-
-The full processing chain is:
+Run the processing jobs on PACE compute nodes, not on a login node. For
+multi-session processing, use PACE scratch for staged input data, the
+`--output-root`, and Suite2p temporary files whenever practical:
 
 ```text
-prep -> suite2p -> qc -> label -> dff -> summary
+/storage/scratch1/3/<username>/
+├── staged_raw_sessions/
+└── 2p_processing_results/
 ```
+
+Cedar and project storage are appropriate for durable source data and final
+results, but they are shared network filesystems. Suite2p repeatedly reads
+large TIFF stacks and writes a large binary movie. Many simultaneous sessions
+performing those operations against Cedar can saturate shared read bandwidth,
+trigger metadata or I/O throttling, and make every job slower. Scratch is
+designed for high-throughput temporary job I/O and is usually a better working
+location.
+
+A practical workflow is:
+
+1. Copy or stage the raw sessions needed for the current batch from Cedar to
+   scratch.
+2. Run the pipeline with the staged scratch paths and a scratch
+   `--output-root`.
+3. Validate the final outputs.
+4. Copy the retained processed results back to durable project or Cedar
+   storage.
+
+For example:
+
+```bash
+mkdir -p "/storage/scratch1/3/$USER/staged_raw_sessions"
+mkdir -p "/storage/scratch1/3/$USER/2p_processing_results"
+
+rsync -a --info=progress2 \
+  /storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/path/to/session/ \
+  "/storage/scratch1/3/$USER/staged_raw_sessions/session/"
+```
+
+After validating the processed session, copy it to its durable destination:
+
+```bash
+rsync -a --info=progress2 \
+  "/storage/scratch1/3/$USER/2p_processing_results/session/" \
+  /storage/project/path/to/processed_results/session/
+```
+
+Scratch is temporary, may be purged according to current PACE policy, and is
+not a backup. Do not remove the durable source or only copy of a result until
+the transfer back has been verified.
+
+Each session creates up to six Slurm jobs. Submitting 50 sessions at once can
+therefore create roughly 300 queued jobs, while several Suite2p stages may
+begin reading TIFFs at the same time. Large submissions increase scheduler
+load, consume pending-job allowances, and can cause an I/O burst even when the
+jobs are linked by dependencies.
+
+Submit a small batch first, confirm its memory, runtime, and I/O behavior, then
+process additional sessions in controlled groups. Five to ten sessions per
+batch is a reasonable conservative starting point, but current PACE limits and
+the size of the recordings should determine the final batch size. Monitor the
+batch before submitting another:
+
+```bash
+squeue -u "$USER"
+```
+
+For unusually large recordings, use fewer concurrent sessions. The built-in
+`--sessions-file` submits one independent chain per listed session; it does not
+throttle the number of active session chains.
+
+## Launch one session on PACE
+
+The following example submits the entire pipeline for one two-channel neuronal
+session:
+
+```bash
+cd /path/to/2p_imaging
+
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure neuron \
+  --suite2p-version 1.x \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers \
+  --run-name example_neuron_session
+```
+
+Argument meanings:
+
+| Argument | Meaning |
+|---|---|
+| `submit` | Generate the Slurm files and immediately submit all requested stages. |
+| `--session` | Raw session directory containing the imaging TIFF files and associated session inputs. |
+| `--output-root` | Parent directory where a processed directory named after the raw session will be created. |
+| `--target-structure` | Morphology QC preset: `neuron`, `dendrite`, or `cerebellum_lax`. |
+| `--suite2p-version` | Select the default versioned environment when `--python-bin` is not supplied. |
+| `--python-bin` | Exact Python executable used inside every generated job. |
+| `--account` | Slurm allocation charged for the jobs. |
+| `--qos` | Slurm QOS for all stages. `embers` is preemptible; use `inferno` when paid, non-preemptible execution is required. |
+| `--run-name` | Readable name for the generated job directory and provenance files. |
+
+Channel count and functional channel are normally inferred from TIFF names.
+For a functional-only, single-channel dendrite session, specify the overrides
+and skip anatomical labeling:
+
+```bash
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/single_channel_session \
+  --output-root /path/to/processed_outputs \
+  --target-structure dendrite \
+  --nchannels 1 \
+  --functional-chan 1 \
+  --no-label \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers
+```
+
+Additional argument meanings:
+
+| Argument | Meaning |
+|---|---|
+| `--nchannels 1` | Override automatic channel detection and treat the recording as single-channel. |
+| `--functional-chan 1` | Use channel 1 as the calcium-imaging channel. |
+| `--no-label` | Skip anatomical Cellpose labeling when no anatomical channel is available or labeling is not wanted. |
+
+Suite2p requests a GPU by default. Add `--no-suite2p-gpu` to run Suite2p on
+CPU-only resources. The anatomical `label` stage still requires a GPU when it
+is enabled.
+
+## Prepare a run locally
+
+A local workstation can use its installed environment to validate the inputs
+and generate the same manifest and `.sbatch` files:
+
+```bash
+cd /path/to/2p_imaging
+
+export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
+
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline generate \
+  --session /local/path/to/raw/session \
+  --output-root /local/path/to/processed_outputs \
+  --target-structure neuron \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers \
+  --run-name local_preview
+```
+
+This does not execute Suite2p or the downstream stages. It writes the resolved
+manifest, stage scripts, and `submit_jobs.sh`. To execute them, move to a Slurm
+system where the repository, Python executable, session, and output paths are
+all valid. On a local machine that already has Slurm configured, `submit` can
+be used instead of `generate`.
+
+## Launch multiple sessions
+
+### Repeat `--session`
+
+For a small batch with the same processing settings, repeat `--session`:
+
+```bash
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session_1 \
+  --session /path/to/raw/session_2 \
+  --session /path/to/raw/session_3 \
+  --output-root /path/to/processed_outputs \
+  --target-structure neuron \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers \
+  --run-name neuron_batch
+```
+
+Each session receives its own linked stage chain. A failed session does not
+block the other sessions.
+
+### Use a sessions file
+
+For a larger batch, create a plain-text file with one raw session path per
+line. Blank lines and lines beginning with `#` are ignored:
+
+```text
+# neuron_sessions.txt
+/path/to/raw/session_1
+/path/to/raw/session_2
+/path/to/raw/session_3
+```
+
+Submit all paths in the file:
+
+```bash
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --sessions-file neuron_sessions.txt \
+  --output-root /path/to/processed_outputs \
+  --target-structure neuron \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers \
+  --run-name neuron_manifest
+```
+
+All entries in one `--sessions-file` invocation share the command-line
+settings. Use separate files or separate invocations when sessions require
+different target structures, channel overrides, or stage selections.
+Keep each file to a controlled batch size rather than putting an entire large
+dataset into one submission.
+
+The launcher writes its resolved JSON manifest, stage `.sbatch` files, logs,
+and submission script below:
+
+```text
+<output-root>/.preprocessing_qc_jobs/<run-name>_<username>/
+├── manifest.json
+├── prep.sbatch
+├── suite2p.sbatch
+├── qc.sbatch
+├── label.sbatch
+├── dff.sbatch
+├── summary.sbatch
+├── submit_jobs.sh
+└── logs/
+```
+
+Only stages used by at least one session are written.
+
+## Generate jobs without submitting
+
+Use `generate` to validate inputs and inspect the manifest and `.sbatch` files
+before submitting:
+
+```bash
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline generate \
+  --sessions-file neuron_sessions.txt \
+  --output-root /path/to/processed_outputs \
+  --target-structure neuron \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers \
+  --run-name neuron_manifest
+```
+
+The command prints the generated job directory and the corresponding
+`submit_jobs.sh` path. On PACE, submit the generated chains with:
+
+```bash
+bash /path/to/processed_outputs/.preprocessing_qc_jobs/neuron_manifest_${USER}/submit_jobs.sh
+```
+
+This is also the supported local workflow: install the environment, run
+`generate`, and inspect the resolved manifest and jobs. Executing those jobs
+still requires Slurm and filesystem paths accessible from the compute nodes.
+
+## Important optional arguments
+
+| Argument | Meaning |
+|---|---|
+| `--stages prep,suite2p,qc,label,dff,summary` | Run only the listed stages; they are reordered into pipeline dependency order automatically. |
+| `--denoise 0` or `--denoise 1` | Override the denoising setting from the selected Suite2p configuration. |
+| `--spatial-scale N` | Override Suite2p spatial scale instead of using the target configuration value. |
+| `--qos-cpu` | QOS for CPU stages, overriding `--qos`. |
+| `--qos-gpu` | QOS for GPU stages, overriding `--qos`. |
+| `--mail-user` | Send Slurm failure notifications to this email address. |
+| `--fast-disk` | Directory for Suite2p's temporary binary movie. The default uses node-local `$TMPDIR`. |
+| `--suite2p-gpu` | Explicitly request a GPU for Suite2p; this is the default. |
+| `--no-suite2p-gpu` | Run Suite2p without requesting a GPU. |
+| `--suite2p-binary-batch-size` | Tune the Suite2p 1.x TIFF-to-binary batch size; default `5000`. |
+| `--suite2p-registration-batch-size` | Tune the Suite2p 1.x registration batch size; default `500`. |
+| `--suite2p-extraction-batch-size` | Tune the Suite2p 1.x extraction/deconvolution batch size; default `500`. |
+
+Suite2p's temporary binary movie is deleted when processing completes. Keeping
+it in node-local `$TMPDIR` avoids writing a large intermediate file to project
+or Cedar storage.
+
+## Rerun selected stages
+
+When upstream outputs already exist, use `--stages`. For example, regenerate
+dF/F and the PDF/interactive summaries:
+
+```bash
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/existing_processed_outputs \
+  --target-structure neuron \
+  --stages dff,summary \
+  --python-bin "$TWO_P_PYTHON" \
+  --account gts-fnajafi3 \
+  --qos embers
+```
+
+The processed session must already be located at:
+
+```text
+/path/to/existing_processed_outputs/<raw-session-directory-name>/
+```
+
+Downstream-only runs assume all required upstream files are already present.
+
+## Pipeline outputs
 
 | Stage | Resource | Main outputs |
 |---|---|---|
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
-| `suite2p` | high-memory CPU; optional GPU request | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
+| `suite2p` | High-memory CPU and optional GPU | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
 | `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
 | `label` | GPU | `masks.h5` and anatomical Cellpose outputs; skipped for functional-only recordings |
 | `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
-| `summary` | CPU | `{session}_preprocessing_summary.pdf`, `{session}_interactive_fov_roi_dff.html` |
+| `summary` | CPU | `<session>_preprocessing_summary.pdf`, `<session>_interactive_fov_roi_dff.html` |
 
-Each session gets its own linked Slurm chain. A failed session does not block
-other submitted sessions.
-
-## Submit Common Runs
-
-The repository includes a reproducible YH24 pipeline test script that calls the
-pipeline command-line interface with prefilled arguments. By default it
-generates the Slurm scripts without submitting:
-
-```bash
-python utils_2p/scripts/run_yh24_preprocessing_pipeline_test.py
-```
-
-Submit the same test chain with:
-
-```bash
-python utils_2p/scripts/run_yh24_preprocessing_pipeline_test.py --submit
-```
-
-Neuronal sessions use the defaults. Channel count is detected from TIFF names;
-two-channel recordings use Ch2 as functional and Ch1 as anatomical, while
-single-channel recordings use the only detected channel as functional:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session_1 \
-  --session /path/to/raw/session_2 \
-  --output-root /path/to/processed_outputs
-```
-
-Dendritic sessions should explicitly select the dendrite target structure:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session \
-  --output-root /path/to/processed_outputs \
-  --target-structure dendrite
-```
-
-Suite2p requests a GPU by default. TIFF conversion is still CPU/storage-bound,
-but Suite2p 1.x can use CUDA for registration and extraction after the
-temporary binary is written. Add `--no-suite2p-gpu` for CPU-only Suite2p runs.
-
-Functional-only, single-channel sessions do not need channel arguments unless
-the TIFF naming is unusual:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session \
-  --output-root /path/to/processed_outputs \
-  --target-structure dendrite
-```
-
-Use `generate` instead of `submit` to write the `.sbatch` files without
-submitting them:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline generate \
-  --sessions-file raw_sessions.txt \
-  --output-root /path/to/processed_outputs
-```
-
-Generated Slurm files are written below:
-
-```text
-{output_root}/.preprocessing_qc_jobs/{timestamp}_{username}/
-```
-
-## Rerun Selected Stages
-
-Use `--stages` when upstream outputs already exist. For example, to regenerate
-raw dF/F and the QC summary files:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session \
-  --output-root /path/to/existing_processed_outputs \
-  --stages dff,summary
-```
-
-Available stages are:
-
-```text
-prep
-suite2p
-qc
-label
-dff
-summary
-```
-
-Selected stages are always ordered according to the pipeline. Downstream-only
-runs assume the required upstream files already exist.
-
-## QOS Controls
-
-Default generated jobs include:
-
-```bash
-#SBATCH --qos=embers
-```
-
-Use inferno for all stages:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session \
-  --output-root /path/to/processed_outputs \
-  --qos inferno
-```
-
-Or split CPU and GPU stages:
-
-```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session \
-  --output-root /path/to/processed_outputs \
-  --qos-cpu embers \
-  --qos-gpu inferno
-```
-
-## Notes
-
-The utility reuses the versioned Suite2p configuration files in
-`2p_processing_pipeline_202401/config_*.json` and the existing QC/label
-algorithms in `2p_post_process_module_202404/modules/QualControlDataIO.py` and
-`LabelExcInh.py`. The orchestration, voltage extraction, raw dF/F creation, and
-preprocessing summary outputs live in `utils_2p`.
+The pipeline reuses the Suite2p configuration files in
+`2p_processing_pipeline_202401` and the QC/label algorithms in
+`2p_post_process_module_202404`.
