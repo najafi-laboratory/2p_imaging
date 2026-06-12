@@ -34,85 +34,44 @@ notebook provides editable `SINGLE` versus `BATCH` variables. It builds the
 corresponding PACE pipeline command, creates a sessions file for batch mode,
 and keeps command execution disabled until `RUN_COMMAND = True`.
 
-## Install the Python environment on PACE
+## Launch one session on PACE
 
-Suite2p 1.x is the default and recommended environment. The repository also
-provides a legacy Suite2p 0.x environment for reproducing older processing.
-
-Make Conda available:
-
-```bash
-module load anaconda3/2023.03
-```
-
-### Install from the repository checkout
-
-```bash
-conda env create \
-  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
-  --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
-
-conda activate ~/conda/envs/2p_preprocessing_qc_suite2p_1x
-```
-
-For legacy Suite2p 0.x:
-
-```bash
-conda env create \
-  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_0x \
-  --file utils_2p/environment-preprocessing-qc-suite2p-0x.yml
-```
-
-### Download a YAML without cloning the repository
-
-Download the Suite2p 1.x YAML and rebuild the environment:
-
-```bash
-curl -L -o environment-preprocessing-qc-suite2p-1x.yml \
-  https://raw.githubusercontent.com/najafi-laboratory/2p_imaging/main/utils_2p/environment-preprocessing-qc-suite2p-1x.yml
-
-conda env create \
-  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
-  --file environment-preprocessing-qc-suite2p-1x.yml
-```
-
-For Suite2p 0.x:
-
-```bash
-curl -L -o environment-preprocessing-qc-suite2p-0x.yml \
-  https://raw.githubusercontent.com/najafi-laboratory/2p_imaging/main/utils_2p/environment-preprocessing-qc-suite2p-0x.yml
-
-conda env create \
-  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_0x \
-  --file environment-preprocessing-qc-suite2p-0x.yml
-```
-
-## Choose the correct Python
-
-The Python executable used to launch the command must contain the pipeline
-dependencies. The generated jobs must also be given that executable through
-`--python-bin` or `TWO_P_PYTHON`.
-
-Use the shared Suite2p 1.x environment:
+Users with read and execute access can launch directly with the shared Suite2p
+1.x Python. They do not need to build or activate a personal Conda
+environment:
 
 ```bash
 export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
 
-"$TWO_P_PYTHON" -c "import suite2p; print(suite2p.__version__)"
+"$TWO_P_PYTHON" -c "from importlib.metadata import version; print(version('suite2p'))"
+
+cd /path/to/2p_imaging
+
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root "/storage/scratch1/3/$USER/2p_processing_results" \
+  --target-structure neuron \
+  --suite2p-version 1.x \
+  --python-bin "$TWO_P_PYTHON" \
+  --account "$TWO_P_SLURM_ACCOUNT" \
+  --qos embers \
+  --run-name example_neuron_session
 ```
 
-For a personal environment installed on PACE:
+Argument meanings:
 
-```bash
-export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
-
-"$TWO_P_PYTHON" -c "import suite2p; print(suite2p.__version__)"
-```
-
-Use the 0.x environment path and `--suite2p-version 0.x` only when an older
-Suite2p result must be reproduced. An explicit `--python-bin` takes precedence
-over `--suite2p-version`.
+| Argument | Meaning |
+|---|---|
+| `submit` | Generate the Slurm files and immediately submit all requested stages. |
+| `--session` | Raw session directory containing the imaging TIFF files and associated session inputs. |
+| `--output-root` | Parent directory where a processed directory named after the raw session will be created. |
+| `--target-structure` | Morphology QC preset: `neuron`, `dendrite`, or `cerebellum_lax`. |
+| `--suite2p-version` | Select the default versioned environment when `--python-bin` is not supplied. |
+| `--python-bin` | Exact Python executable used inside every generated job. |
+| `--account` | Slurm allocation charged for the jobs. |
+| `--qos` | Slurm QOS for all stages. `embers` is preemptible; use `inferno` when paid, non-preemptible execution is required. |
+| `--run-name` | Readable name for the generated job directory and provenance files. |
 
 ## PACE storage and job-submission guidance
 
@@ -187,41 +146,6 @@ For unusually large recordings, use fewer concurrent sessions. The built-in
 `--sessions-file` submits one independent chain per listed session; it does not
 throttle the number of active session chains.
 
-## Launch one session on PACE
-
-The following example submits the entire pipeline for one two-channel neuronal
-session:
-
-```bash
-cd /path/to/2p_imaging
-
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
-
-"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
-  --session /path/to/raw/session \
-  --output-root /path/to/processed_outputs \
-  --target-structure neuron \
-  --suite2p-version 1.x \
-  --python-bin "$TWO_P_PYTHON" \
-  --account gts-fnajafi3 \
-  --qos embers \
-  --run-name example_neuron_session
-```
-
-Argument meanings:
-
-| Argument | Meaning |
-|---|---|
-| `submit` | Generate the Slurm files and immediately submit all requested stages. |
-| `--session` | Raw session directory containing the imaging TIFF files and associated session inputs. |
-| `--output-root` | Parent directory where a processed directory named after the raw session will be created. |
-| `--target-structure` | Morphology QC preset: `neuron`, `dendrite`, or `cerebellum_lax`. |
-| `--suite2p-version` | Select the default versioned environment when `--python-bin` is not supplied. |
-| `--python-bin` | Exact Python executable used inside every generated job. |
-| `--account` | Slurm allocation charged for the jobs. |
-| `--qos` | Slurm QOS for all stages. `embers` is preemptible; use `inferno` when paid, non-preemptible execution is required. |
-| `--run-name` | Readable name for the generated job directory and provenance files. |
-
 Channel count and functional channel are normally inferred from TIFF names.
 For a functional-only, single-channel dendrite session, specify the overrides
 and skip anatomical labeling:
@@ -250,6 +174,54 @@ Additional argument meanings:
 Suite2p requests a GPU by default. Add `--no-suite2p-gpu` to run Suite2p on
 CPU-only resources. The anatomical `label` stage still requires a GPU when it
 is enabled.
+
+## Rebuild the environment if needed
+
+Most PACE users should use the shared Python shown above. Build a personal
+environment only when the shared path is unavailable or different package
+versions are required.
+
+Suite2p 1.x is the default and recommended environment. The repository also
+provides a legacy Suite2p 0.x environment for reproducing older processing.
+
+Make Conda available:
+
+```bash
+module load anaconda3/2023.03
+```
+
+From the repository checkout:
+
+```bash
+conda env create \
+  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
+  --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
+
+export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
+```
+
+Without a checkout, download the YAML first:
+
+```bash
+curl -L -o environment-preprocessing-qc-suite2p-1x.yml \
+  https://raw.githubusercontent.com/najafi-laboratory/2p_imaging/main/utils_2p/environment-preprocessing-qc-suite2p-1x.yml
+
+conda env create \
+  --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
+  --file environment-preprocessing-qc-suite2p-1x.yml
+```
+
+For legacy Suite2p 0.x, use
+`utils_2p/environment-preprocessing-qc-suite2p-0x.yml` or download:
+
+```bash
+curl -L -o environment-preprocessing-qc-suite2p-0x.yml \
+  https://raw.githubusercontent.com/najafi-laboratory/2p_imaging/main/utils_2p/environment-preprocessing-qc-suite2p-0x.yml
+```
+
+Use `--suite2p-version 0.x` with the 0.x Python only when reproducing an older
+result. An explicit `--python-bin` takes precedence over
+`--suite2p-version`.
 
 ## Launch multiple sessions
 
