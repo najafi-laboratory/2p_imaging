@@ -9,10 +9,13 @@ import numpy as np
 
 from utils_2p.roi_labels import (
     apply_label_export,
+    dff_qc_metrics,
     load_reviewed_dff,
     map_qc_to_suite2p_rois,
     morphology_exclusion_reasons,
     roi_morphology_metrics,
+    robust_event_snr,
+    temporal_smoothness_snr,
     suite2p_stat_fingerprint,
 )
 
@@ -162,6 +165,20 @@ class RoiLabelsTest(unittest.TestCase):
 
             with self.assertRaisesRegex(FileNotFoundError, "iscell_qc.npy"):
                 load_reviewed_dff(root, baseline_sigma=1.0)
+
+    def test_dff_qc_metrics_capture_event_and_temporal_snr(self):
+        trace = np.asarray([0.0, 0.0, 0.0, 4.0, 0.0, 0.0, 0.0, 0.0], dtype=float)
+        event = robust_event_snr(trace, sigma=1.0, event_percentile=75.0, dilation=0)
+        temporal = temporal_smoothness_snr(trace)
+        metrics = dff_qc_metrics(np.asarray([trace], dtype=np.float32))
+
+        self.assertTrue(np.isfinite(event["event_snr"]))
+        self.assertGreater(event["event_snr"], 0.0)
+        self.assertTrue(np.isfinite(temporal))
+        self.assertEqual(len(metrics), 1)
+        self.assertIn("event_snr", metrics[0])
+        self.assertIn("temporal_snr", metrics[0])
+        self.assertTrue(np.isfinite(metrics[0]["temporal_snr"]))
 
 
 if __name__ == "__main__":
