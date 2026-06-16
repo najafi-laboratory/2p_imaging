@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import binary_dilation, gaussian_filter, gaussian_filter1d
 
 
 def _roi_key(entry: dict[str, Any]) -> tuple[tuple[int, int], ...]:
@@ -116,6 +116,79 @@ def morphology_exclusion_reasons(
             failed.append(f"connectivity {roi['connect']} exceeds {max_connect}")
         reasons.append(failed)
     return reasons
+
+
+def robust_event_snr(
+    dff: Sequence[float] | np.ndarray,
+    *,
+    sigma: float = 3.0,
+    event_percentile: float = 80.0,
+    dilation: int = 5,
+) -> dict[str, float]:
+    """Return a robust event SNR estimate for one dF/F trace.
+
+    The signal term is ``P95(dF/F) - P50(dF/F)``. Noise is estimated from the
+    median absolute deviation of the high-frequency residual after smoothing
+    the trace with a Gaussian kernel. Event-heavy frames are masked before the
+    noise estimate is computed.
+    """
+
+    trace = np.asarray(dff, dtype=float).ravel()
+    trace = trace[np.isfinite(trace)]
+    if trace.size < 3:
+        return {"event_snr": np.nan, "signal_amp": np.nan, "noise_sd": np.nan}
+
+    signal_amp = float(np.nanpercentile(trace, 95) - np.nanpercentile(trace, 50))
+    smooth = gaussian_filter1d(trace, sigma=float(sigma))
+    resid = trace - smooth
+
+    baseline_resid = resid
+    if 0.0 <= event_percentile <= 100.0 and trace.size:
+        event_frames = trace > np.nanpercentile(trace, event_percentile)
+        if np.any(event_frames):
+            event_frames = binary_dilation(event_frames, iterations=max(0, int(dilation)))
+            baseline_resid = resid[~event_frames]
+            if baseline_resid.size == 0:
+                baseline_resid = resid
+
+    centered = baseline_resid - np.nanmedian(baseline_resid)
+    noise_sd = float(1.4826 * np.nanmedian(np.abs(centered)))
+    snr = float(signal_amp / noise_sd) if noise_sd > 0 else np.nan
+    return {"event_snr": snr, "signal_amp": signal_amp, "noise_sd": noise_sd}
+
+
+def temporal_smoothness_snr(dff: Sequence[float] | np.ndarray) -> float:
+    """Return a Suite2p-like temporal smoothness score for a dF/F trace."""
+
+    trace = np.asarray(dff, dtype=float).ravel()
+    trace = trace[np.isfinite(trace)]
+    if trace.size < 3:
+        return np.nan
+    trace_var = float(np.nanvar(trace))
+    if not np.isfinite(trace_var) or trace_var <= 0:
+        return np.nan
+    diff_var = float(np.nanvar(np.diff(trace)))
+    if not np.isfinite(diff_var):
+        return np.nan
+    return float(1.0 - diff_var / (2.0 * trace_var))
+
+
+def dff_qc_metrics(dff: np.ndarray) -> list[dict[str, float]]:
+    """Return QC metrics for every dF/F trace in ``dff``."""
+
+    metrics: list[dict[str, float]] = []
+    for trace in np.asarray(dff, dtype=float):
+        event = robust_event_snr(trace)
+        temporal = temporal_smoothness_snr(trace)
+        metrics.append(
+            {
+                "event_snr": event["event_snr"],
+                "event_signal_amp": event["signal_amp"],
+                "event_noise_sd": event["noise_sd"],
+                "temporal_snr": float(temporal),
+            }
+        )
+    return metrics
 
 
 def load_iscell(path: str | Path, n_rois: int) -> np.ndarray:
