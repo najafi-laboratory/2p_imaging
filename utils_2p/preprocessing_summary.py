@@ -948,8 +948,7 @@ function evaluateFilter() {{
   draw();
 }}
 function resetFilter() {{
-  populatePresetSelect(data.targetStructure);
-  writeFilter(defaultFilter);
+  loadSelectedPreset();
 }}
 function applyFilterToLabels() {{
   const current = selected;
@@ -1272,7 +1271,7 @@ window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=d
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
 window.addEventListener("resize", draw);
-makeOverlays(); syncTimeInputs(); resetFilter(); applySort(); setSelected(visibleRois[0]);
+makeOverlays(); syncTimeInputs(); populatePresetSelect(data.targetStructure); resetFilter(); applySort(); setSelected(visibleRois[0]);
 </script>
 </body>
 </html>
