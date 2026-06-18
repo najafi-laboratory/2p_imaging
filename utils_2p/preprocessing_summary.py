@@ -717,7 +717,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <button id="openExclusions">Open exclusion reasons</button>
       <button id="saveHtmlWithLabels">Save labels into HTML</button>
       <button id="saveManualLabels">Save roi_manual_labels.npy</button>
-      <button id="exportLabels">Export label JSON</button>
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/docs/roi-reviewer-exports.md" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
       <span class="note">Use Save labels into HTML to make a self-contained reviewed copy. The .npy export has columns: full Suite2p good mask, morphology-filtered good mask, morphology-filtered good-or-unsure mask.</span>
     </div>
@@ -1422,25 +1421,6 @@ async function saveHtmlWithLabels() {{
   }}
   downloadBlob(blob, filename);
 }}
-function exportLabelJson() {{
-  const payload = {{
-    format: "utils_2p_manual_roi_labels_v2",
-    session: data.session,
-    suite2p_roi_count: data.suite2pRoiCount,
-    suite2p_stat_fingerprint: data.suite2pStatFingerprint,
-    morphology_filter: readFilter(),
-    mask_columns: [
-      "full_suite2p_good",
-      "morphology_filtered_good",
-      "morphology_filtered_good_or_unsure",
-    ],
-    labels: Array.from(labels, (label, roi) => ({{
-      summary_roi: roi, suite2p_roi: data.suite2pIndices[roi], morphology_pass: filterPass[roi] === 1, label: label === -1 ? null : Number(label),
-      label_name: label === 1 ? "good" : label === 0 ? "bad" : label === 2 ? "unsure" : "unlabeled",
-    }})),
-  }};
-  downloadBlob(new Blob([JSON.stringify(payload, null, 2) + "\\n"], {{type: "application/json"}}), `${{data.session}}_manual_roi_labels.json`);
-}}
 function exportPresetJson() {{
   const select = document.getElementById("filterPreset");
   const [kind, selectedName] = select.value.split(":", 2);
@@ -1473,7 +1453,6 @@ function importPresetObject(payload) {{
 }}
 document.getElementById("saveManualLabels").addEventListener("click", saveManualLabels);
 document.getElementById("saveHtmlWithLabels").addEventListener("click", saveHtmlWithLabels);
-document.getElementById("exportLabels").addEventListener("click", exportLabelJson);
 document.getElementById("exportPreset").addEventListener("click", exportPresetJson);
 const presetFileInput = document.getElementById("presetFile");
 document.getElementById("importPreset").addEventListener("click", () => presetFileInput.click());

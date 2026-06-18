@@ -125,13 +125,13 @@ Morphology QC target structure
 Manual Good / Bad / Unsure / Unlabeled review
         |
         v
-reviewed HTML, roi_manual_labels.npy, or manual-label JSON
+reviewed HTML or roi_manual_labels.npy
 ```
 
 The reviewer can save the current labels back into a self-contained reviewed
 HTML copy with **Save labels into HTML**. Reopening that saved HTML restores the
-labels embedded in the file. The `.npy` and JSON buttons are export formats for
-downstream scripts.
+labels embedded in the file. Use **Save roi_manual_labels.npy** when downstream
+scripts need a portable ROI mask file.
 
 Custom morphology presets use the same explicit-save model. **Save preset**
 adds the current threshold values to the open page, **Save preset into HTML**
@@ -168,24 +168,6 @@ Place the reviewed file beside the original Suite2p files:
         └── roi_manual_labels.npy
 ```
 
-### Manual-label JSON
-
-The JSON export preserves all four label states explicitly:
-
-```json
-{
-  "session": "example_session",
-  "labels": [
-    {"suite2p_roi": 0, "label": 1},
-    {"suite2p_roi": 1, "label": 0},
-    {"suite2p_roi": 2, "label": 2},
-    {"suite2p_roi": 3, "label": null}
-  ]
-}
-```
-
-`1` means Good, `0` means Bad, `2` means Unsure, and `null` means Unlabeled.
-
 ### Load reviewed dF/F
 
 With `roi_manual_labels.npy` in `suite2p/plane0/`, load morphology-filtered
@@ -208,15 +190,16 @@ To include Unsure ROIs with Good ROIs, use:
 session = load_reviewed_dff("/path/to/session", policy="good_or_unsure")
 ```
 
-When the JSON or `roi_manual_labels.npy` export is stored elsewhere, pass its path:
+When `roi_manual_labels.npy` is stored elsewhere, pass its path:
 
 ```python
 session = load_reviewed_dff(
     "/path/to/session",
-    label_path="/path/to/session_manual_roi_labels.json",
+    label_path="/path/to/roi_manual_labels.npy",
 )
 ```
 
-Use the JSON export when downstream code must distinguish Good, Bad, Unsure,
-and Unlabeled ROIs. The companion notebook contains the same example:
+Use `policy="full_suite2p_good"` to load the full Suite2p good mask, or
+`policy="good_or_unsure"` to include Unsure ROIs with Good ROIs. The companion
+notebook contains the same example:
 [`utils_2p/roi_reviewer_exports.ipynb`](https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_reviewer_exports.ipynb).
