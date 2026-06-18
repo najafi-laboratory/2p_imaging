@@ -301,23 +301,20 @@ def _boundary(mask: np.ndarray) -> np.ndarray:
     return boundary & positive
 
 
-def _pixel_runs_path(xpix: np.ndarray, ypix: np.ndarray) -> str:
+def _roi_outline_path(xpix: np.ndarray, ypix: np.ndarray) -> str:
     segments: list[str] = []
     if not xpix.size:
         return ""
-    for y in np.unique(ypix):
-        row_x = np.sort(np.unique(xpix[ypix == y]))
-        start = int(row_x[0])
-        previous = start
-        for x in row_x[1:]:
-            x = int(x)
-            if x != previous + 1:
-                width = previous - start + 1
-                segments.append(f"M{start} {int(y)}h{width}v1h-{width}z")
-                start = x
-            previous = x
-        width = previous - start + 1
-        segments.append(f"M{start} {int(y)}h{width}v1h-{width}z")
+    pixels = {(int(x), int(y)) for x, y in zip(xpix, ypix)}
+    for x, y in sorted(pixels, key=lambda item: (item[1], item[0])):
+        if (x, y - 1) not in pixels:
+            segments.append(f"M{x} {y}h1")
+        if (x, y + 1) not in pixels:
+            segments.append(f"M{x} {y + 1}h1")
+        if (x - 1, y) not in pixels:
+            segments.append(f"M{x} {y}v1")
+        if (x + 1, y) not in pixels:
+            segments.append(f"M{x + 1} {y}v1")
     return "".join(segments)
 
 
@@ -327,7 +324,7 @@ def _roi_table(stat: np.ndarray, mask: np.ndarray, n_rois: int) -> list[dict[str
         entry = stat[idx]
         ypix = np.asarray(entry.get("ypix", []), dtype=int)
         xpix = np.asarray(entry.get("xpix", []), dtype=int)
-        rois.append({"roi": idx, "path": _pixel_runs_path(xpix, ypix), "npix": int(xpix.size)})
+        rois.append({"roi": idx, "path": _roi_outline_path(xpix, ypix), "npix": int(xpix.size)})
     return rois
 
 
@@ -639,9 +636,9 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .imagewrap {{ position: relative; width: 100%; aspect-ratio: 1/1; background: #111; overflow: hidden; }}
 .imagewrap img, .imagewrap svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
 .imagewrap img {{ object-fit: contain; image-rendering: pixelated; }}
-.roi {{ fill: transparent; stroke: rgba(255,255,255,.86); stroke-width: .7; cursor: pointer; vector-effect: non-scaling-stroke; pointer-events: all; }}
-.roi:hover {{ fill: transparent; stroke: #06b6d4; stroke-width: 1.6; }}
-.roi.selected {{ fill: transparent; stroke: #ffffff; stroke-width: 2.8; }}
+.roi {{ fill: none; stroke: rgba(255,255,255,.86); stroke-width: .7; cursor: pointer; vector-effect: non-scaling-stroke; pointer-events: all; }}
+.roi:hover {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
+.roi.selected {{ fill: none; stroke: #ffffff; stroke-width: 2.8; }}
 .controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 9px; align-items: center; margin-top: 10px; }}
 .label-controls {{ display: flex; flex-direction: column; gap: 8px; align-items: stretch; }}
 .label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
