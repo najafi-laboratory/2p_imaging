@@ -34,6 +34,14 @@ from utils_2p.roi_labels import (
 
 PDF_NAME_TEMPLATE = "{session_name}_preprocessing_summary.pdf"
 HTML_NAME_TEMPLATE = "{session_name}_interactive_fov_roi_dff.html"
+EMBEDDED_DFF_BYTE_LIMIT = 80 * 1024 * 1024
+EMBEDDED_DFF_BASE64_EXPANSION = 4 / 3
+EMBEDDED_DFF_HTML_OVERHEAD = 2 * 1024 * 1024
+
+
+def _estimate_embedded_dff_bytes(n_rois: int, n_frames: int) -> int:
+    raw_bytes = max(0, int(n_rois)) * max(0, int(n_frames)) * 4
+    return int(raw_bytes * EMBEDDED_DFF_BASE64_EXPANSION + EMBEDDED_DFF_HTML_OVERHEAD)
 
 
 def _load_npy(paths: list[Path], allow_pickle: bool = False) -> Any:
@@ -161,6 +169,60 @@ def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any]) -> np.ndarray:
         dff = (signal - baseline) / baseline
     dff[~np.isfinite(dff)] = np.nan
     return dff.astype(np.float32, copy=False)
+
+
+def _load_suite2p_fluorescence(session_dir: Path) -> tuple[np.ndarray, np.ndarray]:
+    plane_dir = session_dir / "suite2p" / "plane0"
+    fluo = np.load(plane_dir / "F.npy", allow_pickle=False, mmap_mode="r")
+    neuropil = np.load(plane_dir / "Fneu.npy", allow_pickle=False, mmap_mode="r")
+    return fluo, neuropil
+
+
+def _dff_metrics_to_jsonable(dff_metrics: list[dict[str, float | int | np.floating | np.integer]]) -> list[dict[str, float | None]]:
+    payload: list[dict[str, float | None]] = []
+    for metrics in dff_metrics:
+        payload.append(
+            {
+                key: (float(value) if np.isfinite(value) else None)
+                for key, value in metrics.items()
+            }
+        )
+    return payload
+
+
+def _build_dff_and_metrics(
+    session_dir: Path,
+    ops: dict[str, Any],
+    n_rois: int,
+    n_frames: int,
+    storage_mode: str,
+    sidecar_path: Path | None,
+    *,
+    chunk_size: int = 64,
+) -> tuple[np.ndarray | None, list[dict[str, float | None]]]:
+    if storage_mode == "embedded":
+        dff = _load_suite2p_dff(session_dir, ops)
+        dff = dff[:n_rois, :n_frames]
+        return dff, _dff_metrics_to_jsonable(list(dff_qc_metrics(dff)))
+
+    if sidecar_path is None:
+        raise ValueError("sidecar_path is required when storage_mode is file")
+
+    fluo, neuropil = _load_suite2p_fluorescence(session_dir)
+    coeff = float(ops.get("neucoeff", 0.7))
+    writer = np.lib.format.open_memmap(sidecar_path, mode="w+", dtype=np.float32, shape=(n_rois, n_frames))
+    metrics: list[dict[str, float | None]] = []
+    for start in range(0, n_rois, chunk_size):
+        stop = min(n_rois, start + chunk_size)
+        signal = np.asarray(fluo[start:stop], dtype=np.float32) - coeff * np.asarray(neuropil[start:stop], dtype=np.float32)
+        baseline = gaussian_filter(signal, [0.0, 600.0])
+        with np.errstate(divide="ignore", invalid="ignore"):
+            dff_chunk = (signal - baseline) / baseline
+        dff_chunk[~np.isfinite(dff_chunk)] = np.nan
+        writer[start:stop] = dff_chunk.astype(np.float32, copy=False)
+        metrics.extend(_dff_metrics_to_jsonable(list(dff_qc_metrics(dff_chunk))))
+    writer.flush()
+    return None, metrics
 
 
 def _stat_to_mask(stat: np.ndarray, image_shape: tuple[int, int]) -> np.ndarray:
@@ -491,26 +553,24 @@ def _write_html(
     preset_exclusion_reasons: list[list[str]],
     qc_parameters: dict[str, Any] | None,
     target_structure: str,
-    dff: np.ndarray,
+    n_rois: int,
+    n_frames: int,
     dff_label: str,
     frame_rate: float,
+    dff_metrics: list[dict[str, float | None]],
+    dff: np.ndarray | None,
+    dff_storage_mode: str,
+    dff_sidecar_name: str | None,
+    estimated_embedded_dff_bytes: int,
 ) -> None:
-    rois = _roi_table(stat, mask, dff.shape[0])
-    dff_metrics: list[dict[str, float | None]] = []
-    for metrics in dff_qc_metrics(dff):
-        dff_metrics.append(
-            {
-                key: (float(value) if np.isfinite(value) else None)
-                for key, value in metrics.items()
-            }
-        )
+    rois = _roi_table(stat, mask, n_rois)
     red_available = mean_red is not None
     image_height, image_width = np.asarray(mean_green).shape[:2]
     payload = {
         "session": session_name,
         "frameRate": float(frame_rate),
-        "nRois": int(dff.shape[0]),
-        "nFrames": int(dff.shape[1]),
+        "nRois": int(n_rois),
+        "nFrames": int(n_frames),
         "imageWidth": int(image_width),
         "imageHeight": int(image_height),
         "green": _channel_png_data_uri(mean_green, "green"),
@@ -527,6 +587,9 @@ def _write_html(
         "qcParameters": qc_parameters,
         "targetStructure": target_structure,
         "dffMetrics": dff_metrics,
+        "dffStorageMode": dff_storage_mode,
+        "dffSidecarName": dff_sidecar_name,
+        "estimatedEmbeddedDffBytes": int(estimated_embedded_dff_bytes),
         "morphologyPresets": {
             name: {
                 "skewMin": values["range_skew"][0],
@@ -541,7 +604,7 @@ def _write_html(
             }
             for name, values in QC_PRESETS.items()
         },
-        "dff": _float32_b64(dff),
+        "dff": _float32_b64(dff) if dff_storage_mode == "embedded" and dff is not None else None,
         "dffLabel": dff_label,
     }
     fov_grid_class = "with-red" if red_available else "single-channel"
@@ -557,7 +620,7 @@ def _write_html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{session_name} preprocessing QC ({dff.shape[0]} ROIs)</title>
+<title>{session_name} preprocessing QC ({n_rois} ROIs)</title>
 <style>
 body {{ margin: 0; font-family: Arial, Helvetica, sans-serif; color: #202124; background: #f6f7f8; }}
 .page {{ width: min(1680px, calc(100vw - 28px)); margin: 16px auto 26px; }}
@@ -609,6 +672,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 .trace-sort select {{ display: block; margin-top: 3px; min-width: 180px; width: auto; }}
 .metric-formula {{ flex: 1 1 320px; }}
 .metric-formula summary {{ cursor: pointer; font-weight: 700; color: #344054; }}
+.trace-loader {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 8px; }}
+.trace-loader input {{ width: auto; }}
 .note {{ margin-top: 6px; color: #667085; font-size: 12px; }}
 .docs-link {{ display: inline-block; color: #175cd3; font-size: 13px; font-weight: 600; text-decoration: none; }}
 .docs-link:hover {{ text-decoration: underline; }}
@@ -617,7 +682,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 </head>
 <body>
 <div class="page">
-  <div class="head"><h1>{session_name} preprocessing QC ({dff.shape[0]} ROIs)</h1><div class="meta" id="meta"></div></div>
+  <div class="head"><h1>{session_name} preprocessing QC ({n_rois} ROIs)</h1><div class="meta" id="meta"></div></div>
   <div class="session-message" id="sessionMessage"></div>
   <div class="fov-review">
     <div class="grid {fov_grid_class}">
@@ -677,6 +742,11 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
   <div class="plots">
     <div class="panel">
       <div class="title" id="traceTitle">Selected ROI dF/F</div>
+      <div class="trace-loader" id="traceLoader" style="display:none;">
+        <input id="dffFile" type="file" accept=".npy">
+        <button id="loadDffFile">Load dF/F file</button>
+      </div>
+      <div class="note" id="traceLoadNote"></div>
       <canvas id="traceCanvas"></canvas>
       <div class="note">Wheel or drag to zoom/pan time. Double-click to reset.</div>
       <div class="controls">
@@ -749,7 +819,59 @@ function b64f64(base64) {{
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new Float64Array(bytes.buffer);
 }}
-const dff = b64f32(data.dff);
+function parseNpy(arrayBuffer) {{
+  const headerBytes = new Uint8Array(arrayBuffer);
+  if (headerBytes.length < 10 || headerBytes[0] !== 0x93 || headerBytes[1] !== 0x4e || headerBytes[2] !== 0x55 || headerBytes[3] !== 0x4d || headerBytes[4] !== 0x50 || headerBytes[5] !== 0x59) {{
+    throw new Error("Not a NumPy .npy file");
+  }}
+  const major = headerBytes[6];
+  let offset = 0;
+  if (major === 1) {{
+    offset = 10 + new DataView(arrayBuffer).getUint16(8, true);
+  }} else if (major === 2 || major === 3) {{
+    offset = 12 + new DataView(arrayBuffer).getUint32(8, true);
+  }} else {{
+    throw new Error(`Unsupported .npy version: ${{major}}`);
+  }}
+  const headerText = new TextDecoder("latin1").decode(headerBytes.subarray(major === 1 ? 10 : 12, offset)).trim();
+  const descrMatch = /'descr':\\s*'([^']+)'/.exec(headerText);
+  const shapeMatch = /'shape':\\s*\\(([^\\)]*)\\)/.exec(headerText);
+  const fortranMatch = /'fortran_order':\\s*(True|False)/.exec(headerText);
+  if (!descrMatch || !shapeMatch || !fortranMatch) throw new Error("Could not parse .npy header");
+  if (fortranMatch[1] !== "False") throw new Error("Fortran-ordered .npy files are not supported");
+  const shape = shapeMatch[1].split(",").map(part => Number(part.trim())).filter(Number.isFinite);
+  const descr = descrMatch[1];
+  const dataOffset = offset;
+  if (descr === "<f4" || descr === "|f4") {{
+    return {{array: new Float32Array(arrayBuffer, dataOffset), shape}};
+  }}
+  if (descr === "<f8" || descr === "|f8") {{
+    const source = new Float64Array(arrayBuffer, dataOffset);
+    const target = new Float32Array(source.length);
+    for (let i = 0; i < source.length; i++) target[i] = source[i];
+    return {{array: target, shape}};
+  }}
+  throw new Error(`Unsupported .npy dtype: ${{descr}}`);
+}}
+let dff = null;
+function setDffFromArrayBuffer(arrayBuffer) {{
+  const parsed = parseNpy(arrayBuffer);
+  dff = parsed.array;
+  if (parsed.shape.length >= 2) {{
+    data.nRois = parsed.shape[0];
+    data.nFrames = parsed.shape[1];
+  }}
+  document.getElementById("traceLoadNote").textContent = `Loaded dF/F file with ${{data.nRois}} ROIs x ${{data.nFrames}} frames.`;
+  draw();
+}}
+if (data.dffStorageMode === "embedded" && data.dff) {{
+  dff = b64f32(data.dff);
+}} else {{
+  const loader = document.getElementById("traceLoader");
+  const note = document.getElementById("traceLoadNote");
+  loader.style.display = "";
+  note.textContent = `This session was too large to fully embed (estimated ${{(data.estimatedEmbeddedDffBytes / (1024 * 1024)).toFixed(1)}} MB). Load ${{data.dffSidecarName || "the sidecar .npy file"}} to enable the trace viewer.`;
+}}
 const sourceIscell = b64f64(data.iscell);
 const iscell = new Float64Array(sourceIscell.length);
 for (let i = 0; i < sourceIscell.length; i++) iscell[i] = sourceIscell[i];
@@ -777,8 +899,14 @@ function fit(canvas) {{
   canvas.width = Math.max(1, Math.round(box.width * r));
   canvas.height = Math.max(1, Math.round(box.height * r));
 }}
-function trace(roi) {{ return dff.subarray(roi * data.nFrames, (roi + 1) * data.nFrames); }}
-function val(roi, frame) {{ return dff[roi * data.nFrames + frame]; }}
+function trace(roi) {{
+  if (!dff) return null;
+  return dff.subarray(roi * data.nFrames, (roi + 1) * data.nFrames);
+}}
+function val(roi, frame) {{
+  if (!dff) return NaN;
+  return dff[roi * data.nFrames + frame];
+}}
 function metricValue(roi, metric) {{
   if (metric === "event_snr") return data.dffMetrics[roi].event_snr;
   if (metric === "temporal_snr") return data.dffMetrics[roi].temporal_snr;
@@ -1050,6 +1178,10 @@ function drawStack() {{
   const canvas = document.getElementById("stackCanvas"); fit(canvas); const ctx = canvas.getContext("2d");
   const w = canvas.width, h = canvas.height, l = 62, r = 16, t = 14, b = 56, pw = w-l-r, ph = h-t-b;
   ctx.clearRect(0,0,w,h); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h); drawAxes(ctx,w,h,l,t,pw,ph,"time (s)","ROI index");
+  if (!dff) {{
+    ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText("Load the dF/F file to enable stacked traces.", l + pw / 2, t + ph / 2);
+    return;
+  }}
   const ys = Math.max(0, Math.floor(y0)), ye = Math.min(visibleRois.length - 1, Math.ceil(y1));
   const xs = Math.max(0, Math.floor(x0)), xe = Math.min(data.nFrames - 1, Math.ceil(x1));
   drawTimeGrid(ctx, l, t, pw, ph);
@@ -1112,6 +1244,10 @@ function drawTrace() {{
   const canvas = document.getElementById("traceCanvas"); fit(canvas); const ctx = canvas.getContext("2d");
   const w=canvas.width,h=canvas.height,l=62,r=16,t=14,b=56,pw=w-l-r,ph=h-t-b, tr=trace(selected);
   ctx.clearRect(0,0,w,h); ctx.fillStyle="#fff"; ctx.fillRect(0,0,w,h); drawAxes(ctx,w,h,l,t,pw,ph,"time (s)","dF/F"); drawTimeGrid(ctx,l,t,pw,ph);
+  if (!tr) {{
+    ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText("Load the dF/F file to enable this trace.", l + pw / 2, t + ph / 2);
+    return;
+  }}
   const xs=Math.max(0,Math.floor(x0)), xe=Math.min(data.nFrames-1,Math.ceil(x1)); let lo=Infinity,hi=-Infinity;
   for (let f=xs; f<=xe; f++) {{ const v=tr[f]; if (Number.isFinite(v)) {{ lo=Math.min(lo,v); hi=Math.max(hi,v); }} }}
   if (!Number.isFinite(lo) || hi<=lo) {{ lo=-1; hi=1; }} const pad=(hi-lo)*.08||1; lo-=pad; hi+=pad;
@@ -1158,6 +1294,21 @@ document.getElementById("previousRoi").addEventListener("click", () => moveVisib
 document.getElementById("nextRoi").addEventListener("click", () => moveVisible(1));
 document.getElementById("showAllRois").addEventListener("change", updateVisibleRois);
 document.getElementById("applySort").addEventListener("click", applySort);
+const dffFileInput = document.getElementById("dffFile");
+document.getElementById("loadDffFile").addEventListener("click", () => dffFileInput.click());
+dffFileInput.addEventListener("change", () => {{
+  const file = dffFileInput.files && dffFileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {{
+    try {{
+      setDffFromArrayBuffer(reader.result);
+    }} catch (error) {{
+      document.getElementById("traceLoadNote").textContent = `Could not load dF/F file: ${{error.message}}`;
+    }}
+  }};
+  reader.readAsArrayBuffer(file);
+}});
 document.getElementById("openExclusions").addEventListener("click", () => {{
   const filter = readFilter();
   const rows = data.morphology.map((metrics, roi) => {{
@@ -1288,6 +1439,7 @@ def create_preprocessing_summary(
 ) -> tuple[Path, Path]:
     session_dir = Path(session_data_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve() if output_dir else session_dir
+    out_dir.mkdir(parents=True, exist_ok=True)
     ops = _load_ops(session_dir)
     suite2p_dir = session_dir / "suite2p" / "plane0"
     suite2p_stat = np.load(suite2p_dir / "stat.npy", allow_pickle=True)
@@ -1316,12 +1468,27 @@ def create_preprocessing_summary(
         raise KeyError("Could not find green functional mean image in masks.h5 or ops.npy")
 
     frame_rate = float(ops.get("fs", 30.0))
-    dff = _load_suite2p_dff(session_dir, ops)
     dff_label = "raw dF/F from Suite2p F.npy/Fneu.npy"
-    n_rois = min(dff.shape[0], len(suite2p_stat))
-    dff = dff[:n_rois]
+    fluo_probe = np.load(suite2p_dir / "F.npy", allow_pickle=False, mmap_mode="r")
+    n_rois = min(int(fluo_probe.shape[0]), len(suite2p_stat))
+    n_frames = int(fluo_probe.shape[1])
     stat = suite2p_stat[:n_rois]
     suite2p_indices = np.arange(n_rois, dtype=np.int64)
+    estimated_embedded_dff_bytes = _estimate_embedded_dff_bytes(n_rois, n_frames)
+    dff_storage_mode = "embedded" if estimated_embedded_dff_bytes <= EMBEDDED_DFF_BYTE_LIMIT else "file"
+    dff_sidecar_name = None
+    dff_sidecar_path = None
+    if dff_storage_mode == "file":
+        dff_sidecar_name = f"{session_dir.name}_dff.npy"
+        dff_sidecar_path = out_dir / dff_sidecar_name
+    dff, dff_metrics = _build_dff_and_metrics(
+        session_dir,
+        ops,
+        n_rois,
+        n_frames,
+        dff_storage_mode,
+        dff_sidecar_path,
+    )
     mask = _stat_to_mask(stat, np.asarray(mean_green).shape[:2])
     iscell_path = suite2p_dir / "iscell.npy"
     iscell = load_iscell(iscell_path, n_rois)
@@ -1366,9 +1533,15 @@ def create_preprocessing_summary(
         preset_exclusion_reasons=preset_exclusion_reasons,
         qc_parameters=qc_parameters,
         target_structure=target_structure,
-        dff=dff,
+        n_rois=n_rois,
+        n_frames=n_frames,
         dff_label=dff_label,
         frame_rate=frame_rate,
+        dff_metrics=dff_metrics,
+        dff=dff,
+        dff_storage_mode=dff_storage_mode,
+        dff_sidecar_name=dff_sidecar_name,
+        estimated_embedded_dff_bytes=estimated_embedded_dff_bytes,
     )
     return pdf_path, html_path
 
