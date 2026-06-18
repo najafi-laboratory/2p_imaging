@@ -771,7 +771,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <label>Sort visible ROIs by
           <select id="sortMetric">
             <option value="event_snr" selected>Event SNR</option>
-            <option value="temporal_snr">Temporal smoothness</option>
             <option value="original">Original Suite2p index</option>
           </select>
         </label>
@@ -786,7 +785,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <summary>Metric formula used for sorting</summary>
           <div class="note">
             Event SNR = (P95(dF/F) - P50(dF/F)) / noise SD, where noise SD is the MAD-based estimate from the smoothed-trace residual.
-            Temporal smoothness = 1 - var(diff(dF/F)) / (2 * var(dF/F)).
           </div>
         </details>
       </div>
@@ -912,7 +910,6 @@ function val(roi, frame) {{
 }}
 function metricValue(roi, metric) {{
   if (metric === "event_snr") return data.dffMetrics[roi].event_snr;
-  if (metric === "temporal_snr") return data.dffMetrics[roi].temporal_snr;
   if (metric === "original" || metric === "suite2p_index") return data.suite2pIndices[roi];
   return roi;
 }}
@@ -964,9 +961,8 @@ function setSelected(roi) {{
   selected = Math.max(0, Math.min(data.nRois - 1, Math.round(roi)));
   document.getElementById("roiInput").value = selected;
   const metrics = data.morphology[selected];
-  const dffMetrics = data.dffMetrics[selected];
   const suite2pRoi = data.suite2pIndices[selected];
-  document.getElementById("readout").textContent = `Selected Suite2p ROI ${{suite2pRoi}} (summary row ${{selected}}) | ${{data.nRois}} total ROIs | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(dffMetrics.event_snr)}} | temporal ${{fmt(dffMetrics.temporal_snr)}}`;
+  document.getElementById("readout").textContent = `Selected Suite2p ROI ${{suite2pRoi}} (summary row ${{selected}}) | ${{data.nRois}} total ROIs | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(data.dffMetrics[selected].event_snr)}}`;
   document.getElementById("traceTitle").textContent = `Selected Suite2p ROI ${{suite2pRoi}} ${{data.dffLabel}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -1325,11 +1321,10 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
     else if (labels[roi] === -1 && reasons.length === 0) reasons.push("unlabeled");
     const text = reasons.join("; ") || "included";
-    const dffMetrics = data.dffMetrics[roi];
-    return `<tr><td>${{roi}}</td><td>${{data.suite2pIndices[roi]}}</td><td>${{fmt(dffMetrics.event_snr)}}</td><td>${{fmt(dffMetrics.temporal_snr)}}</td><td>${{text}}</td></tr>`;
+    return `<tr><td>${{roi}}</td><td>${{data.suite2pIndices[roi]}}</td><td>${{fmt(data.dffMetrics[roi].event_snr)}}</td><td>${{text}}</td></tr>`;
   }}).join("");
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI exclusions</title><style>body{{font-family:Arial,sans-serif;margin:20px}}td,th{{border:1px solid #ddd;padding:4px 7px}}table{{border-collapse:collapse}}</style><h1>${{data.session}} ROI exclusion reasons</h1><p>Target structure: ${{data.targetStructure}}</p><table><thead><tr><th>ROI</th><th>Suite2p row</th><th>Event SNR</th><th>Temporal SNR</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI exclusions</title><style>body{{font-family:Arial,sans-serif;margin:20px}}td,th{{border:1px solid #ddd;padding:4px 7px}}table{{border-collapse:collapse}}</style><h1>${{data.session}} ROI exclusion reasons</h1><p>Target structure: ${{data.targetStructure}}</p><table><thead><tr><th>ROI</th><th>Suite2p row</th><th>Event SNR</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table>`);
   win.document.close();
 }});
 function npyBlob(values, rows, cols) {{
