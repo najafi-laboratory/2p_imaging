@@ -586,6 +586,9 @@ def _write_html(
         "presetExclusionReasons": preset_exclusion_reasons,
         "qcParameters": qc_parameters,
         "targetStructure": target_structure,
+        "initialLabels": None,
+        "initialMorphologyFilter": None,
+        "customMorphologyPresets": None,
         "dffMetrics": dff_metrics,
         "dffStorageMode": dff_storage_mode,
         "dffSidecarName": dff_sidecar_name,
@@ -654,10 +657,12 @@ button, input, select {{ font: inherit; }}
 button {{ border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }}
 button.good {{ border-color: #16a34a; color: #166534; }}
 button.bad {{ border-color: #dc2626; color: #991b1b; }}
+button.unsure {{ border-color: #d97706; color: #92400e; }}
 button.unlabeled {{ border-color: #667085; color: #475467; }}
 button.active {{ color: #fff; }}
 button.good.active {{ background: #16a34a; }}
 button.bad.active {{ background: #dc2626; }}
+button.unsure.active {{ background: #d97706; }}
 button.unlabeled.active {{ background: #667085; }}
 input, select {{ border: 1px solid #d0d5dd; border-radius: 6px; padding: 7px 8px; width: 86px; }}
 .filter-controls input {{ width: 100%; }}
@@ -698,6 +703,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <button id="markGood" class="good">Good (G)</button>
         <button id="markBad" class="bad">Bad (B)</button>
       </div>
+      <button id="markUnsure" class="unsure">Unsure (S)</button>
       <button id="markUnlabeled" class="unlabeled">Unlabeled (U)</button>
       <button id="markAllGood">Mark all visible as good</button>
       <button id="clearLabels">Clear all labels / show all ROIs</button>
@@ -705,14 +711,15 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <button id="previousRoi" class="nav-button" title="Previous visible ROI (Left arrow)">&#8592; Previous</button>
         <button id="nextRoi" class="nav-button" title="Next visible ROI (Right arrow)">Next &#8594;</button>
       </div>
-      <span class="note">Keyboard: G/B/U label; left/right arrows select the previous/next visible ROI.</span>
+      <span class="note">Keyboard: G/B/S/U label; left/right arrows select the previous/next visible ROI.</span>
       <span id="labelCounts"></span>
       <label><input id="showAllRois" type="checkbox"> Show excluded ROIs</label>
       <button id="openExclusions">Open exclusion reasons</button>
-      <button id="saveIscell">Save iscell_qc.npy</button>
+      <button id="saveHtmlWithLabels">Save labels into HTML</button>
+      <button id="saveManualLabels">Save roi_manual_labels.npy</button>
       <button id="exportLabels">Export label JSON</button>
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/feature/interactive-roi-labels/docs/roi-reviewer-exports.md" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
-      <span class="note">Saving requires a browser file prompt. Existing unreviewed Suite2p rows are preserved.</span>
+      <span class="note">Use Save labels into HTML to make a self-contained reviewed copy. The .npy export has columns: full Suite2p good mask, morphology-filtered good mask, morphology-filtered good-or-unsure mask.</span>
     </div>
   </div>
   <div class="panel">
@@ -724,6 +731,10 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <label>Preset <select id="filterPreset"></select></label>
         <label>Custom preset name <input id="presetName" type="text" placeholder="my preset"></label>
         <button id="savePreset">Save preset</button>
+        <button id="savePresetHtml">Save preset into HTML</button>
+        <button id="exportPreset">Export preset JSON</button>
+        <input id="presetFile" type="file" accept=".json" style="display:none;">
+        <button id="importPreset">Import preset JSON</button>
         <label>Skew min <input id="skewMin" type="number" step="0.01"></label>
         <label>Skew max <input id="skewMax" type="number" step="0.01"></label>
         <label>Max connect <input id="maxConnect" type="number" min="0" step="1"></label>
@@ -872,23 +883,19 @@ if (data.dffStorageMode === "embedded" && data.dff) {{
   loader.style.display = "";
   note.textContent = `This session was too large to fully embed (estimated ${{(data.estimatedEmbeddedDffBytes / (1024 * 1024)).toFixed(1)}} MB). Load ${{data.dffSidecarName || "the sidecar .npy file"}} to enable the trace viewer.`;
 }}
-const sourceIscell = b64f64(data.iscell);
-const iscell = new Float64Array(sourceIscell.length);
-for (let i = 0; i < sourceIscell.length; i++) iscell[i] = sourceIscell[i];
 const presetPass = Uint8Array.from(data.presetExclusionReasons, reasons => reasons.length === 0 ? 1 : 0);
 const labels = new Int8Array(data.nRois);
 for (let roi = 0; roi < data.nRois; roi++) {{
   labels[roi] = presetPass[roi] ? -1 : 0;
-  if (!presetPass[roi]) {{
-    const suite2pRoi = data.suite2pIndices[roi];
-    iscell[suite2pRoi * 2] = 0;
-    iscell[suite2pRoi * 2 + 1] = 0;
+}}
+if (Array.isArray(data.initialLabels) && data.initialLabels.length === data.nRois) {{
+  for (let roi = 0; roi < data.nRois; roi++) {{
+    const label = Number(data.initialLabels[roi]);
+    if (label === -1 || label === 0 || label === 1 || label === 2) labels[roi] = label;
   }}
 }}
 const filterPass = new Uint8Array(data.nRois);
-const customPresetKey = "utils_2p_morphology_presets_v1";
-let customPresets = {{}};
-try {{ customPresets = JSON.parse(localStorage.getItem(customPresetKey) || "{{}}"); }} catch (_error) {{}}
+let customPresets = data.customMorphologyPresets && typeof data.customMorphologyPresets === "object" ? {{...data.customMorphologyPresets}} : {{}};
 const defaultFilter = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.neuron;
 let selected = 0, x0 = 0, x1 = data.nFrames - 1, y0 = 0, y1 = 0, visibleRois = [];
 let appliedSortMetric = "event_snr";
@@ -981,14 +988,14 @@ function updateVisibleRois() {{
   y1 = Math.max(y0, Math.min(y1 || Math.min(19, visibleRois.length - 1), visibleRois.length - 1));
   document.getElementById("yStart").value = y0;
   document.getElementById("yEnd").value = y1;
-  let good = 0, bad = 0, unlabeled = 0;
-  for (const label of labels) {{ if (label === 1) good++; else if (label === 0) bad++; else unlabeled++; }}
+  let good = 0, bad = 0, unsure = 0, unlabeled = 0;
+  for (const label of labels) {{ if (label === 1) good++; else if (label === 0) bad++; else if (label === 2) unsure++; else unlabeled++; }}
   const sortMetric = appliedSortMetric;
   const sortDirection = appliedSortDirection;
   const sortLabel = sortMetric === "original"
     ? `original Suite2p index (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`
     : `${{sortMetric.replace("_", " ")}} (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`;
-  document.getElementById("sessionMessage").textContent = `Target structure: ${{data.targetStructure}}. Embedded ${{data.nRois}} original Suite2p ROIs. ${{good}} good, ${{bad}} bad, ${{unlabeled}} unlabeled; ${{visibleRois.length}} ROIs are visible. Sorting: ${{sortLabel}}.`;
+  document.getElementById("sessionMessage").textContent = `Target structure: ${{data.targetStructure}}. Embedded ${{data.nRois}} original Suite2p ROIs. ${{good}} good, ${{bad}} bad, ${{unsure}} unsure, ${{unlabeled}} unlabeled; ${{visibleRois.length}} ROIs are visible. Sorting: ${{sortLabel}}.`;
   document.querySelectorAll(".roi").forEach(path => {{
     const roi = Number(path.dataset.roi);
     path.style.display = (showAll || labels[roi] !== 0) ? "" : "none";
@@ -1000,10 +1007,11 @@ function updateLabelControls() {{
   const label = labels[selected];
   document.getElementById("markGood").classList.toggle("active", label === 1);
   document.getElementById("markBad").classList.toggle("active", label === 0);
+  document.getElementById("markUnsure").classList.toggle("active", label === 2);
   document.getElementById("markUnlabeled").classList.toggle("active", label === -1);
-  let good = 0, bad = 0, unlabeled = 0;
-  for (const value of labels) {{ if (value === 1) good++; else if (value === 0) bad++; else unlabeled++; }}
-  document.getElementById("labelCounts").textContent = `${{good}} good | ${{bad}} bad | ${{unlabeled}} unlabeled`;
+  let good = 0, bad = 0, unsure = 0, unlabeled = 0;
+  for (const value of labels) {{ if (value === 1) good++; else if (value === 0) bad++; else if (value === 2) unsure++; else unlabeled++; }}
+  document.getElementById("labelCounts").textContent = `${{good}} good | ${{bad}} bad | ${{unsure}} unsure | ${{unlabeled}} unlabeled`;
 }}
 function fmt(value) {{
   if (value === null || value === undefined) return "nan";
@@ -1023,8 +1031,18 @@ function readFilter() {{
     compactMin: filterValue("compactMin"), compactMax: filterValue("compactMax"),
   }};
 }}
+function normalizeFilter(filter) {{
+  const normalized = {{}};
+  for (const key of ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"]) {{
+    const value = Number(filter[key]);
+    if (!Number.isFinite(value)) throw new Error(`Preset field ${{key}} is missing or not finite.`);
+    normalized[key] = value;
+  }}
+  return normalized;
+}}
 function writeFilter(filter) {{
-  for (const [id, value] of Object.entries(filter)) {{
+  const normalized = normalizeFilter(filter);
+  for (const [id, value] of Object.entries(normalized)) {{
     const input = document.getElementById(id);
     if (input) input.value = value;
   }}
@@ -1046,6 +1064,22 @@ function loadSelectedPreset() {{
   const [kind, name] = document.getElementById("filterPreset").value.split(":", 2);
   const preset = kind === "built-in" ? data.morphologyPresets[name] : customPresets[name];
   if (preset) writeFilter(preset);
+}}
+function currentPresetName() {{
+  return document.getElementById("presetName").value.trim();
+}}
+function saveCurrentPresetToPage() {{
+  const name = currentPresetName();
+  if (!name) {{ alert("Enter a custom preset name first."); return null; }}
+  try {{
+    customPresets[name] = normalizeFilter(readFilter());
+  }} catch (error) {{
+    alert(`Could not save preset: ${{error.message}}`);
+    return null;
+  }}
+  populatePresetSelect(name);
+  document.getElementById("filterPreset").value = `custom:${{name}}`;
+  return name;
 }}
 function passesFilter(metrics, filter) {{
   return (
@@ -1082,38 +1116,18 @@ function applyFilterToLabels() {{
   const current = selected;
   for (let roi = 0; roi < data.nRois; roi++) {{
     labels[roi] = filterPass[roi] ? -1 : 0;
-    const suite2pRoi = data.suite2pIndices[roi];
-    if (labels[roi] === -1) {{
-      iscell[suite2pRoi * 2] = sourceIscell[suite2pRoi * 2];
-      iscell[suite2pRoi * 2 + 1] = sourceIscell[suite2pRoi * 2 + 1];
-    }} else {{
-      iscell[suite2pRoi * 2] = 0;
-      iscell[suite2pRoi * 2 + 1] = 0;
-    }}
   }}
   updateVisibleRois();
   if (labels[current] !== 0 || document.getElementById("showAllRois").checked) setSelected(current);
 }}
 function setLabel(label) {{
   labels[selected] = label;
-  if (label !== -1) {{
-    const suite2pRoi = data.suite2pIndices[selected];
-    iscell[suite2pRoi * 2] = label;
-    iscell[suite2pRoi * 2 + 1] = label;
-  }} else {{
-    const suite2pRoi = data.suite2pIndices[selected];
-    iscell[suite2pRoi * 2] = sourceIscell[suite2pRoi * 2];
-    iscell[suite2pRoi * 2 + 1] = sourceIscell[suite2pRoi * 2 + 1];
-  }}
   updateLabelControls();
   updateVisibleRois();
 }}
 function clearAllLabels() {{
   for (let roi = 0; roi < data.nRois; roi++) {{
     labels[roi] = -1;
-    const suite2pRoi = data.suite2pIndices[roi];
-    iscell[suite2pRoi * 2] = sourceIscell[suite2pRoi * 2];
-    iscell[suite2pRoi * 2 + 1] = sourceIscell[suite2pRoi * 2 + 1];
   }}
   document.getElementById("showAllRois").checked = false;
   updateLabelControls();
@@ -1278,13 +1292,11 @@ document.getElementById("yEnd").addEventListener("change", e => {{ y1=Number(e.t
 document.getElementById("reset").addEventListener("click", reset);
 document.getElementById("markGood").addEventListener("click", () => setLabel(1));
 document.getElementById("markBad").addEventListener("click", () => setLabel(0));
+document.getElementById("markUnsure").addEventListener("click", () => setLabel(2));
 document.getElementById("markUnlabeled").addEventListener("click", () => setLabel(-1));
 document.getElementById("markAllGood").addEventListener("click", () => {{
   for (const roi of visibleRois) {{
     labels[roi] = 1;
-    const suite2pRoi = data.suite2pIndices[roi];
-    iscell[suite2pRoi * 2] = 1;
-    iscell[suite2pRoi * 2 + 1] = 1;
   }}
   updateLabelControls();
   updateVisibleRois();
@@ -1314,6 +1326,7 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
   const rows = data.morphology.map((metrics, roi) => {{
     const reasons = morphologyReasons(metrics, filter);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
+    else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
     else if (labels[roi] === -1 && reasons.length === 0) reasons.push("unlabeled");
     const text = reasons.join("; ") || "included";
     const dffMetrics = data.dffMetrics[roi];
@@ -1323,9 +1336,9 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
   win.document.write(`<!doctype html><title>${{data.session}} ROI exclusions</title><style>body{{font-family:Arial,sans-serif;margin:20px}}td,th{{border:1px solid #ddd;padding:4px 7px}}table{{border-collapse:collapse}}</style><h1>${{data.session}} ROI exclusion reasons</h1><p>Target structure: ${{data.targetStructure}}</p><table><thead><tr><th>ROI</th><th>Suite2p row</th><th>Event SNR</th><th>Temporal SNR</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table>`);
   win.document.close();
 }});
-function npyBlob(values, rows) {{
+function npyBlob(values, rows, cols) {{
   const encoder = new TextEncoder();
-  let header = `{{'descr': '<f8', 'fortran_order': False, 'shape': (${{rows}}, 2), }}`;
+  let header = `{{'descr': '<f8', 'fortran_order': False, 'shape': (${{rows}}, ${{cols}}), }}`;
   const preambleLength = 10;
   const padding = (16 - ((preambleLength + header.length + 1) % 16)) % 16;
   header += " ".repeat(padding) + "\\n";
@@ -1343,12 +1356,26 @@ function downloadBlob(blob, filename) {{
   link.href = URL.createObjectURL(blob); link.download = filename; link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }}
-async function saveIscell() {{
-  const blob = npyBlob(iscell, iscell.length / 2);
+function reviewedMaskArray() {{
+  const rows = data.suite2pRoiCount;
+  const values = new Float64Array(rows * 3);
+  for (let roi = 0; roi < data.nRois; roi++) {{
+    const suite2pRoi = data.suite2pIndices[roi];
+    const label = labels[roi];
+    const morphPass = filterPass[roi] === 1;
+    values[suite2pRoi * 3] = label === 1 ? 1 : 0;
+    values[suite2pRoi * 3 + 1] = morphPass ? (label === 1 ? 1 : 0) : NaN;
+    values[suite2pRoi * 3 + 2] = morphPass ? (label === 1 || label === 2 ? 1 : 0) : NaN;
+  }}
+  return values;
+}}
+async function saveManualLabels() {{
+  const reviewedMasks = reviewedMaskArray();
+  const blob = npyBlob(reviewedMasks, data.suite2pRoiCount, 3);
   if ("showSaveFilePicker" in window) {{
     try {{
       const handle = await window.showSaveFilePicker({{
-        suggestedName: "iscell_qc.npy",
+        suggestedName: "roi_manual_labels.npy",
         types: [{{description: "NumPy array", accept: {{"application/octet-stream": [".npy"]}}}}],
       }});
       const writable = await handle.createWritable();
@@ -1359,38 +1386,118 @@ async function saveIscell() {{
       console.warn("Direct save failed; downloading instead", error);
     }}
   }}
-  downloadBlob(blob, "iscell_qc.npy");
+  downloadBlob(blob, "roi_manual_labels.npy");
+}}
+async function saveHtmlWithLabels() {{
+  const payloadScript = document.getElementById("payload");
+  const originalPayload = payloadScript.textContent;
+  const savedPayload = {{
+    ...data,
+    initialLabels: Array.from(labels),
+    initialMorphologyFilter: readFilter(),
+    customMorphologyPresets: customPresets,
+    savedAt: new Date().toISOString(),
+  }};
+  const filename = `${{data.session}}_interactive_fov_roi_dff.html`;
+  let blob;
+  try {{
+    payloadScript.textContent = JSON.stringify(savedPayload).replace(/</g, "\\u003c");
+    blob = new Blob(["<!doctype html>\\n" + document.documentElement.outerHTML], {{type: "text/html"}});
+  }} finally {{
+    payloadScript.textContent = originalPayload;
+  }}
+  if ("showSaveFilePicker" in window) {{
+    try {{
+      const handle = await window.showSaveFilePicker({{
+        suggestedName: filename,
+        types: [{{description: "HTML", accept: {{"text/html": [".html"]}}}}],
+      }});
+      const writable = await handle.createWritable();
+      await writable.write(blob); await writable.close();
+      return;
+    }} catch (error) {{
+      if (error.name === "AbortError") return;
+      console.warn("Direct HTML save failed; downloading instead", error);
+    }}
+  }}
+  downloadBlob(blob, filename);
 }}
 function exportLabelJson() {{
   const payload = {{
-    format: "utils_2p_manual_roi_labels_v1",
+    format: "utils_2p_manual_roi_labels_v2",
     session: data.session,
     suite2p_roi_count: data.suite2pRoiCount,
     suite2p_stat_fingerprint: data.suite2pStatFingerprint,
     morphology_filter: readFilter(),
+    mask_columns: [
+      "full_suite2p_good",
+      "morphology_filtered_good",
+      "morphology_filtered_good_or_unsure",
+    ],
     labels: Array.from(labels, (label, roi) => ({{
-      summary_roi: roi, suite2p_roi: data.suite2pIndices[roi], label: label === -1 ? null : Number(label),
+      summary_roi: roi, suite2p_roi: data.suite2pIndices[roi], morphology_pass: filterPass[roi] === 1, label: label === -1 ? null : Number(label),
+      label_name: label === 1 ? "good" : label === 0 ? "bad" : label === 2 ? "unsure" : "unlabeled",
     }})),
   }};
   downloadBlob(new Blob([JSON.stringify(payload, null, 2) + "\\n"], {{type: "application/json"}}), `${{data.session}}_manual_roi_labels.json`);
 }}
-document.getElementById("saveIscell").addEventListener("click", saveIscell);
+function exportPresetJson() {{
+  const select = document.getElementById("filterPreset");
+  const [kind, selectedName] = select.value.split(":", 2);
+  const name = currentPresetName() || selectedName || data.targetStructure || "morphology_preset";
+  let filter;
+  try {{
+    filter = normalizeFilter(readFilter());
+  }} catch (error) {{
+    alert(`Could not export preset: ${{error.message}}`);
+    return;
+  }}
+  const payload = {{
+    format: "utils_2p_morphology_preset_v1",
+    name,
+    source_session: data.session,
+    target_structure: data.targetStructure,
+    filter,
+  }};
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2) + "\\n"], {{type: "application/json"}}), `${{name}}_morphology_preset.json`);
+}}
+function importPresetObject(payload) {{
+  const name = String(payload.name || payload.preset_name || "").trim();
+  const filter = payload.filter || payload.morphology_filter || payload;
+  if (!name) throw new Error("Preset JSON must include a name.");
+  customPresets[name] = normalizeFilter(filter);
+  populatePresetSelect(name);
+  document.getElementById("filterPreset").value = `custom:${{name}}`;
+  document.getElementById("presetName").value = name;
+  writeFilter(customPresets[name]);
+}}
+document.getElementById("saveManualLabels").addEventListener("click", saveManualLabels);
+document.getElementById("saveHtmlWithLabels").addEventListener("click", saveHtmlWithLabels);
 document.getElementById("exportLabels").addEventListener("click", exportLabelJson);
+document.getElementById("exportPreset").addEventListener("click", exportPresetJson);
+const presetFileInput = document.getElementById("presetFile");
+document.getElementById("importPreset").addEventListener("click", () => presetFileInput.click());
+presetFileInput.addEventListener("change", () => {{
+  const file = presetFileInput.files && presetFileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {{
+    try {{
+      importPresetObject(JSON.parse(reader.result));
+    }} catch (error) {{
+      alert(`Could not import preset: ${{error.message}}`);
+    }}
+  }};
+  reader.readAsText(file);
+}});
 document.getElementById("resetFilter").addEventListener("click", resetFilter);
 document.getElementById("applyFilterToLabels").addEventListener("click", applyFilterToLabels);
 document.getElementById("filterPreset").addEventListener("change", loadSelectedPreset);
 document.getElementById("savePreset").addEventListener("click", () => {{
-  const name = document.getElementById("presetName").value.trim();
-  if (!name) {{ alert("Enter a custom preset name first."); return; }}
-  customPresets[name] = readFilter();
-  try {{
-    localStorage.setItem(customPresetKey, JSON.stringify(customPresets));
-  }} catch (error) {{
-    alert(`Could not save preset in this browser: ${{error}}`);
-    return;
-  }}
-  populatePresetSelect(name);
-  document.getElementById("filterPreset").value = `custom:${{name}}`;
+  saveCurrentPresetToPage();
+}});
+document.getElementById("savePresetHtml").addEventListener("click", () => {{
+  if (saveCurrentPresetToPage()) saveHtmlWithLabels();
 }});
 ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"].forEach(id => {{
   document.getElementById(id).addEventListener("change", evaluateFilter);
@@ -1399,6 +1506,7 @@ window.addEventListener("keydown", event => {{
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
   if (event.key.toLowerCase() === "g") setLabel(1);
   else if (event.key.toLowerCase() === "b") setLabel(0);
+  else if (event.key.toLowerCase() === "s") setLabel(2);
   else if (event.key.toLowerCase() === "u") setLabel(-1);
   else if (event.key === "ArrowLeft") moveVisible(-1);
   else if (event.key === "ArrowRight") moveVisible(1);
@@ -1422,7 +1530,9 @@ window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=d
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
 window.addEventListener("resize", draw);
-makeOverlays(); syncTimeInputs(); populatePresetSelect(data.targetStructure); resetFilter(); applySort(); setSelected(visibleRois[0]);
+makeOverlays(); syncTimeInputs(); populatePresetSelect(data.targetStructure); resetFilter();
+if (data.initialMorphologyFilter) writeFilter(data.initialMorphologyFilter);
+applySort(); setSelected(visibleRois[0]);
 </script>
 </body>
 </html>

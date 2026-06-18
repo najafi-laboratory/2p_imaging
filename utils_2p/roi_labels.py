@@ -211,13 +211,13 @@ def _find_label_export(session_dir: Path, label_path: str | Path | None) -> Path
             raise FileNotFoundError(f"ROI label export does not exist: {path}")
         return path
 
-    iscell_path = session_dir / "suite2p" / "plane0" / "iscell_qc.npy"
-    if not iscell_path.exists():
+    label_path = session_dir / "suite2p" / "plane0" / "roi_manual_labels.npy"
+    if not label_path.exists():
         raise FileNotFoundError(
-            f"No suite2p/plane0/iscell_qc.npy found under {session_dir}; "
-            "pass label_path for a JSON export or QC file stored elsewhere"
+            f"No suite2p/plane0/roi_manual_labels.npy found under {session_dir}; "
+            "pass label_path for a JSON export or manual label file stored elsewhere"
         )
-    return iscell_path
+    return label_path
 
 
 def _load_export_labels(label_path: Path, stat: Sequence[dict[str, Any]]) -> np.ndarray:
@@ -246,13 +246,15 @@ def _load_export_labels(label_path: Path, stat: Sequence[dict[str, Any]]) -> np.
             if raw_label is None:
                 continue
             label = int(raw_label)
-            if label not in (0, 1):
-                raise ValueError(f"ROI label must be 0 or 1, got {label}")
+            if label not in (0, 1, 2):
+                raise ValueError(f"ROI label must be 0, 1, or 2, got {label}")
             values[index] = label
         return values
 
-    iscell = load_iscell(label_path, len(stat))
-    return (iscell[:, 0] > 0.5).astype(np.int8)
+    masks = np.asarray(np.load(label_path, allow_pickle=False), dtype=np.float64)
+    if masks.shape != (len(stat), 3):
+        raise ValueError(f"Expected roi_manual_labels shape {(len(stat), 3)}, got {masks.shape}")
+    return masks
 
 
 def load_reviewed_dff(
@@ -264,13 +266,16 @@ def load_reviewed_dff(
 ) -> dict[str, Any]:
     """Load reviewer-selected Suite2p ROIs and calculate their dF/F traces.
 
-    ``label_path`` may point to an interactive reviewer JSON export or an
-    ``iscell_qc.npy`` file stored elsewhere. When omitted,
-    ``suite2p/plane0/iscell_qc.npy`` is required. Suite2p's original
+    ``label_path`` may point to an interactive reviewer JSON export or a
+    ``roi_manual_labels.npy`` file stored elsewhere. When omitted,
+    ``suite2p/plane0/roi_manual_labels.npy`` is required. Suite2p's original
     ``iscell.npy`` is never selected implicitly.
 
-    ``policy="good_only"`` keeps only label 1. ``policy="not_bad"`` also keeps
-    JSON rows whose label is null/unlabeled.
+    For JSON labels, ``policy="good_only"`` keeps label 1, ``policy="not_bad"``
+    keeps all labels except 0, and ``policy="good_or_unsure"`` keeps labels 1
+    and 2. For ``roi_manual_labels.npy``, ``good_only`` selects column 1
+    (morphology-filtered good) and ``good_or_unsure`` selects column 2
+    (morphology-filtered good or unsure).
     """
 
     session_path = Path(session_dir).expanduser().resolve()
@@ -285,12 +290,27 @@ def load_reviewed_dff(
     resolved_label_path = _find_label_export(session_path, label_path)
     labels = _load_export_labels(resolved_label_path, stat)
 
-    if policy == "good_only":
-        keep = labels == 1
-    elif policy == "not_bad":
-        keep = labels != 0
+    if labels.ndim == 2:
+        if policy in {"good_only", "morphology_good"}:
+            keep = labels[:, 1] == 1
+        elif policy in {"good_or_unsure", "morphology_good_or_unsure", "not_bad"}:
+            keep = labels[:, 2] == 1
+        elif policy == "full_suite2p_good":
+            keep = labels[:, 0] == 1
+        else:
+            raise ValueError(
+                "policy must be 'good_only', 'good_or_unsure', 'not_bad', "
+                "'morphology_good', 'morphology_good_or_unsure', or 'full_suite2p_good'"
+            )
     else:
-        raise ValueError("policy must be 'good_only' or 'not_bad'")
+        if policy == "good_only":
+            keep = labels == 1
+        elif policy == "not_bad":
+            keep = labels != 0
+        elif policy == "good_or_unsure":
+            keep = (labels == 1) | (labels == 2)
+        else:
+            raise ValueError("policy must be 'good_only', 'good_or_unsure', or 'not_bad'")
 
     fluo = np.load(plane_dir / "F.npy", mmap_mode="r")
     neuropil = np.load(plane_dir / "Fneu.npy", mmap_mode="r")
@@ -328,7 +348,7 @@ def apply_label_export(
     output_path: str | Path | None = None,
     backup: bool = True,
 ) -> Path:
-    """Apply an HTML JSON export to a separate ``iscell_qc.npy`` file."""
+    """Apply an HTML JSON export to a ``roi_manual_labels.npy`` file."""
 
     payload = json.loads(Path(export_path).read_text(encoding="utf-8"))
     labels = payload.get("labels")
@@ -343,45 +363,49 @@ def apply_label_export(
     expected_fingerprint = payload.get("suite2p_stat_fingerprint")
     if expected_fingerprint is not None and expected_fingerprint != suite2p_stat_fingerprint(stat):
         raise ValueError("Label export does not match this Suite2p stat.npy")
-    original_iscell_path = suite2p_path / "iscell.npy"
-    iscell = load_iscell(original_iscell_path, len(stat))
+    masks = np.zeros((len(stat), 3), dtype=np.float64)
 
     seen: set[int] = set()
     for item in labels:
         index = int(item["suite2p_roi"])
         raw_label = item.get("label")
-        if raw_label is None:
-            continue
-        label = int(raw_label)
         if index < 0 or index >= len(stat):
             raise ValueError(f"Suite2p ROI index {index} is outside 0..{len(stat) - 1}")
-        if label not in (0, 1):
-            raise ValueError(f"ROI label must be 0 or 1, got {label}")
         if index in seen:
             raise ValueError(f"Suite2p ROI index {index} appears more than once")
         seen.add(index)
-        iscell[index, 0] = label
-        iscell[index, 1] = float(label)
+        morphology_pass = bool(item.get("morphology_pass", True))
+        if not morphology_pass:
+            masks[index, 1:] = np.nan
+        if raw_label is None:
+            continue
+        label = int(raw_label)
+        if label not in (0, 1, 2):
+            raise ValueError(f"ROI label must be 0, 1, or 2, got {label}")
+        masks[index, 0] = 1.0 if label == 1 else 0.0
+        if morphology_pass:
+            masks[index, 1] = 1.0 if label == 1 else 0.0
+            masks[index, 2] = 1.0 if label in (1, 2) else 0.0
 
-    qc_path = (
+    output = (
         Path(output_path).expanduser().resolve()
         if output_path is not None
-        else suite2p_path / "iscell_qc.npy"
+        else suite2p_path / "roi_manual_labels.npy"
     )
-    qc_path.parent.mkdir(parents=True, exist_ok=True)
-    if backup and qc_path.exists():
+    output.parent.mkdir(parents=True, exist_ok=True)
+    if backup and output.exists():
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        shutil.copy2(qc_path, qc_path.with_name(f"{qc_path.name}.bak_{stamp}"))
-    np.save(qc_path, iscell)
-    return qc_path
+        shutil.copy2(output, output.with_name(f"{output.name}.bak_{stamp}"))
+    np.save(output, masks)
+    return output
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("export_json", help="JSON file exported by the interactive QC HTML.")
     parser.add_argument("suite2p_dir", help="Suite2p plane directory containing stat.npy.")
-    parser.add_argument("--output", default=None, help="Output path. Default: suite2p_dir/iscell_qc.npy.")
-    parser.add_argument("--no-backup", action="store_true", help="Do not back up an existing iscell_qc.npy.")
+    parser.add_argument("--output", default=None, help="Output path. Default: suite2p_dir/roi_manual_labels.npy.")
+    parser.add_argument("--no-backup", action="store_true", help="Do not back up an existing roi_manual_labels.npy.")
     args = parser.parse_args()
     output = apply_label_export(
         args.export_json,

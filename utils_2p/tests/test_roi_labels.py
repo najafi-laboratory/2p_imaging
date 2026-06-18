@@ -57,7 +57,7 @@ class RoiLabelsTest(unittest.TestCase):
         qc_stat = np.asarray([suite2p_stat[2], suite2p_stat[0]], dtype=object)
         np.testing.assert_array_equal(map_qc_to_suite2p_rois(qc_stat, suite2p_stat), [2, 0])
 
-    def test_applies_json_labels_and_preserves_unreviewed_rows(self):
+    def test_applies_json_labels_to_manual_label_masks(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stat = np.asarray([_stat_entry([(i, i)]) for i in range(3)], dtype=object)
@@ -71,9 +71,9 @@ class RoiLabelsTest(unittest.TestCase):
                         "suite2p_roi_count": 3,
                         "suite2p_stat_fingerprint": suite2p_stat_fingerprint(stat),
                         "labels": [
-                            {"summary_roi": 0, "suite2p_roi": 2, "label": 0},
-                            {"summary_roi": 1, "suite2p_roi": 0, "label": 1},
-                            {"summary_roi": 2, "suite2p_roi": 1, "label": None},
+                            {"summary_roi": 0, "suite2p_roi": 2, "label": 0, "morphology_pass": False},
+                            {"summary_roi": 1, "suite2p_roi": 0, "label": 1, "morphology_pass": True},
+                            {"summary_roi": 2, "suite2p_roi": 1, "label": 2, "morphology_pass": True},
                         ]
                     }
                 ),
@@ -81,11 +81,12 @@ class RoiLabelsTest(unittest.TestCase):
             )
 
             output = apply_label_export(export, root, backup=False)
-            updated = np.load(root / "iscell_qc.npy")
+            updated = np.load(root / "roi_manual_labels.npy")
             np.testing.assert_array_equal(updated[:, 0], [1, 0, 0])
-            np.testing.assert_allclose(updated[:, 1], [1.0, 0.2, 0.0])
+            np.testing.assert_allclose(updated[:, 1], [1, 0, np.nan], equal_nan=True)
+            np.testing.assert_allclose(updated[:, 2], [1, 1, np.nan], equal_nan=True)
             np.testing.assert_array_equal(np.load(root / "iscell.npy"), original)
-            self.assertEqual(output, (root / "iscell_qc.npy").resolve())
+            self.assertEqual(output, (root / "roi_manual_labels.npy").resolve())
 
     def test_roi_morphology_metrics_match_qc_connectivity_semantics(self):
         stat = np.asarray(
@@ -118,18 +119,30 @@ class RoiLabelsTest(unittest.TestCase):
         self.assertIn("skew", reasons[0][0])
         self.assertIn("connectivity", reasons[0][1])
 
-    def test_load_reviewed_dff_uses_iscell_qc(self):
+    def test_load_reviewed_dff_uses_roi_manual_labels(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             self._write_processed_session(root)
             plane = root / "suite2p" / "plane0"
-            np.save(plane / "iscell_qc.npy", np.asarray([[0, 0.0], [1, 1.0], [1, 1.0]]))
+            np.save(
+                plane / "roi_manual_labels.npy",
+                np.asarray(
+                    [
+                        [0, 0, 0],
+                        [1, 1, 1],
+                        [1, np.nan, np.nan],
+                    ],
+                    dtype=float,
+                ),
+            )
 
             result = load_reviewed_dff(root, baseline_sigma=1.0)
+            permissive = load_reviewed_dff(root, policy="full_suite2p_good", baseline_sigma=1.0)
 
-            np.testing.assert_array_equal(result["roi_indices"], [1, 2])
-            self.assertEqual(result["dff"].shape, (2, 4))
-            self.assertEqual(result["label_path"].name, "iscell_qc.npy")
+            np.testing.assert_array_equal(result["roi_indices"], [1])
+            np.testing.assert_array_equal(permissive["roi_indices"], [1, 2])
+            self.assertEqual(result["dff"].shape, (1, 4))
+            self.assertEqual(result["label_path"].name, "roi_manual_labels.npy")
 
     def test_load_reviewed_dff_accepts_external_json_and_can_keep_unlabeled(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -144,7 +157,7 @@ class RoiLabelsTest(unittest.TestCase):
                         "labels": [
                             {"suite2p_roi": 0, "label": 0},
                             {"suite2p_roi": 1, "label": None},
-                            {"suite2p_roi": 2, "label": 1},
+                            {"suite2p_roi": 2, "label": 2},
                         ],
                     }
                 ),
@@ -152,10 +165,10 @@ class RoiLabelsTest(unittest.TestCase):
             )
 
             strict = load_reviewed_dff(root, label_path=export, policy="good_only", baseline_sigma=1.0)
-            permissive = load_reviewed_dff(root, label_path=export, policy="not_bad", baseline_sigma=1.0)
+            permissive = load_reviewed_dff(root, label_path=export, policy="good_or_unsure", baseline_sigma=1.0)
 
-            np.testing.assert_array_equal(strict["roi_indices"], [2])
-            np.testing.assert_array_equal(permissive["roi_indices"], [1, 2])
+            np.testing.assert_array_equal(strict["roi_indices"], [])
+            np.testing.assert_array_equal(permissive["roi_indices"], [2])
             self.assertEqual(strict["label_path"], export.resolve())
 
     def test_load_reviewed_dff_does_not_fall_back_to_original_iscell(self):
@@ -163,7 +176,7 @@ class RoiLabelsTest(unittest.TestCase):
             root = Path(directory)
             self._write_processed_session(root)
 
-            with self.assertRaisesRegex(FileNotFoundError, "iscell_qc.npy"):
+            with self.assertRaisesRegex(FileNotFoundError, "roi_manual_labels.npy"):
                 load_reviewed_dff(root, baseline_sigma=1.0)
 
     def test_dff_qc_metrics_capture_event_and_temporal_snr(self):

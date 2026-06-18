@@ -1,7 +1,8 @@
 # Interactive Manual ROI Labeler
 
 The interactive preprocessing summary lets a reviewer mark each Suite2p ROI as
-**Good**, **Bad**, or **Unlabeled** by inspecting its morphology and dF/F trace.
+**Good**, **Bad**, **Unsure**, or **Unlabeled** by inspecting its morphology and
+dF/F trace.
 
 ## 1. Generate the labeler and summary
 
@@ -121,26 +122,39 @@ All ROIs detected by Suite2p
 Morphology QC target structure
         |
         v
-Manual Good / Bad / Unlabeled review
+Manual Good / Bad / Unsure / Unlabeled review
         |
         v
-iscell_qc.npy or manual-label JSON
+reviewed HTML, roi_manual_labels.npy, or manual-label JSON
 ```
 
-### `iscell_qc.npy`
+The reviewer can save the current labels back into a self-contained reviewed
+HTML copy with **Save labels into HTML**. Reopening that saved HTML restores the
+labels embedded in the file. The `.npy` and JSON buttons are export formats for
+downstream scripts.
 
-This file has the same two-column layout as Suite2p's `iscell.npy`:
+Custom morphology presets use the same explicit-save model. **Save preset**
+adds the current threshold values to the open page, **Save preset into HTML**
+saves a reviewed HTML copy that will reopen with that custom preset available,
+and **Export preset JSON** / **Import preset JSON** move a preset between
+sessions.
+
+### `roi_manual_labels.npy`
+
+This file is a three-column NumPy array with one row per original Suite2p ROI:
 
 ```python
 array([
-    [1.0, 1.0],  # good
-    [0.0, 0.0],  # bad
-    [1.0, 0.83], # unlabeled; original Suite2p values retained
+    [1.0, 1.0, 1.0],     # good, passed morphology
+    [0.0, 0.0, 0.0],     # bad, passed morphology
+    [0.0, 0.0, 1.0],     # unsure, passed morphology
+    [0.0, nan, nan],     # morphology-excluded ROI
 ])
 ```
 
-Column 0 is the binary ROI selection. Good rows are included, Bad rows are
-excluded, and Unlabeled rows retain their original Suite2p values.
+Column 0 is the full Suite2p good mask. Column 1 is the morphology-filtered
+good mask, with morphology-excluded ROIs marked as `NaN`. Column 2 is the same
+as column 1, but includes Unsure ROIs with Good ROIs.
 
 Place the reviewed file beside the original Suite2p files:
 
@@ -151,12 +165,12 @@ Place the reviewed file beside the original Suite2p files:
         ├── F.npy
         ├── Fneu.npy
         ├── iscell.npy
-        └── iscell_qc.npy
+        └── roi_manual_labels.npy
 ```
 
 ### Manual-label JSON
 
-The JSON export preserves all three label states explicitly:
+The JSON export preserves all four label states explicitly:
 
 ```json
 {
@@ -164,17 +178,18 @@ The JSON export preserves all three label states explicitly:
   "labels": [
     {"suite2p_roi": 0, "label": 1},
     {"suite2p_roi": 1, "label": 0},
-    {"suite2p_roi": 2, "label": null}
+    {"suite2p_roi": 2, "label": 2},
+    {"suite2p_roi": 3, "label": null}
   ]
 }
 ```
 
-`1` means Good, `0` means Bad, and `null` means Unlabeled.
+`1` means Good, `0` means Bad, `2` means Unsure, and `null` means Unlabeled.
 
 ### Load reviewed dF/F
 
-With `iscell_qc.npy` in `suite2p/plane0/`, load the selected ROIs in a script
-or notebook:
+With `roi_manual_labels.npy` in `suite2p/plane0/`, load morphology-filtered
+Good ROIs in a script or notebook:
 
 ```python
 from utils_2p.roi_labels import load_reviewed_dff
@@ -187,7 +202,13 @@ roi_indices = session["roi_indices"]
 `dff` has shape `(selected_rois, frames)`. `roi_indices` contains the
 corresponding original Suite2p ROI indices.
 
-When the JSON or `iscell_qc.npy` export is stored elsewhere, pass its path:
+To include Unsure ROIs with Good ROIs, use:
+
+```python
+session = load_reviewed_dff("/path/to/session", policy="good_or_unsure")
+```
+
+When the JSON or `roi_manual_labels.npy` export is stored elsewhere, pass its path:
 
 ```python
 session = load_reviewed_dff(
@@ -196,6 +217,6 @@ session = load_reviewed_dff(
 )
 ```
 
-Use the JSON export when downstream code must distinguish Good from Unlabeled
-ROIs. The companion notebook contains the same example:
+Use the JSON export when downstream code must distinguish Good, Bad, Unsure,
+and Unlabeled ROIs. The companion notebook contains the same example:
 [`utils_2p/roi_reviewer_exports.ipynb`](https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_reviewer_exports.ipynb).
