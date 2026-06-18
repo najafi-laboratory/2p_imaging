@@ -640,8 +640,8 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .imagewrap img, .imagewrap svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
 .imagewrap img {{ object-fit: contain; image-rendering: pixelated; }}
 .roi {{ fill: transparent; stroke: rgba(255,255,255,.86); stroke-width: .7; cursor: pointer; vector-effect: non-scaling-stroke; pointer-events: all; }}
-.roi:hover {{ fill: rgba(6,182,212,.2); stroke: #06b6d4; stroke-width: 1.6; }}
-.roi.selected {{ fill: rgba(255,255,255,.18); stroke: #ffffff; stroke-width: 2.8; }}
+.roi:hover {{ fill: transparent; stroke: #06b6d4; stroke-width: 1.6; }}
+.roi.selected {{ fill: transparent; stroke: #ffffff; stroke-width: 2.8; }}
 .controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 9px; align-items: center; margin-top: 10px; }}
 .label-controls {{ display: flex; flex-direction: column; gap: 8px; align-items: stretch; }}
 .label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
