@@ -714,7 +714,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <button id="markUnsure" class="unsure">Unsure (S)</button>
       <button id="markUnlabeled" class="unlabeled">Unlabeled (U)</button>
       <button id="markAllGood">Mark all visible as good</button>
-      <button id="clearLabels">Clear all labels / show all ROIs</button>
+      <button id="clearLabels">Clear manual labels</button>
       <div class="nav-row">
         <button id="previousRoi" class="nav-button" title="Previous visible ROI (Left arrow)">&#8592; Previous</button>
         <button id="nextRoi" class="nav-button" title="Next visible ROI (Right arrow)">Next &#8594;</button>
@@ -1141,7 +1141,7 @@ function setLabel(label) {{
 }}
 function clearAllLabels() {{
   for (let roi = 0; roi < data.nRois; roi++) {{
-    labels[roi] = -1;
+    labels[roi] = filterPass[roi] ? -1 : 0;
   }}
   document.getElementById("showAllRois").checked = false;
   updateLabelControls();
