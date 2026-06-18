@@ -173,19 +173,60 @@ def temporal_smoothness_snr(dff: Sequence[float] | np.ndarray) -> float:
     return float(1.0 - diff_var / (2.0 * trace_var))
 
 
-def dff_qc_metrics(dff: np.ndarray) -> list[dict[str, float]]:
+def autocorrelation_decay_tau(
+    dff: Sequence[float] | np.ndarray,
+    *,
+    frame_rate: float = 1.0,
+    max_lag_seconds: float = 10.0,
+) -> float:
+    """Return the dF/F autocorrelation e-folding decay time in seconds."""
+
+    trace = np.asarray(dff, dtype=float).ravel()
+    trace = trace[np.isfinite(trace)]
+    if trace.size < 3 or frame_rate <= 0:
+        return np.nan
+    trace = trace - np.nanmedian(trace)
+    variance = float(np.nanvar(trace))
+    if not np.isfinite(variance) or variance <= 0:
+        return np.nan
+
+    max_lag = min(trace.size - 1, max(1, int(round(float(max_lag_seconds) * float(frame_rate)))))
+    fft_size = 1 << int(np.ceil(np.log2(2 * trace.size - 1)))
+    spectrum = np.fft.rfft(trace, n=fft_size)
+    autocorr = np.fft.irfft(spectrum * np.conj(spectrum), n=fft_size)[: max_lag + 1]
+    if autocorr[0] <= 0 or not np.isfinite(autocorr[0]):
+        return np.nan
+    autocorr = autocorr / autocorr[0]
+
+    threshold = 1.0 / np.e
+    below = np.flatnonzero(autocorr[1:] <= threshold)
+    if below.size == 0:
+        return np.nan
+    lag = int(below[0] + 1)
+    if lag == 1:
+        crossing = float(lag)
+    else:
+        x0, x1 = float(lag - 1), float(lag)
+        y0, y1 = float(autocorr[lag - 1]), float(autocorr[lag])
+        crossing = x1 if y1 == y0 else x0 + (threshold - y0) * (x1 - x0) / (y1 - y0)
+    return float(crossing / float(frame_rate)) if np.isfinite(crossing) else np.nan
+
+
+def dff_qc_metrics(dff: np.ndarray, *, frame_rate: float = 1.0) -> list[dict[str, float]]:
     """Return QC metrics for every dF/F trace in ``dff``."""
 
     metrics: list[dict[str, float]] = []
     for trace in np.asarray(dff, dtype=float):
         event = robust_event_snr(trace)
         temporal = temporal_smoothness_snr(trace)
+        decay_tau = autocorrelation_decay_tau(trace, frame_rate=frame_rate)
         metrics.append(
             {
                 "event_snr": event["event_snr"],
                 "event_signal_amp": event["signal_amp"],
                 "event_noise_sd": event["noise_sd"],
                 "temporal_snr": float(temporal),
+                "decay_tau_seconds": float(decay_tau),
             }
         )
     return metrics

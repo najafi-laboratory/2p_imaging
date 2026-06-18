@@ -195,6 +195,7 @@ def _build_dff_and_metrics(
     ops: dict[str, Any],
     n_rois: int,
     n_frames: int,
+    frame_rate: float,
     storage_mode: str,
     sidecar_path: Path | None,
     *,
@@ -203,7 +204,7 @@ def _build_dff_and_metrics(
     if storage_mode == "embedded":
         dff = _load_suite2p_dff(session_dir, ops)
         dff = dff[:n_rois, :n_frames]
-        return dff, _dff_metrics_to_jsonable(list(dff_qc_metrics(dff)))
+        return dff, _dff_metrics_to_jsonable(list(dff_qc_metrics(dff, frame_rate=frame_rate)))
 
     if sidecar_path is None:
         raise ValueError("sidecar_path is required when storage_mode is file")
@@ -220,9 +221,19 @@ def _build_dff_and_metrics(
             dff_chunk = (signal - baseline) / baseline
         dff_chunk[~np.isfinite(dff_chunk)] = np.nan
         writer[start:stop] = dff_chunk.astype(np.float32, copy=False)
-        metrics.extend(_dff_metrics_to_jsonable(list(dff_qc_metrics(dff_chunk))))
+        metrics.extend(_dff_metrics_to_jsonable(list(dff_qc_metrics(dff_chunk, frame_rate=frame_rate))))
     writer.flush()
     return None, metrics
+
+
+def _add_roi_area_metrics(
+    dff_metrics: list[dict[str, float | None]],
+    stat: np.ndarray,
+) -> list[dict[str, float | None]]:
+    for metrics, entry in zip(dff_metrics, stat):
+        xpix = np.asarray(entry.get("xpix", []), dtype=int)
+        metrics["roi_area"] = float(xpix.size)
+    return dff_metrics
 
 
 def _stat_to_mask(stat: np.ndarray, image_shape: tuple[int, int]) -> np.ndarray:
@@ -771,6 +782,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <label>Sort visible ROIs by
           <select id="sortMetric">
             <option value="event_snr" selected>Event SNR</option>
+            <option value="decay_tau_seconds">Decay tau (s)</option>
+            <option value="roi_area">ROI area (px)</option>
             <option value="original">Original Suite2p index</option>
           </select>
         </label>
@@ -785,6 +798,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <summary>Metric formula used for sorting</summary>
           <div class="note">
             Event SNR = (P95(dF/F) - P50(dF/F)) / noise SD, where noise SD is the MAD-based estimate from the smoothed-trace residual.
+            Decay tau is the dF/F autocorrelation e-folding time in seconds. ROI area is the Suite2p ROI pixel count.
           </div>
         </details>
       </div>
@@ -910,8 +924,17 @@ function val(roi, frame) {{
 }}
 function metricValue(roi, metric) {{
   if (metric === "event_snr") return data.dffMetrics[roi].event_snr;
+  if (metric === "decay_tau_seconds") return data.dffMetrics[roi].decay_tau_seconds;
+  if (metric === "roi_area") return data.dffMetrics[roi].roi_area;
   if (metric === "original" || metric === "suite2p_index") return data.suite2pIndices[roi];
   return roi;
+}}
+function metricLabel(metric) {{
+  if (metric === "event_snr") return "Event SNR";
+  if (metric === "decay_tau_seconds") return "Decay tau (s)";
+  if (metric === "roi_area") return "ROI area (px)";
+  if (metric === "original" || metric === "suite2p_index") return "original Suite2p index";
+  return metric.replace("_", " ");
 }}
 function sortVisibleRois(rois) {{
   const metric = appliedSortMetric;
@@ -961,8 +984,9 @@ function setSelected(roi) {{
   selected = Math.max(0, Math.min(data.nRois - 1, Math.round(roi)));
   document.getElementById("roiInput").value = selected;
   const metrics = data.morphology[selected];
+  const dffMetrics = data.dffMetrics[selected];
   const suite2pRoi = data.suite2pIndices[selected];
-  document.getElementById("readout").textContent = `Selected Suite2p ROI ${{suite2pRoi}} (summary row ${{selected}}) | ${{data.nRois}} total ROIs | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(data.dffMetrics[selected].event_snr)}}`;
+  document.getElementById("readout").textContent = `Selected Suite2p ROI ${{suite2pRoi}} (summary row ${{selected}}) | ${{data.nRois}} total ROIs | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(dffMetrics.event_snr)}} | decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} s`;
   document.getElementById("traceTitle").textContent = `Selected Suite2p ROI ${{suite2pRoi}} ${{data.dffLabel}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -984,9 +1008,7 @@ function updateVisibleRois() {{
   for (const label of labels) {{ if (label === 1) good++; else if (label === 0) bad++; else if (label === 2) unsure++; else unlabeled++; }}
   const sortMetric = appliedSortMetric;
   const sortDirection = appliedSortDirection;
-  const sortLabel = sortMetric === "original"
-    ? `original Suite2p index (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`
-    : `${{sortMetric.replace("_", " ")}} (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`;
+  const sortLabel = `${{metricLabel(sortMetric)}} (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`;
   document.getElementById("sessionMessage").textContent = `Target structure: ${{data.targetStructure}}. Embedded ${{data.nRois}} original Suite2p ROIs. ${{good}} good, ${{bad}} bad, ${{unsure}} unsure, ${{unlabeled}} unlabeled; ${{visibleRois.length}} ROIs are visible. Sorting: ${{sortLabel}}.`;
   document.querySelectorAll(".roi").forEach(path => {{
     const roi = Number(path.dataset.roi);
@@ -1567,9 +1589,11 @@ def create_preprocessing_summary(
         ops,
         n_rois,
         n_frames,
+        frame_rate,
         dff_storage_mode,
         dff_sidecar_path,
     )
+    dff_metrics = _add_roi_area_metrics(dff_metrics, stat)
     mask = _stat_to_mask(stat, np.asarray(mean_green).shape[:2])
     iscell_path = suite2p_dir / "iscell.npy"
     iscell = load_iscell(iscell_path, n_rois)
