@@ -718,7 +718,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <button id="saveHtmlWithLabels">Save labels into HTML</button>
       <button id="saveManualLabels">Save roi_manual_labels.npy</button>
       <button id="exportLabels">Export label JSON</button>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/feature/interactive-roi-labels/docs/roi-reviewer-exports.md" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/docs/roi-reviewer-exports.md" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
       <span class="note">Use Save labels into HTML to make a self-contained reviewed copy. The .npy export has columns: full Suite2p good mask, morphology-filtered good mask, morphology-filtered good-or-unsure mask.</span>
     </div>
   </div>
