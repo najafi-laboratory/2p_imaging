@@ -1716,7 +1716,6 @@ async function saveManualLabels() {{
 }}
 async function saveHtmlWithLabels() {{
   const payloadScript = document.getElementById("payload");
-  const originalPayload = payloadScript.textContent;
   const savedPayload = {{
     ...data,
     initialLabels: Array.from(labels),
@@ -1725,13 +1724,18 @@ async function saveHtmlWithLabels() {{
     savedAt: new Date().toISOString(),
   }};
   const filename = `${{data.session}}_interactive_fov_roi_dff.html`;
-  let blob;
-  try {{
-    payloadScript.textContent = JSON.stringify(savedPayload).replace(/</g, "\\u003c");
-    blob = new Blob(["<!doctype html>\\n" + document.documentElement.outerHTML], {{type: "text/html"}});
-  }} finally {{
-    payloadScript.textContent = originalPayload;
-  }}
+  const htmlClone = document.documentElement.cloneNode(true);
+  htmlClone.querySelector("#payload").textContent = JSON.stringify(savedPayload).replace(/</g, "\\u003c");
+  htmlClone.querySelectorAll("dialog").forEach(dialog => {{
+    dialog.removeAttribute("open");
+  }});
+  htmlClone.querySelectorAll(".info-box").forEach(box => {{
+    box.setAttribute("hidden", "");
+  }});
+  htmlClone.querySelectorAll("[aria-expanded]").forEach(element => {{
+    element.setAttribute("aria-expanded", "false");
+  }});
+  const blob = new Blob(["<!doctype html>\\n" + htmlClone.outerHTML], {{type: "text/html"}});
   if ("showSaveFilePicker" in window) {{
     try {{
       const handle = await window.showSaveFilePicker({{
