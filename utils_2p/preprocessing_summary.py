@@ -795,7 +795,10 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       </div>
       <div id="customMetricSources" class="info-box" hidden>
         Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
+        Event SNR and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
         <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L121-L157" target="_blank" rel="noopener noreferrer">Event SNR calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L176-L216" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
       </div>
       <div class="filter-controls">
         <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
@@ -821,7 +824,10 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
     </div>
     <div id="sortCustomSources" class="info-box" hidden>
       Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
+      Event SNR and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L121-L157" target="_blank" rel="noopener noreferrer">Event SNR calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L176-L216" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
     </div>
     <div class="trace-sort">
       <label>Sort visible ROIs by
