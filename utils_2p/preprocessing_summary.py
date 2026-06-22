@@ -156,7 +156,46 @@ def _target_structure(pipeline_parameters: dict[str, Any], qc_parameters: dict[s
         return "dendrite"
     if "neuron" in source:
         return "neuron"
-    return "unknown"
+    return "all_rois"
+
+
+def _all_rois_filter() -> dict[str, float | int | None]:
+    return {
+        "skewMin": None,
+        "skewMax": None,
+        "maxConnect": None,
+        "aspectMin": None,
+        "aspectMax": None,
+        "footprintMin": None,
+        "footprintMax": None,
+        "compactMin": None,
+        "compactMax": None,
+        "eventSnrMin": None,
+        "eventSnrMax": None,
+        "decayTauMin": None,
+        "decayTauMax": None,
+    }
+
+
+def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
+    presets: dict[str, dict[str, float | int | None]] = {"all_rois": _all_rois_filter()}
+    for name, values in QC_PRESETS.items():
+        presets[name] = {
+            "skewMin": values["range_skew"][0],
+            "skewMax": values["range_skew"][1],
+            "maxConnect": values["max_connect"],
+            "aspectMin": values["range_aspect"][0],
+            "aspectMax": values["range_aspect"][1],
+            "footprintMin": values["range_footprint"][0],
+            "footprintMax": values["range_footprint"][1],
+            "compactMin": values["range_compact"][0],
+            "compactMax": values["range_compact"][1],
+            "eventSnrMin": None,
+            "eventSnrMax": None,
+            "decayTauMin": None,
+            "decayTauMax": None,
+        }
+    return presets
 
 
 def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any]) -> np.ndarray:
@@ -601,20 +640,7 @@ def _write_html(
         "dffStorageMode": dff_storage_mode,
         "dffSidecarName": dff_sidecar_name,
         "estimatedEmbeddedDffBytes": int(estimated_embedded_dff_bytes),
-        "morphologyPresets": {
-            name: {
-                "skewMin": values["range_skew"][0],
-                "skewMax": values["range_skew"][1],
-                "maxConnect": values["max_connect"],
-                "aspectMin": values["range_aspect"][0],
-                "aspectMax": values["range_aspect"][1],
-                "footprintMin": values["range_footprint"][0],
-                "footprintMax": values["range_footprint"][1],
-                "compactMin": values["range_compact"][0],
-                "compactMax": values["range_compact"][1],
-            }
-            for name, values in QC_PRESETS.items()
-        },
+        "morphologyPresets": _morphology_preset_payload(),
         "dff": _float32_b64(dff) if dff_storage_mode == "embedded" and dff is not None else None,
         "dffLabel": dff_label,
     }
@@ -638,31 +664,58 @@ body {{ margin: 0; font-family: Arial, Helvetica, sans-serif; color: #202124; ba
 .head {{ display: flex; justify-content: space-between; gap: 14px; align-items: end; margin-bottom: 12px; }}
 h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .meta {{ color: #667085; font-size: 13px; text-align: right; }}
-.grid {{ display: grid; gap: 10px; }}
-.fov-review {{ display: grid; grid-template-columns: minmax(0, 1fr) 310px; gap: 10px; align-items: start; }}
+.grid {{ display: grid; gap: 8px; }}
+.review-main {{ margin-top: 8px; }}
+.viewer-column {{ display: flex; flex-direction: column; gap: 8px; }}
+.fov-row {{ display: grid; grid-template-columns: minmax(0, 1fr) clamp(320px, 23vw, 380px); gap: 6px; align-items: start; }}
+.fov-review {{ display: grid; gap: 8px; align-items: start; }}
 .grid.with-red {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
 .grid.single-channel {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-.panel {{ background: #fff; border: 1px solid #d0d5dd; border-radius: 7px; padding: 10px; box-sizing: border-box; }}
-.title {{ font-size: 14px; font-weight: 700; margin-bottom: 8px; }}
+.panel {{ background: #fff; border: 1px solid #d0d5dd; border-radius: 7px; padding: 8px; box-sizing: border-box; }}
+.title {{ font-size: 14px; font-weight: 700; margin-bottom: 6px; }}
 .imagewrap {{ position: relative; width: 100%; aspect-ratio: 1/1; background: #111; overflow: hidden; }}
 .imagewrap img, .imagewrap svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
 .imagewrap img {{ object-fit: contain; image-rendering: pixelated; }}
 .roi {{ fill: none; stroke: rgba(255,255,255,.86); stroke-width: .7; cursor: pointer; vector-effect: non-scaling-stroke; pointer-events: all; }}
 .roi:hover {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
 .roi.selected {{ fill: none; stroke: #ffffff; stroke-width: 2.8; }}
-.controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 9px; align-items: center; margin-top: 10px; }}
-.label-controls {{ display: flex; flex-direction: column; gap: 8px; align-items: stretch; }}
-.label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
-.label-controls .nav-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }}
+.controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 7px; align-items: center; margin-top: 8px; }}
+.label-controls {{ display: flex; flex-direction: column; gap: 6px; align-items: stretch; }}
+.label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }}
+.label-controls .nav-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }}
+.roi-details summary {{ cursor: pointer; font-weight: 700; color: #344054; }}
+.roi-details #readout {{ margin-top: 5px; color: #475467; font-size: 12px; line-height: 1.35; }}
+.save-option {{ display: grid; gap: 3px; justify-items: start; }}
+.save-option button, .save-options .docs-link {{ width: fit-content; }}
+.info-button {{ padding: 3px 7px; width: fit-content; font-size: 12px; }}
 .nav-button {{ font-size: 18px; font-weight: 700; }}
-.filter-controls {{ display: grid; grid-template-columns: repeat(6, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; align-items: end; }}
+.control-column {{ display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto; }}
+.morphology-card {{ display: flex; flex-direction: column; gap: 6px; }}
+.qc-header {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
+.qc-current {{ color: #667085; font-size: 12px; }}
+.sort-card {{ display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid #eaecf0; }}
+.sort-header {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
+.sort-current {{ color: #667085; font-size: 12px; }}
+.filter-controls {{ display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; align-items: end; }}
 .filter-controls label {{ font-size: 12px; color: #475467; }}
 .filter-controls input {{ display: block; margin-top: 3px; width: 100%; box-sizing: border-box; }}
-.filter-summary {{ margin-top: 8px; color: #475467; font-size: 13px; }}
-.filter-details summary {{ cursor: pointer; font-weight: 700; }}
-.session-message {{ margin: 10px 0; padding: 9px 11px; background: #eef4ff; border: 1px solid #b2ccff; border-radius: 6px; font-size: 13px; }}
+.filter-subsection-title {{ margin-top: 10px; font-size: 13px; font-weight: 700; color: #344054; }}
+.source-heading {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
+.filter-summary {{ color: #475467; font-size: 13px; }}
+.dialog-actions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }}
+.dialog-header {{ display: flex; justify-content: space-between; gap: 10px; align-items: start; }}
+.dialog-title {{ font-size: 16px; font-weight: 700; }}
+.dialog-section {{ margin-top: 12px; padding-top: 12px; border-top: 1px solid #eaecf0; }}
+.dialog-section:first-child {{ margin-top: 0; padding-top: 0; border-top: 0; }}
+.dialog-section-title {{ font-size: 14px; font-weight: 700; margin-bottom: 6px; }}
+.info-box {{ margin-top: 8px; padding: 8px 10px; background: #f8fafc; border: 1px solid #d0d5dd; border-radius: 6px; color: #475467; font-size: 12px; line-height: 1.35; }}
+.save-options {{ display: grid; gap: 10px; margin-top: 10px; }}
+.bulk-label-controls {{ display: grid; gap: 8px; margin-top: 10px; justify-items: start; }}
+.bulk-label-controls select {{ width: auto; min-width: 160px; }}
+dialog {{ width: min(980px, calc(100vw - 40px)); border: 1px solid #d0d5dd; border-radius: 8px; padding: 14px; box-shadow: 0 24px 60px rgba(16,24,40,.24); }}
+dialog::backdrop {{ background: rgba(15,23,42,.38); }}
 button, input, select {{ font: inherit; }}
-button {{ border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 7px 10px; cursor: pointer; }}
+button {{ border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 6px 9px; cursor: pointer; }}
 button.good {{ border-color: #16a34a; color: #166534; }}
 button.bad {{ border-color: #dc2626; color: #991b1b; }}
 button.unsure {{ border-color: #d97706; color: #92400e; }}
@@ -677,63 +730,38 @@ input, select {{ border: 1px solid #d0d5dd; border-radius: 6px; padding: 7px 8px
 .filter-controls select {{ width: 100%; }}
 canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5dd; box-sizing: border-box; }}
 #stackCanvas {{ height: 560px; cursor: crosshair; }}
-#traceCanvas {{ height: 250px; cursor: grab; }}
+#traceCanvas {{ height: 220px; cursor: grab; }}
 #traceCanvas.dragging {{ cursor: grabbing; }}
-.plots {{ display: grid; grid-template-columns: 1fr; gap: 10px; margin-top: 10px; }}
+.plots {{ display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 8px; }}
 .trace-sort {{ display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; margin: 6px 0 10px; padding: 8px 10px; background: #f8fafc; border: 1px solid #d0d5dd; border-radius: 6px; }}
 .trace-sort label {{ font-size: 12px; color: #475467; }}
 .trace-sort select {{ display: block; margin-top: 3px; min-width: 180px; width: auto; }}
 .metric-formula {{ flex: 1 1 320px; }}
 .metric-formula summary {{ cursor: pointer; font-weight: 700; color: #344054; }}
+.metric-table-wrap {{ max-height: 75vh; overflow: auto; border: 1px solid #d0d5dd; margin-top: 12px; }}
+.metric-table {{ border-collapse: collapse; width: 100%; font-size: 12px; }}
+.metric-table th, .metric-table td {{ border: 1px solid #e5e7eb; padding: 4px 7px; text-align: right; white-space: nowrap; }}
+.metric-table th {{ position: sticky; top: 0; background: #f8fafc; z-index: 1; }}
+.metric-table td:first-child, .metric-table td:nth-child(2), .metric-table td:last-child {{ text-align: left; }}
+.metric-fail {{ background: rgba(248, 113, 113, .28); }}
 .trace-loader {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 8px; }}
 .trace-loader input {{ width: auto; }}
 .note {{ margin-top: 6px; color: #667085; font-size: 12px; }}
 .docs-link {{ display: inline-block; color: #175cd3; font-size: 13px; font-weight: 600; text-decoration: none; }}
 .docs-link:hover {{ text-decoration: underline; }}
-@media (max-width: 1100px) {{ .fov-review, .grid, .controls {{ grid-template-columns: 1fr; }} .head {{ display: block; }} .meta {{ text-align: left; }} }}
+@media (max-width: 1100px) {{ .fov-row, .fov-review, .grid, .controls {{ grid-template-columns: 1fr; }} .head {{ display: block; }} .meta {{ text-align: left; }} }}
 </style>
 </head>
 <body>
 <div class="page">
   <div class="head"><h1>{session_name} preprocessing QC ({n_rois} ROIs)</h1><div class="meta" id="meta"></div></div>
-  <div class="session-message" id="sessionMessage"></div>
-  <div class="fov-review">
-    <div class="grid {fov_grid_class}">
-      <div class="panel"><div class="title">Green functional mean</div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
-      {red_panel}
-      <div class="panel"><div class="title">ROI masks</div><div class="imagewrap"><img id="mask"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
-    </div>
-    <div class="panel label-controls">
-      <strong>Manual ROI review</strong>
-      <label>Selected ROI <input id="roiInput" type="number" min="0" value="0"></label>
-      <div id="readout"></div>
-      <div class="button-row">
-        <button id="markGood" class="good">Good (G)</button>
-        <button id="markBad" class="bad">Bad (B)</button>
-      </div>
-      <button id="markUnsure" class="unsure">Unsure (S)</button>
-      <button id="markUnlabeled" class="unlabeled">Unlabeled (U)</button>
-      <button id="markAllGood">Mark all visible as good</button>
-      <button id="clearLabels">Clear manual labels</button>
-      <div class="nav-row">
-        <button id="previousRoi" class="nav-button" title="Previous visible ROI (Left arrow)">&#8592; Previous</button>
-        <button id="nextRoi" class="nav-button" title="Next visible ROI (Right arrow)">Next &#8594;</button>
-      </div>
-      <span class="note">Keyboard: G/B/S/U label; left/right arrows select the previous/next visible ROI.</span>
-      <span id="labelCounts"></span>
-      <label><input id="showAllRois" type="checkbox"> Show excluded ROIs</label>
-      <button id="openExclusions">Open exclusion reasons</button>
-      <button id="saveHtmlWithLabels">Save labels into HTML</button>
-      <button id="saveManualLabels">Save roi_manual_labels.npy</button>
-      <a class="docs-link" href="https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/" target="_blank" rel="noopener noreferrer">How to use reviewer output</a>
-      <span class="note">Use Save labels into HTML to make a self-contained reviewed copy. The .npy export has columns: full Suite2p good mask, morphology-filtered good mask, morphology-filtered good-or-unsure mask.</span>
-    </div>
-  </div>
-  <div class="panel">
-    <div id="targetStructureSummary" class="title"></div>
-    <div class="filter-summary" id="filterSummary"></div>
-    <details class="filter-details">
-      <summary>Show morphology settings and threshold sandbox</summary>
+  <dialog id="morphologyDialog">
+    <div class="dialog-title">ROI QC Filters</div>
+    <div class="dialog-section">
+      <div class="dialog-section-title">Suite2p morphology QC filters</div>
+      <div id="targetStructureSummary" class="title"></div>
+      <div class="filter-summary" id="filterSummary"></div>
+      <div class="note">These preset thresholds preview pass/fail counts; labels change only when Apply Filters is clicked.</div>
       <div class="filter-controls">
         <label>Preset <select id="filterPreset"></select></label>
         <label>Custom preset name <input id="presetName" type="text" placeholder="my preset"></label>
@@ -742,69 +770,209 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <button id="exportPreset">Export preset JSON</button>
         <input id="presetFile" type="file" accept=".json" style="display:none;">
         <button id="importPreset">Import preset JSON</button>
+      </div>
+      <div class="filter-subsection-title source-heading">
+        <span>Suite2p Morphology Metrics</span>
+        <button class="info-button" type="button" data-info-target="suite2pMetricSources" aria-expanded="false">(i)</button>
+      </div>
+      <div id="suite2pMetricSources" class="info-box" hidden>
+        Suite2p morphology metrics here come from ROI <code>stat.npy</code> fields such as <code>aspect_ratio</code>, <code>compact</code>, <code>footprint</code>, and <code>skew</code>.
+        <a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>
+      </div>
+      <div class="filter-controls">
         <label>Skew min <input id="skewMin" type="number" step="0.01"></label>
         <label>Skew max <input id="skewMax" type="number" step="0.01"></label>
-        <label>Max connect <input id="maxConnect" type="number" min="0" step="1"></label>
         <label>Aspect min <input id="aspectMin" type="number" step="0.01"></label>
         <label>Aspect max <input id="aspectMax" type="number" step="0.01"></label>
         <label>Footprint min <input id="footprintMin" type="number" step="0.01"></label>
         <label>Footprint max <input id="footprintMax" type="number" step="0.01"></label>
         <label>Compact min <input id="compactMin" type="number" step="0.01"></label>
         <label>Compact max <input id="compactMax" type="number" step="0.01"></label>
-        <button id="resetFilter">Reset QC thresholds</button>
-        <button id="applyFilterToLabels">Apply filter to labels</button>
       </div>
-      <div class="note">This tests the same stat.npy morphology fields used by the QC stage. Changing thresholds previews pass/fail counts; labels change only when Apply filter to labels is clicked.</div>
-    </details>
+      <div class="filter-subsection-title source-heading">
+        <span>Custom Metrics</span>
+        <button class="info-button" type="button" data-info-target="customMetricSources" aria-expanded="false">(i)</button>
+      </div>
+      <div id="customMetricSources" class="info-box" hidden>
+        Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
+        Event SNR and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L121-L157" target="_blank" rel="noopener noreferrer">Event SNR calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L176-L216" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
+      </div>
+      <div class="filter-controls">
+        <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
+        <label>Event SNR min <input id="eventSnrMin" type="number" step="0.01" placeholder="optional"></label>
+        <label>Event SNR max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
+        <label>Decay tau min (s) <input id="decayTauMin" type="number" step="0.01" placeholder="optional"></label>
+        <label>Decay tau max (s) <input id="decayTauMax" type="number" step="0.01" placeholder="optional"></label>
+        <button id="resetFilter">Reset QC thresholds</button>
+        <button id="applyFilterToLabels">Apply Filters</button>
+      </div>
+    </div>
+    <div class="dialog-actions"><button id="closeMorphologyDialog" type="button">Close</button></div>
+  </dialog>
+  <dialog id="sortDialog">
+    <div class="dialog-title">Sort ROIs and dF/Fs</div>
+    <div class="source-heading">
+      <button class="info-button" type="button" data-info-target="sortSuite2pSources" aria-expanded="false">(i) Suite2p metrics</button>
+      <button class="info-button" type="button" data-info-target="sortCustomSources" aria-expanded="false">(i) custom metrics</button>
+    </div>
+    <div id="sortSuite2pSources" class="info-box" hidden>
+      Suite2p morphology sort options come from ROI <code>stat.npy</code> fields.
+      <a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>
+    </div>
+    <div id="sortCustomSources" class="info-box" hidden>
+      Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
+      Event SNR and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L121-L157" target="_blank" rel="noopener noreferrer">Event SNR calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L176-L216" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
+    </div>
+    <div class="trace-sort">
+      <label>Sort visible ROIs by
+        <select id="sortMetric">
+          <optgroup label="Suite2p Morphology Metrics">
+            <option value="roi_area">ROI area (px)</option>
+            <option value="skew">Skew</option>
+            <option value="aspect">Aspect ratio</option>
+            <option value="compact">Compactness</option>
+            <option value="footprint">Footprint</option>
+            <option value="original" selected>Original Suite2p index</option>
+          </optgroup>
+          <optgroup label="Custom Metrics">
+            <option value="event_snr">Event SNR</option>
+            <option value="decay_tau_seconds">Calcium decay constant (tau)</option>
+            <option value="connectivity">Connectivity</option>
+          </optgroup>
+        </select>
+      </label>
+      <label>Sort order
+        <select id="sortDirection">
+          <option value="desc">Highest first</option>
+          <option value="asc" selected>Lowest first</option>
+        </select>
+      </label>
+      <button id="applySort">Apply sort</button>
+    </div>
+    <div class="dialog-actions"><button id="closeSortDialog" type="button">Close</button></div>
+  </dialog>
+  <dialog id="saveLabelsDialog">
+    <div class="dialog-header">
+      <div class="dialog-title">Save Labels</div>
+      <button id="saveLabelsInfo" class="info-button" type="button" aria-expanded="false" aria-controls="saveLabelsHelp">(i)</button>
+    </div>
+    <div id="saveLabelsHelp" class="info-box" hidden>
+      Save current state into HTML downloads a reviewed HTML copy that preserves labels and custom morphology presets inside the file.
+      Save roi_manual_labels.npy downloads a three-column NumPy mask for downstream scripts: full Suite2p good mask, morphology-filtered good mask, and morphology-filtered good-or-unsure mask.
+    </div>
+    <div class="save-options">
+      <div class="save-option">
+        <button id="saveHtmlWithLabels">Save current state into HTML</button>
+        <span class="note">Use this to save the current state (labels, presets) of the .html to return to after closing the browser.</span>
+      </div>
+      <div class="save-option">
+        <button id="saveManualLabels">Save roi_manual_labels.npy</button>
+        <span class="note">Exports the downstream NumPy mask with full Suite2p, morphology-filtered good, and morphology-filtered good-or-unsure columns.</span>
+      </div>
+      <a class="docs-link" href="https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/#2-export-format-and-downstream-use" target="_blank" rel="noopener noreferrer">Output format details</a>
+    </div>
+    <div class="dialog-actions"><button id="closeSaveLabelsDialog" type="button">Close</button></div>
+  </dialog>
+  <dialog id="labelAllDialog">
+    <div class="dialog-title">Label all visible ROIs as ...</div>
+    <div class="note">This applies only to the ROIs currently visible in the reviewer.</div>
+    <div class="bulk-label-controls">
+      <label>Label
+        <select id="labelAllValue">
+          <option value="1">Good</option>
+          <option value="0">Bad</option>
+          <option value="2">Unsure</option>
+          <option value="-1">Unlabeled</option>
+        </select>
+      </label>
+    </div>
+    <div class="dialog-actions">
+      <button id="applyLabelAll" type="button">Apply</button>
+      <button id="closeLabelAllDialog" type="button">Close</button>
+    </div>
+  </dialog>
+  <div class="review-main">
+    <div class="viewer-column">
+      <div class="fov-row">
+        <div class="fov-review">
+          <div class="grid {fov_grid_class}">
+            <div class="panel"><div class="title">Green functional mean</div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
+            {red_panel}
+            <div class="panel"><div class="title">ROI masks</div><div class="imagewrap"><img id="mask"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
+          </div>
+        </div>
+        <div class="control-column">
+          <div class="panel morphology-card">
+            <div class="qc-header"><strong>ROI QC Filters</strong><span id="targetStructureInline" class="qc-current"></span></div>
+            <div id="filterSummaryInline" class="filter-summary"></div>
+            <button id="openMorphologyDialog" type="button">Edit ROI Metric Filters</button>
+            <label><input id="showAllRois" type="checkbox"> Show all Filtered ROIs</label>
+            <div class="sort-card">
+              <div class="sort-header"><strong>Sorting</strong><span id="sortCurrent" class="sort-current"></span></div>
+              <button id="openSortDialog" type="button">Sort ROIs by Metrics</button>
+            </div>
+          </div>
+          <div class="panel label-controls">
+            <strong>Manual ROI Labeler</strong>
+            <label>Selected ROI (Suite2p Index) <input id="roiInput" type="number" min="0" value="0"> <span id="selectedSortPosition" class="note"></span></label>
+            <details class="roi-details">
+              <summary id="roiDetailsSummary">Selected ROI Details</summary>
+              <div id="readout"></div>
+            </details>
+            <div class="button-row">
+              <button id="markGood" class="good">Good (G)</button>
+              <button id="markBad" class="bad">Bad (B)</button>
+            </div>
+            <div class="button-row">
+              <button id="markUnsure" class="unsure">Unsure (S)</button>
+              <button id="markUnlabeled" class="unlabeled">Unlabeled (U)</button>
+            </div>
+            <button id="openLabelAllDialog" type="button">Label all as ...</button>
+            <div class="nav-row">
+              <button id="previousRoi" class="nav-button" title="Previous visible ROI (Left arrow)">&#8592; Previous</button>
+              <button id="nextRoi" class="nav-button" title="Next visible ROI (Right arrow)">Next &#8594;</button>
+            </div>
+            <span class="note">Keyboard: G/B/S/U label; left/right arrows select the previous/next visible ROI.</span>
+            <span id="labelCounts"></span>
+            <button id="openExclusions">Open ROI metric spreadsheet</button>
+            <button id="openSaveLabelsDialog" type="button">Save Labels</button>
+          </div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="title" id="traceTitle">Selected ROI dF/F</div>
+        <div class="trace-loader" id="traceLoader" style="display:none;">
+          <input id="dffFile" type="file" accept=".npy">
+          <button id="loadDffFile">Load dF/F file</button>
+        </div>
+        <div class="note" id="traceLoadNote"></div>
+        <canvas id="traceCanvas"></canvas>
+        <div class="note">Wheel or drag to zoom/pan time. Double-click to reset.</div>
+        <div class="controls">
+          <strong>Trace window</strong>
+          <label>Start s <input id="timeStart" type="number" min="0" step="0.001" value="0"></label>
+          <label>End s <input id="timeEnd" type="number" min="0" step="0.001" value="0"></label>
+          <button id="reset">Reset zoom</button>
+        </div>
+      </div>
+    </div>
   </div>
   <div class="plots">
     <div class="panel">
-      <div class="title" id="traceTitle">Selected ROI dF/F</div>
-      <div class="trace-loader" id="traceLoader" style="display:none;">
-        <input id="dffFile" type="file" accept=".npy">
-        <button id="loadDffFile">Load dF/F file</button>
-      </div>
-      <div class="note" id="traceLoadNote"></div>
-      <canvas id="traceCanvas"></canvas>
-      <div class="note">Wheel or drag to zoom/pan time. Double-click to reset.</div>
+      <div class="title" id="stackTitle">dF/F, stacked ROIs</div>
       <div class="controls">
-        <strong>Trace window</strong>
-        <label>Start s <input id="timeStart" type="number" min="0" step="0.001" value="0"></label>
-        <label>End s <input id="timeEnd" type="number" min="0" step="0.001" value="0"></label>
+        <strong>Stacked trace range</strong>
         <label>First ROI <input id="yStart" type="number" min="0" value="0"></label>
         <label>Last ROI <input id="yEnd" type="number" min="0" value="0"></label>
-        <button id="reset">Reset zoom</button>
-      </div>
-    </div>
-    <div class="panel">
-      <div class="title" id="stackTitle">dF/F, stacked ROIs</div>
-      <div class="trace-sort">
-        <label>Sort visible ROIs by
-          <select id="sortMetric">
-            <option value="event_snr" selected>Event SNR</option>
-            <option value="decay_tau_seconds">Decay tau (s)</option>
-            <option value="roi_area">ROI area (px)</option>
-            <option value="original">Original Suite2p index</option>
-          </select>
-        </label>
-        <label>Sort order
-          <select id="sortDirection">
-            <option value="desc" selected>Highest first</option>
-            <option value="asc">Lowest first</option>
-          </select>
-        </label>
-        <button id="applySort">Apply sort</button>
-        <details class="metric-formula">
-          <summary>Metric formula used for sorting</summary>
-          <div class="note">
-            Event SNR = (P95(dF/F) - P50(dF/F)) / noise SD, where noise SD is the MAD-based estimate from the smoothed-trace residual.
-            Decay tau is the dF/F autocorrelation e-folding time in seconds. ROI area is the Suite2p ROI pixel count.
-          </div>
-        </details>
       </div>
       <canvas id="stackCanvas"></canvas>
-      <div class="note">Change the dropdowns and click Apply sort to reorder the stacked traces. The First/Last ROI range follows the applied row order, not the Suite2p index.</div>
-      <div class="note">Wheel to zoom time. Use First/Last ROI to choose the displayed rows in the applied sorted order. Stack labels and ROI readouts use the original Suite2p ROI index.</div>
+      <div class="note">Wheel to zoom time.</div>
     </div>
   </div>
 </div>
@@ -815,12 +983,13 @@ const data = JSON.parse(document.getElementById("payload").textContent);
 document.getElementById("green").src = data.green;
 const redImage = document.getElementById("red");
 if (redImage && data.redAvailable) redImage.src = data.red;
+document.querySelectorAll(".imagewrap img").forEach(img => img.addEventListener("load", syncControlColumnHeight));
 document.getElementById("mask").style.display = "none";
 document.getElementById("meta").textContent = `${{data.nRois}} ROIs | ${{data.nFrames.toLocaleString()}} frames | ${{data.frameRate.toFixed(3)}} Hz${{data.redAvailable ? "" : " | no red channel detected"}}`;
 document.querySelectorAll(".overlay").forEach(svg => svg.setAttribute("viewBox", `0 0 ${{data.imageWidth}} ${{data.imageHeight}}`));
-document.getElementById("stackTitle").textContent = `${{data.dffLabel}}, stacked ROIs`;
 document.getElementById("targetStructureSummary").textContent = `Target structure: ${{data.targetStructure}}`;
-document.getElementById("roiInput").max = data.nRois - 1;
+document.getElementById("targetStructureInline").textContent = `Current preset target structure: ${{data.targetStructure}}`;
+document.getElementById("roiInput").max = Math.max(...data.suite2pIndices);
 const sessionDurationSec = (data.nFrames - 1) / data.frameRate;
 document.getElementById("timeStart").max = sessionDurationSec.toFixed(3);
 document.getElementById("timeEnd").max = sessionDurationSec.toFixed(3);
@@ -904,15 +1073,32 @@ if (Array.isArray(data.initialLabels) && data.initialLabels.length === data.nRoi
 }}
 const filterPass = new Uint8Array(data.nRois);
 let customPresets = data.customMorphologyPresets && typeof data.customMorphologyPresets === "object" ? {{...data.customMorphologyPresets}} : {{}};
-const defaultFilter = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.neuron;
+const defaultFilter = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.all_rois;
 let selected = 0, x0 = 0, x1 = data.nFrames - 1, y0 = 0, y1 = 0, visibleRois = [];
-let appliedSortMetric = "event_snr";
-let appliedSortDirection = "desc";
+let appliedSortMetric = "original";
+let appliedSortDirection = "asc";
 
 function fit(canvas) {{
   const r = window.devicePixelRatio || 1, box = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.round(box.width * r));
   canvas.height = Math.max(1, Math.round(box.height * r));
+}}
+function syncControlColumnHeight() {{
+  const fovReview = document.querySelector(".fov-review");
+  const controls = document.querySelector(".control-column");
+  if (!fovReview || !controls) return;
+  if (window.matchMedia("(max-width: 1100px)").matches) {{
+    controls.style.height = "";
+    controls.style.maxHeight = "";
+    controls.style.overflowY = "";
+    return;
+  }}
+  const fovHeight = Math.round(fovReview.getBoundingClientRect().height);
+  if (fovHeight > 0) {{
+    controls.style.height = `${{fovHeight}}px`;
+    controls.style.maxHeight = `${{fovHeight}}px`;
+    controls.style.overflowY = "auto";
+  }}
 }}
 function trace(roi) {{
   if (!dff) return null;
@@ -926,13 +1112,23 @@ function metricValue(roi, metric) {{
   if (metric === "event_snr") return data.dffMetrics[roi].event_snr;
   if (metric === "decay_tau_seconds") return data.dffMetrics[roi].decay_tau_seconds;
   if (metric === "roi_area") return data.dffMetrics[roi].roi_area;
+  if (metric === "connectivity") return data.morphology[roi].connect;
+  if (metric === "skew") return data.morphology[roi].skew;
+  if (metric === "aspect") return data.morphology[roi].aspect;
+  if (metric === "compact") return data.morphology[roi].compact;
+  if (metric === "footprint") return data.morphology[roi].footprint;
   if (metric === "original" || metric === "suite2p_index") return data.suite2pIndices[roi];
   return roi;
 }}
 function metricLabel(metric) {{
   if (metric === "event_snr") return "Event SNR";
-  if (metric === "decay_tau_seconds") return "Decay tau (s)";
+  if (metric === "decay_tau_seconds") return "Calcium decay constant (tau)";
   if (metric === "roi_area") return "ROI area (px)";
+  if (metric === "connectivity") return "Connectivity";
+  if (metric === "skew") return "Skew";
+  if (metric === "aspect") return "Aspect ratio";
+  if (metric === "compact") return "Compactness";
+  if (metric === "footprint") return "Footprint";
   if (metric === "original" || metric === "suite2p_index") return "original Suite2p index";
   return metric.replace("_", " ");
 }}
@@ -950,10 +1146,27 @@ function sortVisibleRois(rois) {{
     return direction === "asc" ? av - bv : bv - av;
   }});
 }}
+function roiFromSuite2pIndex(value) {{
+  const suite2pIndex = Math.round(Number(value));
+  const exact = data.suite2pIndices.indexOf(suite2pIndex);
+  if (exact >= 0) return exact;
+  return Math.max(0, Math.min(data.nRois - 1, suite2pIndex));
+}}
+function currentSortPositionText() {{
+  const position = visibleRois.includes(selected) ? visibleRois.indexOf(selected) + 1 : 0;
+  const total = visibleRois.length;
+  return `${{position}}/${{total}} by ${{metricLabel(appliedSortMetric)}} ${{appliedSortDirection}}`;
+}}
+function updateSortCurrent() {{
+  document.getElementById("sortCurrent").textContent = `Current order: ${{metricLabel(appliedSortMetric)}}, ${{appliedSortDirection}}`;
+  document.getElementById("selectedSortPosition").textContent = currentSortPositionText();
+}}
 function applySort() {{
   appliedSortMetric = document.getElementById("sortMetric").value;
   appliedSortDirection = document.getElementById("sortDirection").value;
   updateVisibleRois();
+  updateSortCurrent();
+  if (visibleRois.includes(selected)) setSelected(selected);
 }}
 function syncTimeInputs() {{
   document.getElementById("timeStart").value = (x0 / data.frameRate).toFixed(3);
@@ -982,14 +1195,16 @@ function setFrameWindow(startFrame, endFrame) {{
 }}
 function setSelected(roi) {{
   selected = Math.max(0, Math.min(data.nRois - 1, Math.round(roi)));
-  document.getElementById("roiInput").value = selected;
   const metrics = data.morphology[selected];
   const dffMetrics = data.dffMetrics[selected];
   const suite2pRoi = data.suite2pIndices[selected];
-  document.getElementById("readout").textContent = `Selected Suite2p ROI ${{suite2pRoi}} (summary row ${{selected}}) | ${{data.nRois}} total ROIs | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(dffMetrics.event_snr)}} | decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} s`;
-  document.getElementById("traceTitle").textContent = `Selected Suite2p ROI ${{suite2pRoi}} ${{data.dffLabel}}`;
+  document.getElementById("roiInput").value = suite2pRoi;
+  document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
+  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(dffMetrics.event_snr)}} | decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} s`;
+  document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
+  updateSortCurrent();
   draw();
 }}
 function updateVisibleRois() {{
@@ -1004,15 +1219,9 @@ function updateVisibleRois() {{
   y1 = Math.max(y0, Math.min(y1 || Math.min(19, visibleRois.length - 1), visibleRois.length - 1));
   document.getElementById("yStart").value = y0;
   document.getElementById("yEnd").value = y1;
-  let good = 0, bad = 0, unsure = 0, unlabeled = 0;
-  for (const label of labels) {{ if (label === 1) good++; else if (label === 0) bad++; else if (label === 2) unsure++; else unlabeled++; }}
-  const sortMetric = appliedSortMetric;
-  const sortDirection = appliedSortDirection;
-  const sortLabel = `${{metricLabel(sortMetric)}} (${{sortDirection === "asc" ? "lowest first" : "highest first"}})`;
-  document.getElementById("sessionMessage").textContent = `Target structure: ${{data.targetStructure}}. Embedded ${{data.nRois}} original Suite2p ROIs. ${{good}} good, ${{bad}} bad, ${{unsure}} unsure, ${{unlabeled}} unlabeled; ${{visibleRois.length}} ROIs are visible. Sorting: ${{sortLabel}}.`;
   document.querySelectorAll(".roi").forEach(path => {{
     const roi = Number(path.dataset.roi);
-    path.style.display = (showAll || labels[roi] !== 0) ? "" : "none";
+    path.style.display = (showAll || filterPass[roi]) ? "" : "none";
   }});
   if (!visibleRois.includes(selected)) setSelected(visibleRois[0]);
   else draw();
@@ -1027,14 +1236,30 @@ function updateLabelControls() {{
   for (const value of labels) {{ if (value === 1) good++; else if (value === 0) bad++; else if (value === 2) unsure++; else unlabeled++; }}
   document.getElementById("labelCounts").textContent = `${{good}} good | ${{bad}} bad | ${{unsure}} unsure | ${{unlabeled}} unlabeled`;
 }}
+function labelName(label) {{
+  if (label === 1) return "good";
+  if (label === 0) return "bad";
+  if (label === 2) return "unsure";
+  return "unlabeled";
+}}
 function fmt(value) {{
   if (value === null || value === undefined) return "nan";
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric.toFixed(3) : "nan";
 }}
 function filterValue(id) {{
-  const value = Number(document.getElementById(id).value);
+  const element = document.getElementById(id);
+  if (!element) return NaN;
+  const raw = element.value;
+  if (String(raw).trim() === "") return NaN;
+  const value = Number(raw);
   return Number.isFinite(value) ? value : NaN;
+}}
+function passesLower(value, lower) {{
+  return !Number.isFinite(lower) || (Number.isFinite(value) && value >= lower);
+}}
+function passesUpper(value, upper) {{
+  return !Number.isFinite(upper) || (Number.isFinite(value) && value <= upper);
 }}
 function readFilter() {{
   return {{
@@ -1043,14 +1268,28 @@ function readFilter() {{
     aspectMin: filterValue("aspectMin"), aspectMax: filterValue("aspectMax"),
     footprintMin: filterValue("footprintMin"), footprintMax: filterValue("footprintMax"),
     compactMin: filterValue("compactMin"), compactMax: filterValue("compactMax"),
+    eventSnrMin: filterValue("eventSnrMin"), eventSnrMax: filterValue("eventSnrMax"),
+    decayTauMin: filterValue("decayTauMin"), decayTauMax: filterValue("decayTauMax"),
   }};
 }}
 function normalizeFilter(filter) {{
   const normalized = {{}};
   for (const key of ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"]) {{
+    if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
+      normalized[key] = null;
+      continue;
+    }}
     const value = Number(filter[key]);
-    if (!Number.isFinite(value)) throw new Error(`Preset field ${{key}} is missing or not finite.`);
-    normalized[key] = value;
+    normalized[key] = Number.isFinite(value) ? value : null;
+  }}
+  for (const key of ["eventSnrMin","eventSnrMax","decayTauMin","decayTauMax"]) {{
+    if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
+      normalized[key] = null;
+      continue;
+    }}
+    const value = Number(filter[key]);
+    normalized[key] = Number.isFinite(value) ? value : null;
+    if ((key.endsWith("Max")) && normalized[key] === 0) normalized[key] = null;
   }}
   return normalized;
 }}
@@ -1058,7 +1297,7 @@ function writeFilter(filter) {{
   const normalized = normalizeFilter(filter);
   for (const [id, value] of Object.entries(normalized)) {{
     const input = document.getElementById(id);
-    if (input) input.value = value;
+    if (input) input.value = value === null || value === undefined ? "" : value;
   }}
   evaluateFilter();
 }}
@@ -1095,32 +1334,47 @@ function saveCurrentPresetToPage() {{
   document.getElementById("filterPreset").value = `custom:${{name}}`;
   return name;
 }}
-function passesFilter(metrics, filter) {{
+function passesFilter(roi, metrics, filter) {{
+  const dffMetrics = data.dffMetrics[roi];
   return (
-    metrics.footprint >= filter.footprintMin && metrics.footprint <= filter.footprintMax &&
-    metrics.skew >= filter.skewMin && metrics.skew <= filter.skewMax &&
-    metrics.aspect >= filter.aspectMin && metrics.aspect <= filter.aspectMax &&
-    metrics.compact >= filter.compactMin && metrics.compact <= filter.compactMax &&
-    metrics.connect <= filter.maxConnect
+    passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax) &&
+    passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax) &&
+    passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax) &&
+    passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax) &&
+    passesUpper(metrics.connect, filter.maxConnect) &&
+    passesLower(dffMetrics.event_snr, filter.eventSnrMin) &&
+    passesUpper(dffMetrics.event_snr, filter.eventSnrMax) &&
+    passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin) &&
+    passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)
   );
 }}
-function morphologyReasons(metrics, filter) {{
+function morphologyReasons(metrics, dffMetrics, filter) {{
   const reasons = [];
-  if (!(metrics.footprint >= filter.footprintMin && metrics.footprint <= filter.footprintMax)) reasons.push(`footprint ${{fmt(metrics.footprint)}} outside [${{filter.footprintMin}}, ${{filter.footprintMax}}]`);
-  if (!(metrics.skew >= filter.skewMin && metrics.skew <= filter.skewMax)) reasons.push(`skew ${{fmt(metrics.skew)}} outside [${{filter.skewMin}}, ${{filter.skewMax}}]`);
-  if (!(metrics.aspect >= filter.aspectMin && metrics.aspect <= filter.aspectMax)) reasons.push(`aspect_ratio ${{fmt(metrics.aspect)}} outside [${{filter.aspectMin}}, ${{filter.aspectMax}}]`);
-  if (!(metrics.compact >= filter.compactMin && metrics.compact <= filter.compactMax)) reasons.push(`compact ${{fmt(metrics.compact)}} outside [${{filter.compactMin}}, ${{filter.compactMax}}]`);
-  if (metrics.connect > filter.maxConnect) reasons.push(`connectivity ${{metrics.connect}} exceeds ${{filter.maxConnect}}`);
+  if (!passesLower(metrics.footprint, filter.footprintMin)) reasons.push(`footprint ${{fmt(metrics.footprint)}} below ${{filter.footprintMin}}`);
+  if (!passesUpper(metrics.footprint, filter.footprintMax)) reasons.push(`footprint ${{fmt(metrics.footprint)}} above ${{filter.footprintMax}}`);
+  if (!passesLower(metrics.skew, filter.skewMin)) reasons.push(`skew ${{fmt(metrics.skew)}} below ${{filter.skewMin}}`);
+  if (!passesUpper(metrics.skew, filter.skewMax)) reasons.push(`skew ${{fmt(metrics.skew)}} above ${{filter.skewMax}}`);
+  if (!passesLower(metrics.aspect, filter.aspectMin)) reasons.push(`aspect_ratio ${{fmt(metrics.aspect)}} below ${{filter.aspectMin}}`);
+  if (!passesUpper(metrics.aspect, filter.aspectMax)) reasons.push(`aspect_ratio ${{fmt(metrics.aspect)}} above ${{filter.aspectMax}}`);
+  if (!passesLower(metrics.compact, filter.compactMin)) reasons.push(`compact ${{fmt(metrics.compact)}} below ${{filter.compactMin}}`);
+  if (!passesUpper(metrics.compact, filter.compactMax)) reasons.push(`compact ${{fmt(metrics.compact)}} above ${{filter.compactMax}}`);
+  if (!passesUpper(metrics.connect, filter.maxConnect)) reasons.push(`connectivity ${{metrics.connect}} exceeds ${{filter.maxConnect}}`);
+  if (!passesLower(dffMetrics.event_snr, filter.eventSnrMin)) reasons.push(`event SNR ${{fmt(dffMetrics.event_snr)}} below ${{filter.eventSnrMin}}`);
+  if (!passesUpper(dffMetrics.event_snr, filter.eventSnrMax)) reasons.push(`event SNR ${{fmt(dffMetrics.event_snr)}} above ${{filter.eventSnrMax}}`);
+  if (!passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin)) reasons.push(`decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} below ${{filter.decayTauMin}}`);
+  if (!passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)) reasons.push(`decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} above ${{filter.decayTauMax}}`);
   return reasons;
 }}
 function evaluateFilter() {{
   const filter = readFilter();
   let pass = 0;
   for (let roi = 0; roi < data.nRois; roi++) {{
-    filterPass[roi] = passesFilter(data.morphology[roi], filter) ? 1 : 0;
+    filterPass[roi] = passesFilter(roi, data.morphology[roi], filter) ? 1 : 0;
     pass += filterPass[roi];
   }}
-  document.getElementById("filterSummary").textContent = `${{pass}} / ${{data.nRois}} original Suite2p ROIs pass the current morphology thresholds.`;
+  const summary = `${{pass}} / ${{data.nRois}} original Suite2p ROIs pass the current morphology and custom metric filters.`;
+  document.getElementById("filterSummary").textContent = summary;
+  document.getElementById("filterSummaryInline").textContent = summary;
   draw();
 }}
 function resetFilter() {{
@@ -1136,14 +1390,6 @@ function applyFilterToLabels() {{
 }}
 function setLabel(label) {{
   labels[selected] = label;
-  updateLabelControls();
-  updateVisibleRois();
-}}
-function clearAllLabels() {{
-  for (let roi = 0; roi < data.nRois; roi++) {{
-    labels[roi] = filterPass[roi] ? -1 : 0;
-  }}
-  document.getElementById("showAllRois").checked = false;
   updateLabelControls();
   updateVisibleRois();
 }}
@@ -1203,6 +1449,10 @@ function colorForRoi(roi) {{
   return palette[roi % palette.length];
 }}
 function drawStack() {{
+  const firstRow = Math.max(0, Math.floor(y0));
+  const lastRow = Math.min(visibleRois.length - 1, Math.ceil(y1));
+  const selectedPosition = visibleRois.includes(selected) ? visibleRois.indexOf(selected) + 1 : 0;
+  document.getElementById("stackTitle").textContent = `stacked raw dF/F, selected is ${{selectedPosition}}/${{visibleRois.length}} sorted by ${{metricLabel(appliedSortMetric)}} ${{appliedSortDirection}}`;
   const canvas = document.getElementById("stackCanvas"); fit(canvas); const ctx = canvas.getContext("2d");
   const w = canvas.width, h = canvas.height, l = 62, r = 16, t = 14, b = 56, pw = w-l-r, ph = h-t-b;
   ctx.clearRect(0,0,w,h); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h); drawAxes(ctx,w,h,l,t,pw,ph,"time (s)","ROI index");
@@ -1298,7 +1548,7 @@ function drawTrace() {{
 }}
 function draw() {{ drawTrace(); drawStack(); }}
 function reset() {{ x0=0; x1=data.nFrames-1; y0=0; y1=Math.min(19, visibleRois.length-1); document.getElementById("yStart").value=0; document.getElementById("yEnd").value=y1; syncTimeInputs(); draw(); }}
-document.getElementById("roiInput").addEventListener("change", e => setSelected(Number(e.target.value)));
+document.getElementById("roiInput").addEventListener("change", e => setSelected(roiFromSuite2pIndex(e.target.value)));
 document.getElementById("timeStart").addEventListener("change", () => setTimeWindow(document.getElementById("timeStart").value, document.getElementById("timeEnd").value));
 document.getElementById("timeEnd").addEventListener("change", () => setTimeWindow(document.getElementById("timeStart").value, document.getElementById("timeEnd").value));
 document.getElementById("yStart").addEventListener("change", e => {{ y0=Number(e.target.value); draw(); }});
@@ -1308,18 +1558,38 @@ document.getElementById("markGood").addEventListener("click", () => setLabel(1))
 document.getElementById("markBad").addEventListener("click", () => setLabel(0));
 document.getElementById("markUnsure").addEventListener("click", () => setLabel(2));
 document.getElementById("markUnlabeled").addEventListener("click", () => setLabel(-1));
-document.getElementById("markAllGood").addEventListener("click", () => {{
+const labelAllDialog = document.getElementById("labelAllDialog");
+document.getElementById("openLabelAllDialog").addEventListener("click", () => {{
+  if (typeof labelAllDialog.showModal === "function") labelAllDialog.showModal();
+  else labelAllDialog.setAttribute("open", "");
+}});
+document.getElementById("closeLabelAllDialog").addEventListener("click", () => {{
+  if (typeof labelAllDialog.close === "function") labelAllDialog.close();
+  else labelAllDialog.removeAttribute("open");
+}});
+document.getElementById("applyLabelAll").addEventListener("click", () => {{
+  const label = Number(document.getElementById("labelAllValue").value);
   for (const roi of visibleRois) {{
-    labels[roi] = 1;
+    labels[roi] = label;
   }}
   updateLabelControls();
   updateVisibleRois();
+  if (typeof labelAllDialog.close === "function") labelAllDialog.close();
+  else labelAllDialog.removeAttribute("open");
 }});
-document.getElementById("clearLabels").addEventListener("click", clearAllLabels);
 document.getElementById("previousRoi").addEventListener("click", () => moveVisible(-1));
 document.getElementById("nextRoi").addEventListener("click", () => moveVisible(1));
 document.getElementById("showAllRois").addEventListener("change", updateVisibleRois);
 document.getElementById("applySort").addEventListener("click", applySort);
+const sortDialog = document.getElementById("sortDialog");
+document.getElementById("openSortDialog").addEventListener("click", () => {{
+  if (typeof sortDialog.showModal === "function") sortDialog.showModal();
+  else sortDialog.setAttribute("open", "");
+}});
+document.getElementById("closeSortDialog").addEventListener("click", () => {{
+  if (typeof sortDialog.close === "function") sortDialog.close();
+  else sortDialog.removeAttribute("open");
+}});
 const dffFileInput = document.getElementById("dffFile");
 document.getElementById("loadDffFile").addEventListener("click", () => dffFileInput.click());
 dffFileInput.addEventListener("change", () => {{
@@ -1337,16 +1607,65 @@ dffFileInput.addEventListener("change", () => {{
 }});
 document.getElementById("openExclusions").addEventListener("click", () => {{
   const filter = readFilter();
-  const rows = data.morphology.map((metrics, roi) => {{
-    const reasons = morphologyReasons(metrics, filter);
+  function csvEscape(value) {{
+    const text = String(value ?? "");
+    return /[",\\n]/.test(text) ? `"${{text.replaceAll('"', '""')}}"` : text;
+  }}
+  function td(value, failed = false) {{
+    return `<td${{failed ? ' class="metric-fail"' : ""}}>${{value}}</td>`;
+  }}
+  function labelTd(label) {{
+    const cls = label === "good" ? "label-good" : label === "bad" ? "label-bad" : label === "unsure" ? "label-unsure" : "";
+    return `<td${{cls ? ` class="${{cls}}"` : ""}}>${{label}}</td>`;
+  }}
+  const rowsData = data.morphology.map((metrics, roi) => {{
+    const dffMetrics = data.dffMetrics[roi];
+    const reasons = morphologyReasons(metrics, dffMetrics, filter);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
     else if (labels[roi] === -1 && reasons.length === 0) reasons.push("unlabeled");
-    const text = reasons.join("; ") || "included";
-    return `<tr><td>${{roi}}</td><td>${{data.suite2pIndices[roi]}}</td><td>${{fmt(data.dffMetrics[roi].event_snr)}}</td><td>${{text}}</td></tr>`;
-  }}).join("");
+    return {{
+      suite2p: data.suite2pIndices[roi],
+      label: labelName(labels[roi]),
+      footprint: metrics.footprint,
+      skew: metrics.skew,
+      aspect: metrics.aspect,
+      compact: metrics.compact,
+      connectivity: metrics.connect,
+      eventSnr: dffMetrics.event_snr,
+      decayTau: dffMetrics.decay_tau_seconds,
+      fail: {{
+        footprint: !(metrics.footprint >= filter.footprintMin && metrics.footprint <= filter.footprintMax),
+        skew: !(metrics.skew >= filter.skewMin && metrics.skew <= filter.skewMax),
+        aspect: !(metrics.aspect >= filter.aspectMin && metrics.aspect <= filter.aspectMax),
+        compact: !(metrics.compact >= filter.compactMin && metrics.compact <= filter.compactMax),
+        connectivity: !passesUpper(metrics.connect, filter.maxConnect),
+        eventSnr: !(passesLower(dffMetrics.event_snr, filter.eventSnrMin) && passesUpper(dffMetrics.event_snr, filter.eventSnrMax)),
+        decayTau: !(passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin) && passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)),
+      }},
+      reason: reasons.join("; ") || "included",
+    }};
+  }});
+  const rows = rowsData.map(row => `<tr>${{
+    td(row.suite2p) +
+    labelTd(row.label) +
+    td(fmt(row.footprint), row.fail.footprint) +
+    td(fmt(row.skew), row.fail.skew) +
+    td(fmt(row.aspect), row.fail.aspect) +
+    td(fmt(row.compact), row.fail.compact) +
+    td(row.connectivity, row.fail.connectivity) +
+    td(fmt(row.eventSnr), row.fail.eventSnr) +
+    td(fmt(row.decayTau), row.fail.decayTau) +
+    td(row.reason)
+  }}</tr>`).join("");
+  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","event_snr","decay_tau_seconds","reason"];
+  const csvRows = rowsData.map(row => [
+    row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
+    row.connectivity, fmt(row.eventSnr), fmt(row.decayTau), row.reason,
+  ].map(csvEscape).join(","));
+  const csv = [csvHeader.join(","), ...csvRows].join("\\n") + "\\n";
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI exclusions</title><style>body{{font-family:Arial,sans-serif;margin:20px}}td,th{{border:1px solid #ddd;padding:4px 7px}}table{{border-collapse:collapse}}</style><h1>${{data.session}} ROI exclusion reasons</h1><p>Target structure: ${{data.targetStructure}}</p><table><thead><tr><th>ROI</th><th>Suite2p row</th><th>Event SNR</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>Event SNR</th><th>Decay tau (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }});
 function npyBlob(values, rows, cols) {{
@@ -1403,7 +1722,6 @@ async function saveManualLabels() {{
 }}
 async function saveHtmlWithLabels() {{
   const payloadScript = document.getElementById("payload");
-  const originalPayload = payloadScript.textContent;
   const savedPayload = {{
     ...data,
     initialLabels: Array.from(labels),
@@ -1412,13 +1730,18 @@ async function saveHtmlWithLabels() {{
     savedAt: new Date().toISOString(),
   }};
   const filename = `${{data.session}}_interactive_fov_roi_dff.html`;
-  let blob;
-  try {{
-    payloadScript.textContent = JSON.stringify(savedPayload).replace(/</g, "\\u003c");
-    blob = new Blob(["<!doctype html>\\n" + document.documentElement.outerHTML], {{type: "text/html"}});
-  }} finally {{
-    payloadScript.textContent = originalPayload;
-  }}
+  const htmlClone = document.documentElement.cloneNode(true);
+  htmlClone.querySelector("#payload").textContent = JSON.stringify(savedPayload).replace(/</g, "\\u003c");
+  htmlClone.querySelectorAll("dialog").forEach(dialog => {{
+    dialog.removeAttribute("open");
+  }});
+  htmlClone.querySelectorAll(".info-box").forEach(box => {{
+    box.setAttribute("hidden", "");
+  }});
+  htmlClone.querySelectorAll("[aria-expanded]").forEach(element => {{
+    element.setAttribute("aria-expanded", "false");
+  }});
+  const blob = new Blob(["<!doctype html>\\n" + htmlClone.outerHTML], {{type: "text/html"}});
   if ("showSaveFilePicker" in window) {{
     try {{
       const handle = await window.showSaveFilePicker({{
@@ -1467,6 +1790,31 @@ function importPresetObject(payload) {{
 }}
 document.getElementById("saveManualLabels").addEventListener("click", saveManualLabels);
 document.getElementById("saveHtmlWithLabels").addEventListener("click", saveHtmlWithLabels);
+const saveLabelsDialog = document.getElementById("saveLabelsDialog");
+const saveLabelsHelp = document.getElementById("saveLabelsHelp");
+const saveLabelsInfo = document.getElementById("saveLabelsInfo");
+document.getElementById("openSaveLabelsDialog").addEventListener("click", () => {{
+  if (typeof saveLabelsDialog.showModal === "function") saveLabelsDialog.showModal();
+  else saveLabelsDialog.setAttribute("open", "");
+}});
+document.getElementById("closeSaveLabelsDialog").addEventListener("click", () => {{
+  if (typeof saveLabelsDialog.close === "function") saveLabelsDialog.close();
+  else saveLabelsDialog.removeAttribute("open");
+}});
+saveLabelsInfo.addEventListener("click", () => {{
+  const shouldShow = saveLabelsHelp.hasAttribute("hidden");
+  saveLabelsHelp.toggleAttribute("hidden", !shouldShow);
+  saveLabelsInfo.setAttribute("aria-expanded", String(shouldShow));
+}});
+document.querySelectorAll("[data-info-target]").forEach(button => {{
+  button.addEventListener("click", () => {{
+    const target = document.getElementById(button.dataset.infoTarget);
+    if (!target) return;
+    const shouldShow = target.hasAttribute("hidden");
+    target.toggleAttribute("hidden", !shouldShow);
+    button.setAttribute("aria-expanded", String(shouldShow));
+  }});
+}});
 document.getElementById("exportPreset").addEventListener("click", exportPresetJson);
 const presetFileInput = document.getElementById("presetFile");
 document.getElementById("importPreset").addEventListener("click", () => presetFileInput.click());
@@ -1485,6 +1833,15 @@ presetFileInput.addEventListener("change", () => {{
 }});
 document.getElementById("resetFilter").addEventListener("click", resetFilter);
 document.getElementById("applyFilterToLabels").addEventListener("click", applyFilterToLabels);
+const morphologyDialog = document.getElementById("morphologyDialog");
+document.getElementById("openMorphologyDialog").addEventListener("click", () => {{
+  if (typeof morphologyDialog.showModal === "function") morphologyDialog.showModal();
+  else morphologyDialog.setAttribute("open", "");
+}});
+document.getElementById("closeMorphologyDialog").addEventListener("click", () => {{
+  if (typeof morphologyDialog.close === "function") morphologyDialog.close();
+  else morphologyDialog.removeAttribute("open");
+}});
 document.getElementById("filterPreset").addEventListener("change", loadSelectedPreset);
 document.getElementById("savePreset").addEventListener("click", () => {{
   saveCurrentPresetToPage();
@@ -1522,10 +1879,11 @@ document.getElementById("traceCanvas").addEventListener("mousedown", e => {{ dra
 window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=document.getElementById("traceCanvas").getBoundingClientRect(), shift=-(e.clientX-sx)/rect.width*(start1-start0); setFrameWindow(start0+shift, start1+shift); }});
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
-window.addEventListener("resize", draw);
+window.addEventListener("resize", () => {{ syncControlColumnHeight(); draw(); }});
 makeOverlays(); syncTimeInputs(); populatePresetSelect(data.targetStructure); resetFilter();
 if (data.initialMorphologyFilter) writeFilter(data.initialMorphologyFilter);
-applySort(); setSelected(visibleRois[0]);
+applySort(); syncControlColumnHeight(); setSelected(visibleRois[0]);
+requestAnimationFrame(() => {{ syncControlColumnHeight(); draw(); }});
 </script>
 </body>
 </html>
@@ -1539,6 +1897,7 @@ def create_preprocessing_summary(
     output_dir: str | os.PathLike[str] | None = None,
     pdf_name: str | None = None,
     html_name: str | None = None,
+    target_structure: str | None = None,
 ) -> tuple[Path, Path]:
     session_dir = Path(session_data_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve() if output_dir else session_dir
@@ -1601,7 +1960,7 @@ def create_preprocessing_summary(
         iscell[:, :] = 1.0
     suite2p_fingerprint = suite2p_stat_fingerprint(stat)
     morphology_metrics = roi_morphology_metrics(stat)
-    target_structure = _target_structure(pipeline_parameters, qc_parameters)
+    target_structure = target_structure or _target_structure(pipeline_parameters, qc_parameters)
     preset_exclusion_reasons = (
         morphology_exclusion_reasons(morphology_metrics, qc_parameters)
         if qc_parameters is not None
@@ -1661,12 +2020,19 @@ def main() -> None:
     parser.add_argument("--output-dir", default=None, help="Output directory. Default: session_data_path.")
     parser.add_argument("--pdf-name", default=None)
     parser.add_argument("--html-name", default=None)
+    parser.add_argument(
+        "--target-structure",
+        choices=["all_rois", *sorted(QC_PRESETS)],
+        default=None,
+        help="Override the morphology QC preset used to initialize the interactive reviewer.",
+    )
     args = parser.parse_args()
     pdf_path, html_path = create_preprocessing_summary(
         args.session_data_path,
         output_dir=args.output_dir,
         pdf_name=args.pdf_name,
         html_name=args.html_name,
+        target_structure=args.target_structure,
     )
     print(f"Saved preprocessing PDF: {pdf_path}")
     print(f"Saved interactive HTML: {html_path}")
