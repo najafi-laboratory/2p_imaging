@@ -13,6 +13,7 @@ from typing import Any, Sequence
 
 import numpy as np
 from scipy.ndimage import binary_dilation, gaussian_filter, gaussian_filter1d
+from scipy.stats import norm
 
 
 def _roi_key(entry: dict[str, Any]) -> tuple[tuple[int, int], ...]:
@@ -136,7 +137,7 @@ def robust_event_snr(
     trace = np.asarray(dff, dtype=float).ravel()
     trace = trace[np.isfinite(trace)]
     if trace.size < 3:
-        return {"event_snr": np.nan, "signal_amp": np.nan, "noise_sd": np.nan}
+        return {"snr_95_50": np.nan, "signal_amp": np.nan, "noise_sd": np.nan}
 
     signal_amp = float(np.nanpercentile(trace, 95) - np.nanpercentile(trace, 50))
     smooth = gaussian_filter1d(trace, sigma=float(sigma))
@@ -154,7 +155,85 @@ def robust_event_snr(
     centered = baseline_resid - np.nanmedian(baseline_resid)
     noise_sd = float(1.4826 * np.nanmedian(np.abs(centered)))
     snr = float(signal_amp / noise_sd) if noise_sd > 0 else np.nan
-    return {"event_snr": snr, "signal_amp": signal_amp, "noise_sd": noise_sd}
+    return {"snr_95_50": snr, "signal_amp": signal_amp, "noise_sd": noise_sd}
+
+
+def half_sample_mode(values: Sequence[float] | np.ndarray) -> float:
+    """Return a robust half-sample mode estimate."""
+
+    data = np.sort(np.asarray(values, dtype=float).ravel())
+    data = data[np.isfinite(data)]
+    if data.size == 0:
+        return np.nan
+
+    def _hsm(sorted_data: np.ndarray) -> float:
+        size = sorted_data.size
+        if size == 1:
+            return float(sorted_data[0])
+        if size == 2:
+            return float(sorted_data.mean())
+        if size == 3:
+            left = sorted_data[1] - sorted_data[0]
+            right = sorted_data[2] - sorted_data[1]
+            if left < right:
+                return float(sorted_data[:2].mean())
+            if right < left:
+                return float(sorted_data[1:].mean())
+            return float(sorted_data[1])
+
+        half = size // 2 + size % 2
+        widths = sorted_data[half - 1 :] - sorted_data[: size - half + 1]
+        start = int(np.nanargmin(widths))
+        return _hsm(sorted_data[start : start + half])
+
+    return _hsm(data)
+
+
+def andrea_postdoc_snr(
+    dff: Sequence[float] | np.ndarray,
+    *,
+    consecutive_events: int = 5,
+    robust_std: bool = False,
+) -> float:
+    """Return the Andrea G/postdoc exceptional-event SNR-like score.
+
+    This follows ``evaluate_components.py`` from Andrea G with Farzaneh Najafi's
+    modifications. The original ``fitness`` is the minimum summed log tail
+    probability across ``N`` consecutive samples; more negative values indicate
+    more exceptional events. This function returns ``-fitness`` so larger values
+    sort as stronger event-like traces in the reviewer.
+    """
+
+    trace = np.asarray(dff, dtype=float).ravel()
+    trace = trace[np.isfinite(trace)]
+    if trace.size < max(1, int(consecutive_events)):
+        return np.nan
+
+    mode = half_sample_mode(trace)
+    if not np.isfinite(mode):
+        return np.nan
+
+    below_mode = -(trace - mode) * (trace < mode)
+    positive = below_mode[below_mode > 0]
+    if positive.size == 0:
+        return np.nan
+
+    if robust_std:
+        sorted_positive = np.sort(positive)
+        index = max(0, int(round(sorted_positive.size * 0.5)) - 1)
+        noise_sd = float(2.0 * sorted_positive[index] / 1.349)
+    else:
+        noise_sd = float(np.sqrt(np.sum(below_mode**2) / positive.size))
+    if not np.isfinite(noise_sd) or noise_sd <= 0:
+        return np.nan
+
+    z = (trace - mode) / (3.0 * noise_sd)
+    tail_probability = np.clip(1.0 - norm.cdf(z), np.finfo(float).tiny, 1.0)
+    log_probability = np.log(tail_probability)
+    window = np.ones(max(1, int(consecutive_events)), dtype=float)
+    summed = np.convolve(log_probability, window, mode="full")[: trace.size]
+    fitness = float(np.nanmin(summed))
+    return float(-fitness) if np.isfinite(fitness) else np.nan
 
 
 def temporal_smoothness_snr(dff: Sequence[float] | np.ndarray) -> float:
@@ -220,11 +299,13 @@ def dff_qc_metrics(dff: np.ndarray, *, frame_rate: float = 1.0) -> list[dict[str
         event = robust_event_snr(trace)
         temporal = temporal_smoothness_snr(trace)
         decay_tau = autocorrelation_decay_tau(trace, frame_rate=frame_rate)
+        postdoc_snr = andrea_postdoc_snr(trace)
         metrics.append(
             {
-                "event_snr": event["event_snr"],
+                "snr_95_50": event["snr_95_50"],
                 "event_signal_amp": event["signal_amp"],
                 "event_noise_sd": event["noise_sd"],
+                "andrea_postdoc_snr": float(postdoc_snr),
                 "temporal_snr": float(temporal),
                 "decay_tau_seconds": float(decay_tau),
             }

@@ -172,6 +172,8 @@ def _all_rois_filter() -> dict[str, float | int | None]:
         "compactMax": None,
         "eventSnrMin": None,
         "eventSnrMax": None,
+        "andreaPostdocSnrMin": None,
+        "andreaPostdocSnrMax": None,
         "decayTauMin": None,
         "decayTauMax": None,
     }
@@ -192,6 +194,8 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
             "compactMax": values["range_compact"][1],
             "eventSnrMin": None,
             "eventSnrMax": None,
+            "andreaPostdocSnrMin": None,
+            "andreaPostdocSnrMax": None,
             "decayTauMin": None,
             "decayTauMax": None,
         }
@@ -795,15 +799,18 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       </div>
       <div id="customMetricSources" class="info-box" hidden>
         Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-        Event SNR and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+        95/50 pctl SNR, Andrea/postdoc SNR, and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
         <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L121-L157" target="_blank" rel="noopener noreferrer">Event SNR calculation code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L176-L216" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">95/50 pctl SNR calculation code</a>
+        <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">Andrea/postdoc SNR source code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
       </div>
       <div class="filter-controls">
         <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
-        <label>Event SNR min <input id="eventSnrMin" type="number" step="0.01" placeholder="optional"></label>
-        <label>Event SNR max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
+        <label>95/50 pctl SNR min <input id="eventSnrMin" type="number" step="0.01" placeholder="optional"></label>
+        <label>95/50 pctl SNR max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
+        <label>Andrea/postdoc SNR min <input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="optional"></label>
+        <label>Andrea/postdoc SNR max <input id="andreaPostdocSnrMax" type="number" step="0.01" placeholder="optional"></label>
         <label>Decay tau min (s) <input id="decayTauMin" type="number" step="0.01" placeholder="optional"></label>
         <label>Decay tau max (s) <input id="decayTauMax" type="number" step="0.01" placeholder="optional"></label>
         <button id="resetFilter">Reset QC thresholds</button>
@@ -824,10 +831,11 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
     </div>
     <div id="sortCustomSources" class="info-box" hidden>
       Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-      Event SNR and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+      95/50 pctl SNR, Andrea/postdoc SNR, and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L121-L157" target="_blank" rel="noopener noreferrer">Event SNR calculation code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L176-L216" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">95/50 pctl SNR calculation code</a>
+      <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">Andrea/postdoc SNR source code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
     </div>
     <div class="trace-sort">
       <label>Sort visible ROIs by
@@ -841,7 +849,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
             <option value="original" selected>Original Suite2p index</option>
           </optgroup>
           <optgroup label="Custom Metrics">
-            <option value="event_snr">Event SNR</option>
+            <option value="snr_95_50">95/50 pctl SNR</option>
+            <option value="andrea_postdoc_snr">Andrea/postdoc SNR</option>
             <option value="decay_tau_seconds">Calcium decay constant (tau)</option>
             <option value="connectivity">Connectivity</option>
           </optgroup>
@@ -1108,8 +1117,15 @@ function val(roi, frame) {{
   if (!dff) return NaN;
   return dff[roi * data.nFrames + frame];
 }}
+function dffMetric(roi, key, fallbackKey = null) {{
+  const metrics = data.dffMetrics[roi] || {{}};
+  const value = metrics[key];
+  if (value !== null && value !== undefined) return value;
+  return fallbackKey ? metrics[fallbackKey] : undefined;
+}}
 function metricValue(roi, metric) {{
-  if (metric === "event_snr") return data.dffMetrics[roi].event_snr;
+  if (metric === "snr_95_50" || metric === "event_snr") return dffMetric(roi, "snr_95_50", "event_snr");
+  if (metric === "andrea_postdoc_snr") return dffMetric(roi, "andrea_postdoc_snr");
   if (metric === "decay_tau_seconds") return data.dffMetrics[roi].decay_tau_seconds;
   if (metric === "roi_area") return data.dffMetrics[roi].roi_area;
   if (metric === "connectivity") return data.morphology[roi].connect;
@@ -1121,7 +1137,8 @@ function metricValue(roi, metric) {{
   return roi;
 }}
 function metricLabel(metric) {{
-  if (metric === "event_snr") return "Event SNR";
+  if (metric === "snr_95_50" || metric === "event_snr") return "95/50 pctl SNR";
+  if (metric === "andrea_postdoc_snr") return "Andrea/postdoc SNR";
   if (metric === "decay_tau_seconds") return "Calcium decay constant (tau)";
   if (metric === "roi_area") return "ROI area (px)";
   if (metric === "connectivity") return "Connectivity";
@@ -1197,10 +1214,12 @@ function setSelected(roi) {{
   selected = Math.max(0, Math.min(data.nRois - 1, Math.round(roi)));
   const metrics = data.morphology[selected];
   const dffMetrics = data.dffMetrics[selected];
+  const snr9550 = dffMetric(selected, "snr_95_50", "event_snr");
+  const postdocSnr = dffMetric(selected, "andrea_postdoc_snr");
   const suite2pRoi = data.suite2pIndices[selected];
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | event SNR ${{fmt(dffMetrics.event_snr)}} | decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} s`;
+  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | 95/50 pctl SNR ${{fmt(snr9550)}} | Andrea/postdoc SNR ${{fmt(postdocSnr)}} | decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} s`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -1269,6 +1288,7 @@ function readFilter() {{
     footprintMin: filterValue("footprintMin"), footprintMax: filterValue("footprintMax"),
     compactMin: filterValue("compactMin"), compactMax: filterValue("compactMax"),
     eventSnrMin: filterValue("eventSnrMin"), eventSnrMax: filterValue("eventSnrMax"),
+    andreaPostdocSnrMin: filterValue("andreaPostdocSnrMin"), andreaPostdocSnrMax: filterValue("andreaPostdocSnrMax"),
     decayTauMin: filterValue("decayTauMin"), decayTauMax: filterValue("decayTauMax"),
   }};
 }}
@@ -1282,7 +1302,7 @@ function normalizeFilter(filter) {{
     const value = Number(filter[key]);
     normalized[key] = Number.isFinite(value) ? value : null;
   }}
-  for (const key of ["eventSnrMin","eventSnrMax","decayTauMin","decayTauMax"]) {{
+  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","decayTauMin","decayTauMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -1336,20 +1356,26 @@ function saveCurrentPresetToPage() {{
 }}
 function passesFilter(roi, metrics, filter) {{
   const dffMetrics = data.dffMetrics[roi];
+  const snr9550 = dffMetric(roi, "snr_95_50", "event_snr");
+  const postdocSnr = dffMetric(roi, "andrea_postdoc_snr");
   return (
     passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax) &&
     passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax) &&
     passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax) &&
     passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax) &&
     passesUpper(metrics.connect, filter.maxConnect) &&
-    passesLower(dffMetrics.event_snr, filter.eventSnrMin) &&
-    passesUpper(dffMetrics.event_snr, filter.eventSnrMax) &&
+    passesLower(snr9550, filter.eventSnrMin) &&
+    passesUpper(snr9550, filter.eventSnrMax) &&
+    passesLower(postdocSnr, filter.andreaPostdocSnrMin) &&
+    passesUpper(postdocSnr, filter.andreaPostdocSnrMax) &&
     passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin) &&
     passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)
   );
 }}
 function morphologyReasons(metrics, dffMetrics, filter) {{
   const reasons = [];
+  const snr9550 = dffMetrics.snr_95_50 ?? dffMetrics.event_snr;
+  const postdocSnr = dffMetrics.andrea_postdoc_snr;
   if (!passesLower(metrics.footprint, filter.footprintMin)) reasons.push(`footprint ${{fmt(metrics.footprint)}} below ${{filter.footprintMin}}`);
   if (!passesUpper(metrics.footprint, filter.footprintMax)) reasons.push(`footprint ${{fmt(metrics.footprint)}} above ${{filter.footprintMax}}`);
   if (!passesLower(metrics.skew, filter.skewMin)) reasons.push(`skew ${{fmt(metrics.skew)}} below ${{filter.skewMin}}`);
@@ -1359,8 +1385,10 @@ function morphologyReasons(metrics, dffMetrics, filter) {{
   if (!passesLower(metrics.compact, filter.compactMin)) reasons.push(`compact ${{fmt(metrics.compact)}} below ${{filter.compactMin}}`);
   if (!passesUpper(metrics.compact, filter.compactMax)) reasons.push(`compact ${{fmt(metrics.compact)}} above ${{filter.compactMax}}`);
   if (!passesUpper(metrics.connect, filter.maxConnect)) reasons.push(`connectivity ${{metrics.connect}} exceeds ${{filter.maxConnect}}`);
-  if (!passesLower(dffMetrics.event_snr, filter.eventSnrMin)) reasons.push(`event SNR ${{fmt(dffMetrics.event_snr)}} below ${{filter.eventSnrMin}}`);
-  if (!passesUpper(dffMetrics.event_snr, filter.eventSnrMax)) reasons.push(`event SNR ${{fmt(dffMetrics.event_snr)}} above ${{filter.eventSnrMax}}`);
+  if (!passesLower(snr9550, filter.eventSnrMin)) reasons.push(`95/50 pctl SNR ${{fmt(snr9550)}} below ${{filter.eventSnrMin}}`);
+  if (!passesUpper(snr9550, filter.eventSnrMax)) reasons.push(`95/50 pctl SNR ${{fmt(snr9550)}} above ${{filter.eventSnrMax}}`);
+  if (!passesLower(postdocSnr, filter.andreaPostdocSnrMin)) reasons.push(`Andrea/postdoc SNR ${{fmt(postdocSnr)}} below ${{filter.andreaPostdocSnrMin}}`);
+  if (!passesUpper(postdocSnr, filter.andreaPostdocSnrMax)) reasons.push(`Andrea/postdoc SNR ${{fmt(postdocSnr)}} above ${{filter.andreaPostdocSnrMax}}`);
   if (!passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin)) reasons.push(`decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} below ${{filter.decayTauMin}}`);
   if (!passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)) reasons.push(`decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} above ${{filter.decayTauMax}}`);
   return reasons;
@@ -1620,6 +1648,8 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
   }}
   const rowsData = data.morphology.map((metrics, roi) => {{
     const dffMetrics = data.dffMetrics[roi];
+    const snr9550 = dffMetric(roi, "snr_95_50", "event_snr");
+    const postdocSnr = dffMetric(roi, "andrea_postdoc_snr");
     const reasons = morphologyReasons(metrics, dffMetrics, filter);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
@@ -1632,7 +1662,8 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
       aspect: metrics.aspect,
       compact: metrics.compact,
       connectivity: metrics.connect,
-      eventSnr: dffMetrics.event_snr,
+      snr9550,
+      postdocSnr,
       decayTau: dffMetrics.decay_tau_seconds,
       fail: {{
         footprint: !(metrics.footprint >= filter.footprintMin && metrics.footprint <= filter.footprintMax),
@@ -1640,7 +1671,8 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
         aspect: !(metrics.aspect >= filter.aspectMin && metrics.aspect <= filter.aspectMax),
         compact: !(metrics.compact >= filter.compactMin && metrics.compact <= filter.compactMax),
         connectivity: !passesUpper(metrics.connect, filter.maxConnect),
-        eventSnr: !(passesLower(dffMetrics.event_snr, filter.eventSnrMin) && passesUpper(dffMetrics.event_snr, filter.eventSnrMax)),
+        snr9550: !(passesLower(snr9550, filter.eventSnrMin) && passesUpper(snr9550, filter.eventSnrMax)),
+        postdocSnr: !(passesLower(postdocSnr, filter.andreaPostdocSnrMin) && passesUpper(postdocSnr, filter.andreaPostdocSnrMax)),
         decayTau: !(passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin) && passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)),
       }},
       reason: reasons.join("; ") || "included",
@@ -1654,18 +1686,19 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
     td(fmt(row.aspect), row.fail.aspect) +
     td(fmt(row.compact), row.fail.compact) +
     td(row.connectivity, row.fail.connectivity) +
-    td(fmt(row.eventSnr), row.fail.eventSnr) +
+    td(fmt(row.snr9550), row.fail.snr9550) +
+    td(fmt(row.postdocSnr), row.fail.postdocSnr) +
     td(fmt(row.decayTau), row.fail.decayTau) +
     td(row.reason)
   }}</tr>`).join("");
-  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","event_snr","decay_tau_seconds","reason"];
+  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","snr_95_50","andrea_postdoc_snr","decay_tau_seconds","reason"];
   const csvRows = rowsData.map(row => [
     row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
-    row.connectivity, fmt(row.eventSnr), fmt(row.decayTau), row.reason,
+    row.connectivity, fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.decayTau), row.reason,
   ].map(csvEscape).join(","));
   const csv = [csvHeader.join(","), ...csvRows].join("\\n") + "\\n";
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>Event SNR</th><th>Decay tau (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>95/50 pctl SNR</th><th>Andrea/postdoc SNR</th><th>Decay tau (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }});
 function npyBlob(values, rows, cols) {{

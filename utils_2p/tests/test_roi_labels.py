@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from utils_2p.roi_labels import (
+    andrea_postdoc_snr,
     autocorrelation_decay_tau,
     apply_label_export,
     dff_qc_metrics,
@@ -183,19 +184,25 @@ class RoiLabelsTest(unittest.TestCase):
     def test_dff_qc_metrics_capture_event_temporal_and_decay_metrics(self):
         trace = np.exp(-np.arange(20, dtype=float) / 4.0)
         event = robust_event_snr(trace, sigma=1.0, event_percentile=75.0, dilation=0)
+        postdoc_snr = andrea_postdoc_snr(trace)
         temporal = temporal_smoothness_snr(trace)
         decay = autocorrelation_decay_tau(trace, frame_rate=2.0, max_lag_seconds=5.0)
         metrics = dff_qc_metrics(np.asarray([trace], dtype=np.float32), frame_rate=2.0)
 
-        self.assertTrue(np.isfinite(event["event_snr"]))
-        self.assertGreater(event["event_snr"], 0.0)
+        self.assertTrue(np.isfinite(event["snr_95_50"]))
+        self.assertGreater(event["snr_95_50"], 0.0)
+        self.assertTrue(np.isfinite(postdoc_snr))
+        self.assertGreater(postdoc_snr, 0.0)
         self.assertTrue(np.isfinite(temporal))
         self.assertTrue(np.isfinite(decay))
         self.assertGreater(decay, 0.0)
         self.assertEqual(len(metrics), 1)
-        self.assertIn("event_snr", metrics[0])
+        self.assertIn("snr_95_50", metrics[0])
+        self.assertIn("andrea_postdoc_snr", metrics[0])
         self.assertIn("temporal_snr", metrics[0])
         self.assertIn("decay_tau_seconds", metrics[0])
+        self.assertTrue(np.isfinite(metrics[0]["snr_95_50"]))
+        self.assertTrue(np.isfinite(metrics[0]["andrea_postdoc_snr"]))
         self.assertTrue(np.isfinite(metrics[0]["temporal_snr"]))
         self.assertTrue(np.isfinite(metrics[0]["decay_tau_seconds"]))
 
