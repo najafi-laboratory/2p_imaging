@@ -1210,7 +1210,7 @@ function setSelected(roi) {{
 function updateVisibleRois() {{
   const showAll = document.getElementById("showAllRois").checked;
   const rois = [];
-  for (let roi = 0; roi < data.nRois; roi++) if (showAll || labels[roi] !== 0) rois.push(roi);
+  for (let roi = 0; roi < data.nRois; roi++) if (showAll || filterPass[roi]) rois.push(roi);
   visibleRois = sortVisibleRois(rois);
   if (!visibleRois.length) visibleRois = Array.from({{length: data.nRois}}, (_v, roi) => roi);
   document.getElementById("yStart").max = visibleRois.length - 1;
