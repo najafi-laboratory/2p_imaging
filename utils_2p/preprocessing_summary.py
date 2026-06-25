@@ -663,15 +663,16 @@ def _write_html(
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{session_name} preprocessing QC ({n_rois} ROIs)</title>
 <style>
+html, body {{ overflow-y: auto; }}
 body {{ margin: 0; font-family: Arial, Helvetica, sans-serif; color: #202124; background: #f6f7f8; }}
-.page {{ width: min(1680px, calc(100vw - 28px)); margin: 16px auto 26px; }}
+.page {{ width: min(1600px, calc(100vw - 72px)); margin: 16px auto 26px; }}
 .head {{ display: flex; justify-content: space-between; gap: 14px; align-items: end; margin-bottom: 12px; }}
 h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .meta {{ color: #667085; font-size: 13px; text-align: right; }}
 .grid {{ display: grid; gap: 8px; }}
 .review-main {{ margin-top: 8px; }}
 .viewer-column {{ display: flex; flex-direction: column; gap: 8px; }}
-.fov-row {{ display: grid; grid-template-columns: minmax(0, 1fr) clamp(320px, 23vw, 380px); gap: 6px; align-items: start; }}
+.fov-row {{ display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 22vw, 350px); gap: 6px; align-items: start; }}
 .fov-review {{ display: grid; gap: 8px; align-items: start; }}
 .grid.with-red {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
 .grid.single-channel {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
@@ -691,7 +692,7 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .roi-details #readout {{ margin-top: 5px; color: #475467; font-size: 12px; line-height: 1.35; }}
 .save-option {{ display: grid; gap: 3px; justify-items: start; }}
 .save-option button, .save-options .docs-link {{ width: fit-content; }}
-.info-button {{ padding: 3px 7px; width: fit-content; font-size: 12px; }}
+.info-button {{ padding: 3px 7px; width: fit-content; font-size: 12px; color: #175cd3; font-weight: 600; }}
 .nav-button {{ font-size: 18px; font-weight: 700; }}
 .control-column {{ display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto; }}
 .morphology-card {{ display: flex; flex-direction: column; gap: 6px; }}
@@ -703,6 +704,11 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .filter-controls {{ display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; align-items: end; }}
 .filter-controls label {{ font-size: 12px; color: #475467; }}
 .filter-controls input {{ display: block; margin-top: 3px; width: 100%; box-sizing: border-box; }}
+.metric-controls {{ display: grid; grid-template-columns: repeat(2, minmax(250px, 1fr)); gap: 10px; margin-top: 10px; }}
+.metric-control {{ display: grid; grid-template-columns: minmax(150px, 1fr) minmax(130px, .8fr); gap: 8px; align-items: center; padding: 8px; border: 1px solid #eaecf0; border-radius: 7px; background: #fff; }}
+.metric-control .threshold-inputs {{ display: grid; gap: 5px; }}
+.metric-control .threshold-default {{ color: #667085; font-size: 11px; }}
+.metric-control canvas {{ height: 70px; }}
 .filter-subsection-title {{ margin-top: 10px; font-size: 13px; font-weight: 700; color: #344054; }}
 .source-heading {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
 .filter-summary {{ color: #475467; font-size: 13px; }}
@@ -777,7 +783,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Suite2p Morphology Metrics</span>
-        <button class="info-button" type="button" data-info-target="suite2pMetricSources" aria-expanded="false">(i)</button>
+        <button class="info-button" type="button" data-info-target="suite2pMetricSources" aria-expanded="false">Read more</button>
       </div>
       <div id="suite2pMetricSources" class="info-box" hidden>
         Suite2p morphology metrics here come from ROI <code>stat.npy</code> fields such as <code>aspect_ratio</code>, <code>compact</code>, <code>footprint</code>, and <code>skew</code>.
@@ -795,24 +801,51 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Custom Metrics</span>
-        <button class="info-button" type="button" data-info-target="customMetricSources" aria-expanded="false">(i)</button>
+        <button class="info-button" type="button" data-info-target="customMetricSources" aria-expanded="false">Read more</button>
       </div>
       <div id="customMetricSources" class="info-box" hidden>
         Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-        95/50 pctl SNR, Andrea/postdoc SNR, and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+        SNR: 95/50 percentile, SNR: CaImAn (large-transient score), and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+        The CaImAn-style score follows the exceptional-event logic used in <code>evaluate_components.py</code>; larger values mean a stronger large-transient score.
         <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">95/50 pctl SNR calculation code</a>
-        <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">Andrea/postdoc SNR source code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a>
+        <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
+      </div>
+      <div class="metric-controls">
+        <div class="metric-control">
+          <div class="threshold-inputs">
+            <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
+            <span class="threshold-default" id="maxConnectDefault"></span>
+          </div>
+          <canvas class="metric-histogram" data-metric="connectivity" data-min="" data-max="maxConnect"></canvas>
+        </div>
+        <div class="metric-control">
+          <div class="threshold-inputs">
+            <label>SNR: 95/50 percentile min <input id="eventSnrMin" type="number" step="0.01" placeholder="optional"></label>
+            <label>SNR: 95/50 percentile max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
+            <span class="threshold-default" id="eventSnrDefault"></span>
+          </div>
+          <canvas class="metric-histogram" data-metric="snr_95_50" data-min="eventSnrMin" data-max="eventSnrMax"></canvas>
+        </div>
+        <div class="metric-control">
+          <div class="threshold-inputs">
+            <label>SNR: CaImAn (large-transient score) min <input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="optional"></label>
+            <label>SNR: CaImAn (large-transient score) max <input id="andreaPostdocSnrMax" type="number" step="0.01" placeholder="optional"></label>
+            <span class="threshold-default" id="andreaPostdocSnrDefault"></span>
+          </div>
+          <canvas class="metric-histogram" data-metric="andrea_postdoc_snr" data-min="andreaPostdocSnrMin" data-max="andreaPostdocSnrMax"></canvas>
+        </div>
+        <div class="metric-control">
+          <div class="threshold-inputs">
+            <label>Autocorrelation e-fold time min (s) <input id="autocorrEfoldMin" type="number" step="0.01" placeholder="optional"></label>
+            <label>Autocorrelation e-fold time max (s) <input id="autocorrEfoldMax" type="number" step="0.01" placeholder="optional"></label>
+            <span class="threshold-default" id="autocorrEfoldDefault"></span>
+          </div>
+          <canvas class="metric-histogram" data-metric="autocorr_efold_time_seconds" data-min="autocorrEfoldMin" data-max="autocorrEfoldMax"></canvas>
+        </div>
       </div>
       <div class="filter-controls">
-        <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
-        <label>95/50 pctl SNR min <input id="eventSnrMin" type="number" step="0.01" placeholder="optional"></label>
-        <label>95/50 pctl SNR max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
-        <label>Andrea/postdoc SNR min <input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="optional"></label>
-        <label>Andrea/postdoc SNR max <input id="andreaPostdocSnrMax" type="number" step="0.01" placeholder="optional"></label>
-        <label>Autocorrelation e-fold time min (s) <input id="autocorrEfoldMin" type="number" step="0.01" placeholder="optional"></label>
-        <label>Autocorrelation e-fold time max (s) <input id="autocorrEfoldMax" type="number" step="0.01" placeholder="optional"></label>
         <button id="resetFilter">Reset QC thresholds</button>
         <button id="applyFilterToLabels">Apply Filters</button>
       </div>
@@ -822,8 +855,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
   <dialog id="sortDialog">
     <div class="dialog-title">Sort ROIs and dF/Fs</div>
     <div class="source-heading">
-      <button class="info-button" type="button" data-info-target="sortSuite2pSources" aria-expanded="false">(i) Suite2p metrics</button>
-      <button class="info-button" type="button" data-info-target="sortCustomSources" aria-expanded="false">(i) custom metrics</button>
+      <button class="info-button" type="button" data-info-target="sortSuite2pSources" aria-expanded="false">Read more: Suite2p metrics</button>
+      <button class="info-button" type="button" data-info-target="sortCustomSources" aria-expanded="false">Read more: custom metrics</button>
     </div>
     <div id="sortSuite2pSources" class="info-box" hidden>
       Suite2p morphology sort options come from ROI <code>stat.npy</code> fields.
@@ -831,11 +864,11 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
     </div>
     <div id="sortCustomSources" class="info-box" hidden>
       Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-      95/50 pctl SNR, Andrea/postdoc SNR, and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+      SNR: 95/50 percentile, SNR: CaImAn (large-transient score), and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">95/50 pctl SNR calculation code</a>
-      <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">Andrea/postdoc SNR source code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a>
+      <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
     </div>
     <div class="trace-sort">
       <label>Sort visible ROIs by
@@ -849,8 +882,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
             <option value="original" selected>Original Suite2p index</option>
           </optgroup>
           <optgroup label="Custom Metrics">
-            <option value="snr_95_50">95/50 pctl SNR</option>
-            <option value="andrea_postdoc_snr">Andrea/postdoc SNR</option>
+            <option value="snr_95_50">SNR: 95/50 percentile</option>
+            <option value="andrea_postdoc_snr">SNR: CaImAn (large-transient score)</option>
             <option value="autocorr_efold_time_seconds">Autocorrelation e-fold time</option>
             <option value="connectivity">Connectivity</option>
           </optgroup>
@@ -869,11 +902,12 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
   <dialog id="saveLabelsDialog">
     <div class="dialog-header">
       <div class="dialog-title">Save Labels</div>
-      <button id="saveLabelsInfo" class="info-button" type="button" aria-expanded="false" aria-controls="saveLabelsHelp">(i)</button>
+      <button id="saveLabelsInfo" class="info-button" type="button" aria-expanded="false" aria-controls="saveLabelsHelp">Read more</button>
     </div>
     <div id="saveLabelsHelp" class="info-box" hidden>
       Save current state into HTML downloads a reviewed HTML copy that preserves labels and custom morphology presets inside the file.
       Save roi_manual_labels.npy downloads a three-column NumPy mask for downstream scripts: full Suite2p good mask, morphology-filtered good mask, and morphology-filtered good-or-unsure mask.
+      The spreadsheet CSV records current labels, ROI metrics, and which current filter thresholds each ROI violates. The filters JSON records only the current threshold settings.
     </div>
     <div class="save-options">
       <div class="save-option">
@@ -883,6 +917,14 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <div class="save-option">
         <button id="saveManualLabels">Save roi_manual_labels.npy</button>
         <span class="note">Exports the downstream NumPy mask with full Suite2p, morphology-filtered good, and morphology-filtered good-or-unsure columns.</span>
+      </div>
+      <div class="save-option">
+        <button id="saveMetricSpreadsheet">Save ROI metric spreadsheet CSV</button>
+        <span class="note">Exports one row per ROI with current labels, metrics, current filter failures, and reasons.</span>
+      </div>
+      <div class="save-option">
+        <button id="saveCurrentFilters">Save current filters JSON</button>
+        <span class="note">Exports the current ROI metric thresholds so they can be reused or documented.</span>
       </div>
       <a class="docs-link" href="https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/#2-export-format-and-downstream-use" target="_blank" rel="noopener noreferrer">Output format details</a>
     </div>
@@ -897,7 +939,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <option value="1">Good</option>
           <option value="0">Bad</option>
           <option value="2">Unsure</option>
-          <option value="-1">Unlabeled</option>
+          <option value="-1">Not labeled</option>
         </select>
       </label>
     </div>
@@ -920,15 +962,14 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <div class="panel morphology-card">
             <div class="qc-header"><strong>ROI QC Filters</strong><span id="targetStructureInline" class="qc-current"></span></div>
             <div id="filterSummaryInline" class="filter-summary"></div>
-            <button id="openMorphologyDialog" type="button">Edit ROI Metric Filters</button>
-            <label><input id="showAllRois" type="checkbox"> Show all Filtered ROIs</label>
+            <button id="openMorphologyDialog" type="button">Filter ROIs</button>
             <div class="sort-card">
               <div class="sort-header"><strong>Sorting</strong><span id="sortCurrent" class="sort-current"></span></div>
-              <button id="openSortDialog" type="button">Sort ROIs by Metrics</button>
+              <button id="openSortDialog" type="button">Sort filtered ROIs</button>
             </div>
           </div>
           <div class="panel label-controls">
-            <strong>Manual ROI Labeler</strong>
+            <strong>Manually label filtered ROIs</strong>
             <label>Selected ROI (Suite2p Index) <input id="roiInput" type="number" min="0" value="0"> <span id="selectedSortPosition" class="note"></span></label>
             <details class="roi-details">
               <summary id="roiDetailsSummary">Selected ROI Details</summary>
@@ -939,18 +980,29 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
               <button id="markBad" class="bad">Bad (B)</button>
             </div>
             <div class="button-row">
-              <button id="markUnsure" class="unsure">Unsure (S)</button>
-              <button id="markUnlabeled" class="unlabeled">Unlabeled (U)</button>
+              <button id="markUnsure" class="unsure">Unsure (U)</button>
+              <button id="markUnlabeled" class="unlabeled">Not labeled (N)</button>
             </div>
             <button id="openLabelAllDialog" type="button">Label all as ...</button>
             <div class="nav-row">
               <button id="previousRoi" class="nav-button" title="Previous visible ROI (Left arrow)">&#8592; Previous</button>
               <button id="nextRoi" class="nav-button" title="Next visible ROI (Right arrow)">Next &#8594;</button>
             </div>
-            <span class="note">Keyboard: G/B/S/U label; left/right arrows select the previous/next visible ROI.</span>
+            <span class="note">Keyboard: G/B/U/N label; left/right arrows select the previous/next visible ROI.</span>
             <span id="labelCounts"></span>
             <button id="openExclusions">Open ROI metric spreadsheet</button>
             <button id="openSaveLabelsDialog" type="button">Save Labels</button>
+          </div>
+          <div class="panel label-controls">
+            <strong>Show ROIs</strong>
+            <label>Manual label
+              <select id="roiDisplayMode">
+                <option value="all" selected>All filtered ROIs</option>
+                <option value="good">Good</option>
+                <option value="bad">Bad</option>
+                <option value="unsure">Unsure</option>
+              </select>
+            </label>
           </div>
         </div>
       </div>
@@ -1140,8 +1192,8 @@ function metricValue(roi, metric) {{
   return roi;
 }}
 function metricLabel(metric) {{
-  if (metric === "snr_95_50" || metric === "event_snr") return "95/50 pctl SNR";
-  if (metric === "andrea_postdoc_snr") return "Andrea/postdoc SNR";
+  if (metric === "snr_95_50" || metric === "event_snr") return "SNR: 95/50 percentile";
+  if (metric === "andrea_postdoc_snr") return "SNR: CaImAn (large-transient score)";
   if (metric === "autocorr_efold_time_seconds") return "Autocorrelation e-fold time";
   if (metric === "roi_area") return "ROI area (px)";
   if (metric === "connectivity") return "Connectivity";
@@ -1151,6 +1203,78 @@ function metricLabel(metric) {{
   if (metric === "footprint") return "Footprint";
   if (metric === "original" || metric === "suite2p_index") return "original Suite2p index";
   return metric.replace("_", " ");
+}}
+function finiteMetricValues(metric) {{
+  const values = [];
+  for (let roi = 0; roi < data.nRois; roi++) {{
+    const value = Number(metricValue(roi, metric));
+    if (Number.isFinite(value)) values.push(value);
+  }}
+  return values;
+}}
+function percentile(values, q) {{
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return NaN;
+  const pos = (sorted.length - 1) * q;
+  const lo = Math.floor(pos), hi = Math.ceil(pos);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
+}}
+function mean(values) {{
+  const finite = values.filter(Number.isFinite);
+  return finite.length ? finite.reduce((total, value) => total + value, 0) / finite.length : NaN;
+}}
+function updateMetricDefaults() {{
+  const connect = finiteMetricValues("connectivity");
+  const snr9550 = finiteMetricValues("snr_95_50");
+  const caiman = finiteMetricValues("andrea_postdoc_snr");
+  const efold = finiteMetricValues("autocorr_efold_time_seconds");
+  document.getElementById("maxConnectDefault").textContent = `default guide: high 25 percentile max ${{fmt(percentile(connect, 0.75))}}`;
+  document.getElementById("eventSnrDefault").textContent = `default guide: mean min ${{fmt(mean(snr9550))}}`;
+  document.getElementById("andreaPostdocSnrDefault").textContent = `default guide: mean min ${{fmt(mean(caiman))}}`;
+  document.getElementById("autocorrEfoldDefault").textContent = `default guide: low/high 25 percentiles ${{fmt(percentile(efold, 0.25))}} to ${{fmt(percentile(efold, 0.75))}}`;
+}}
+function drawMetricHistogram(canvas) {{
+  fit(canvas);
+  const ctx = canvas.getContext("2d");
+  const metric = canvas.dataset.metric;
+  const values = finiteMetricValues(metric);
+  const w = canvas.width, h = canvas.height, pad = 18;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  ctx.strokeStyle = "#d0d5dd"; ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+  if (!values.length) return;
+  let lo = percentile(values, 0.01), hi = percentile(values, 0.99);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = Math.min(...values); hi = Math.max(...values); }}
+  if (hi <= lo) hi = lo + 1;
+  const bins = 28, counts = Array(bins).fill(0);
+  values.forEach(value => {{
+    const bin = Math.max(0, Math.min(bins - 1, Math.floor((value - lo) / (hi - lo) * bins)));
+    counts[bin]++;
+  }});
+  const maxCount = Math.max(...counts, 1);
+  const plotW = w - pad * 2, plotH = h - pad * 1.5;
+  ctx.fillStyle = "#dbeafe";
+  counts.forEach((count, index) => {{
+    const x = pad + index / bins * plotW;
+    const bw = Math.max(1, plotW / bins - 1);
+    const bh = count / maxCount * plotH;
+    ctx.fillRect(x, h - pad - bh, bw, bh);
+  }});
+  function drawThreshold(inputId, color) {{
+    if (!inputId) return;
+    const value = filterValue(inputId);
+    if (!Number.isFinite(value)) return;
+    const x = pad + (value - lo) / (hi - lo) * plotW;
+    if (x < pad || x > pad + plotW) return;
+    ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, window.devicePixelRatio || 1);
+    ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, h - pad + 2); ctx.stroke();
+  }}
+  drawThreshold(canvas.dataset.min, "#16a34a");
+  drawThreshold(canvas.dataset.max, "#dc2626");
+}}
+function drawMetricHistograms() {{
+  document.querySelectorAll(".metric-histogram").forEach(drawMetricHistogram);
 }}
 function sortVisibleRois(rois) {{
   const metric = appliedSortMetric;
@@ -1184,7 +1308,7 @@ function updateSortCurrent() {{
 function applySort() {{
   appliedSortMetric = document.getElementById("sortMetric").value;
   appliedSortDirection = document.getElementById("sortDirection").value;
-  updateVisibleRois();
+  updateVisibleRois(true);
   updateSortCurrent();
   if (visibleRois.includes(selected)) setSelected(selected);
 }}
@@ -1222,30 +1346,42 @@ function setSelected(roi) {{
   const suite2pRoi = data.suite2pIndices[selected];
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | 95/50 pctl SNR ${{fmt(snr9550)}} | Andrea/postdoc SNR ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s`;
+  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
   updateSortCurrent();
   draw();
 }}
-function updateVisibleRois() {{
-  const showAll = document.getElementById("showAllRois").checked;
+function roiMatchesDisplayMode(roi) {{
+  const mode = document.getElementById("roiDisplayMode").value;
+  if (mode === "all") return true;
+  if (mode === "good") return labels[roi] === 1;
+  if (mode === "bad") return labels[roi] === 0;
+  if (mode === "unsure") return labels[roi] === 2;
+  return true;
+}}
+function updateVisibleRois(resetRange = false) {{
   const rois = [];
-  for (let roi = 0; roi < data.nRois; roi++) if (showAll || filterPass[roi]) rois.push(roi);
+  for (let roi = 0; roi < data.nRois; roi++) if (filterPass[roi] && roiMatchesDisplayMode(roi)) rois.push(roi);
   visibleRois = sortVisibleRois(rois);
-  if (!visibleRois.length) visibleRois = Array.from({{length: data.nRois}}, (_v, roi) => roi);
-  document.getElementById("yStart").max = visibleRois.length - 1;
-  document.getElementById("yEnd").max = visibleRois.length - 1;
-  y0 = Math.max(0, Math.min(y0, visibleRois.length - 1));
-  y1 = Math.max(y0, Math.min(y1 || Math.min(19, visibleRois.length - 1), visibleRois.length - 1));
+  document.getElementById("yStart").max = Math.max(0, visibleRois.length - 1);
+  document.getElementById("yEnd").max = Math.max(0, visibleRois.length - 1);
+  if (resetRange) {{
+    y0 = 0;
+    y1 = Math.max(0, Math.min(19, visibleRois.length - 1));
+  }} else {{
+    y0 = Math.max(0, Math.min(y0, Math.max(0, visibleRois.length - 1)));
+    y1 = Math.max(y0, Math.min(y1 || Math.min(19, Math.max(0, visibleRois.length - 1)), Math.max(0, visibleRois.length - 1)));
+  }}
   document.getElementById("yStart").value = y0;
   document.getElementById("yEnd").value = y1;
   document.querySelectorAll(".roi").forEach(path => {{
     const roi = Number(path.dataset.roi);
-    path.style.display = (showAll || filterPass[roi]) ? "" : "none";
+    path.style.display = (filterPass[roi] && roiMatchesDisplayMode(roi)) ? "" : "none";
   }});
-  if (!visibleRois.includes(selected)) setSelected(visibleRois[0]);
+  if (!visibleRois.length) draw();
+  else if (!visibleRois.includes(selected)) setSelected(visibleRois[0]);
   else draw();
 }}
 function updateLabelControls() {{
@@ -1256,13 +1392,13 @@ function updateLabelControls() {{
   document.getElementById("markUnlabeled").classList.toggle("active", label === -1);
   let good = 0, bad = 0, unsure = 0, unlabeled = 0;
   for (const value of labels) {{ if (value === 1) good++; else if (value === 0) bad++; else if (value === 2) unsure++; else unlabeled++; }}
-  document.getElementById("labelCounts").textContent = `${{good}} good | ${{bad}} bad | ${{unsure}} unsure | ${{unlabeled}} unlabeled`;
+  document.getElementById("labelCounts").textContent = `${{good}} good | ${{bad}} bad | ${{unsure}} unsure | ${{unlabeled}} not labeled`;
 }}
 function labelName(label) {{
   if (label === 1) return "good";
   if (label === 0) return "bad";
   if (label === 2) return "unsure";
-  return "unlabeled";
+  return "not labeled";
 }}
 function fmt(value) {{
   if (value === null || value === undefined) return "nan";
@@ -1296,6 +1432,8 @@ function readFilter() {{
   }};
 }}
 function normalizeFilter(filter) {{
+  if (filter.decayTauMin !== undefined && filter.autocorrEfoldMin === undefined) filter.autocorrEfoldMin = filter.decayTauMin;
+  if (filter.decayTauMax !== undefined && filter.autocorrEfoldMax === undefined) filter.autocorrEfoldMax = filter.decayTauMax;
   const normalized = {{}};
   for (const key of ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
@@ -1388,10 +1526,10 @@ function morphologyReasons(metrics, dffMetrics, filter) {{
   if (!passesLower(metrics.compact, filter.compactMin)) reasons.push(`compact ${{fmt(metrics.compact)}} below ${{filter.compactMin}}`);
   if (!passesUpper(metrics.compact, filter.compactMax)) reasons.push(`compact ${{fmt(metrics.compact)}} above ${{filter.compactMax}}`);
   if (!passesUpper(metrics.connect, filter.maxConnect)) reasons.push(`connectivity ${{metrics.connect}} exceeds ${{filter.maxConnect}}`);
-  if (!passesLower(snr9550, filter.eventSnrMin)) reasons.push(`95/50 pctl SNR ${{fmt(snr9550)}} below ${{filter.eventSnrMin}}`);
-  if (!passesUpper(snr9550, filter.eventSnrMax)) reasons.push(`95/50 pctl SNR ${{fmt(snr9550)}} above ${{filter.eventSnrMax}}`);
-  if (!passesLower(postdocSnr, filter.andreaPostdocSnrMin)) reasons.push(`Andrea/postdoc SNR ${{fmt(postdocSnr)}} below ${{filter.andreaPostdocSnrMin}}`);
-  if (!passesUpper(postdocSnr, filter.andreaPostdocSnrMax)) reasons.push(`Andrea/postdoc SNR ${{fmt(postdocSnr)}} above ${{filter.andreaPostdocSnrMax}}`);
+  if (!passesLower(snr9550, filter.eventSnrMin)) reasons.push(`SNR: 95/50 percentile ${{fmt(snr9550)}} below ${{filter.eventSnrMin}}`);
+  if (!passesUpper(snr9550, filter.eventSnrMax)) reasons.push(`SNR: 95/50 percentile ${{fmt(snr9550)}} above ${{filter.eventSnrMax}}`);
+  if (!passesLower(postdocSnr, filter.andreaPostdocSnrMin)) reasons.push(`SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} below ${{filter.andreaPostdocSnrMin}}`);
+  if (!passesUpper(postdocSnr, filter.andreaPostdocSnrMax)) reasons.push(`SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} above ${{filter.andreaPostdocSnrMax}}`);
   if (!passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} below ${{filter.autocorrEfoldMin}}`);
   if (!passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} above ${{filter.autocorrEfoldMax}}`);
   return reasons;
@@ -1406,6 +1544,7 @@ function evaluateFilter() {{
   const summary = `${{pass}} / ${{data.nRois}} original Suite2p ROIs pass the current morphology and custom metric filters.`;
   document.getElementById("filterSummary").textContent = summary;
   document.getElementById("filterSummaryInline").textContent = summary;
+  drawMetricHistograms();
   draw();
 }}
 function resetFilter() {{
@@ -1416,8 +1555,8 @@ function applyFilterToLabels() {{
   for (let roi = 0; roi < data.nRois; roi++) {{
     labels[roi] = filterPass[roi] ? -1 : 0;
   }}
-  updateVisibleRois();
-  if (labels[current] !== 0 || document.getElementById("showAllRois").checked) setSelected(current);
+  updateVisibleRois(true);
+  if (visibleRois.includes(current)) setSelected(current);
 }}
 function setLabel(label) {{
   labels[selected] = label;
@@ -1487,6 +1626,10 @@ function drawStack() {{
   const canvas = document.getElementById("stackCanvas"); fit(canvas); const ctx = canvas.getContext("2d");
   const w = canvas.width, h = canvas.height, l = 62, r = 16, t = 14, b = 56, pw = w-l-r, ph = h-t-b;
   ctx.clearRect(0,0,w,h); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h); drawAxes(ctx,w,h,l,t,pw,ph,"time (s)","ROI index");
+  if (!visibleRois.length) {{
+    ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText("No ROIs match the current metric and label display filters.", l + pw / 2, t + ph / 2);
+    return;
+  }}
   if (!dff) {{
     ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText("Load the dF/F file to enable stacked traces.", l + pw / 2, t + ph / 2);
     return;
@@ -1610,7 +1753,7 @@ document.getElementById("applyLabelAll").addEventListener("click", () => {{
 }});
 document.getElementById("previousRoi").addEventListener("click", () => moveVisible(-1));
 document.getElementById("nextRoi").addEventListener("click", () => moveVisible(1));
-document.getElementById("showAllRois").addEventListener("change", updateVisibleRois);
+document.getElementById("roiDisplayMode").addEventListener("change", () => updateVisibleRois(true));
 document.getElementById("applySort").addEventListener("click", applySort);
 const sortDialog = document.getElementById("sortDialog");
 document.getElementById("openSortDialog").addEventListener("click", () => {{
@@ -1636,27 +1779,21 @@ dffFileInput.addEventListener("change", () => {{
   }};
   reader.readAsArrayBuffer(file);
 }});
-document.getElementById("openExclusions").addEventListener("click", () => {{
+function csvEscape(value) {{
+  const text = String(value ?? "");
+  return /[",\\n]/.test(text) ? `"${{text.replaceAll('"', '""')}}"` : text;
+}}
+function metricSpreadsheetRows() {{
   const filter = readFilter();
-  function csvEscape(value) {{
-    const text = String(value ?? "");
-    return /[",\\n]/.test(text) ? `"${{text.replaceAll('"', '""')}}"` : text;
-  }}
-  function td(value, failed = false) {{
-    return `<td${{failed ? ' class="metric-fail"' : ""}}>${{value}}</td>`;
-  }}
-  function labelTd(label) {{
-    const cls = label === "good" ? "label-good" : label === "bad" ? "label-bad" : label === "unsure" ? "label-unsure" : "";
-    return `<td${{cls ? ` class="${{cls}}"` : ""}}>${{label}}</td>`;
-  }}
-  const rowsData = data.morphology.map((metrics, roi) => {{
+  return data.morphology.map((metrics, roi) => {{
     const dffMetrics = data.dffMetrics[roi];
     const snr9550 = dffMetric(roi, "snr_95_50", "event_snr");
     const postdocSnr = dffMetric(roi, "andrea_postdoc_snr");
+    const autocorrEfold = dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds");
     const reasons = morphologyReasons(metrics, dffMetrics, filter);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
-    else if (labels[roi] === -1 && reasons.length === 0) reasons.push("unlabeled");
+    else if (labels[roi] === -1 && reasons.length === 0) reasons.push("not labeled");
     return {{
       suite2p: data.suite2pIndices[roi],
       label: labelName(labels[roi]),
@@ -1667,20 +1804,38 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
       connectivity: metrics.connect,
       snr9550,
       postdocSnr,
-      decayTau: dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"),
+      autocorrEfold,
       fail: {{
-        footprint: !(metrics.footprint >= filter.footprintMin && metrics.footprint <= filter.footprintMax),
-        skew: !(metrics.skew >= filter.skewMin && metrics.skew <= filter.skewMax),
-        aspect: !(metrics.aspect >= filter.aspectMin && metrics.aspect <= filter.aspectMax),
-        compact: !(metrics.compact >= filter.compactMin && metrics.compact <= filter.compactMax),
+        footprint: !(passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax)),
+        skew: !(passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax)),
+        aspect: !(passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax)),
+        compact: !(passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax)),
         connectivity: !passesUpper(metrics.connect, filter.maxConnect),
         snr9550: !(passesLower(snr9550, filter.eventSnrMin) && passesUpper(snr9550, filter.eventSnrMax)),
         postdocSnr: !(passesLower(postdocSnr, filter.andreaPostdocSnrMin) && passesUpper(postdocSnr, filter.andreaPostdocSnrMax)),
-        decayTau: !(passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin) && passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)),
+        autocorrEfold: !(passesLower(autocorrEfold, filter.autocorrEfoldMin) && passesUpper(autocorrEfold, filter.autocorrEfoldMax)),
       }},
       reason: reasons.join("; ") || "included",
     }};
   }});
+}}
+function metricSpreadsheetCsv(rowsData = metricSpreadsheetRows()) {{
+  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","reason"];
+  const csvRows = rowsData.map(row => [
+    row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
+    row.connectivity, fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.autocorrEfold), row.reason,
+  ].map(csvEscape).join(","));
+  return [csvHeader.join(","), ...csvRows].join("\\n") + "\\n";
+}}
+function openMetricSpreadsheet() {{
+  function td(value, failed = false) {{
+    return `<td${{failed ? ' class="metric-fail"' : ""}}>${{value}}</td>`;
+  }}
+  function labelTd(label) {{
+    const cls = label === "good" ? "label-good" : label === "bad" ? "label-bad" : label === "unsure" ? "label-unsure" : "";
+    return `<td${{cls ? ` class="${{cls}}"` : ""}}>${{label}}</td>`;
+  }}
+  const rowsData = metricSpreadsheetRows();
   const rows = rowsData.map(row => `<tr>${{
     td(row.suite2p) +
     labelTd(row.label) +
@@ -1691,19 +1846,28 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
     td(row.connectivity, row.fail.connectivity) +
     td(fmt(row.snr9550), row.fail.snr9550) +
     td(fmt(row.postdocSnr), row.fail.postdocSnr) +
-    td(fmt(row.decayTau), row.fail.decayTau) +
+    td(fmt(row.autocorrEfold), row.fail.autocorrEfold) +
     td(row.reason)
   }}</tr>`).join("");
-  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","reason"];
-  const csvRows = rowsData.map(row => [
-    row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
-    row.connectivity, fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.decayTau), row.reason,
-  ].map(csvEscape).join(","));
-  const csv = [csvHeader.join(","), ...csvRows].join("\\n") + "\\n";
+  const csv = metricSpreadsheetCsv(rowsData);
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>95/50 pctl SNR</th><th>Andrea/postdoc SNR</th><th>Autocorrelation e-fold time (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>SNR: 95/50 percentile</th><th>SNR: CaImAn (large-transient score)</th><th>Autocorrelation e-fold time (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
-}});
+}}
+function saveMetricSpreadsheet() {{
+  downloadBlob(new Blob([metricSpreadsheetCsv()], {{type: "text/csv"}}), `${{data.session}}_roi_metric_spreadsheet.csv`);
+}}
+function saveCurrentFilters() {{
+  const payload = {{
+    format: "utils_2p_roi_metric_filter_v1",
+    session: data.session,
+    target_structure: data.targetStructure,
+    saved_at: new Date().toISOString(),
+    filter: normalizeFilter(readFilter()),
+  }};
+  downloadBlob(new Blob([JSON.stringify(payload, null, 2) + "\\n"], {{type: "application/json"}}), `${{data.session}}_roi_metric_filters.json`);
+}}
+document.getElementById("openExclusions").addEventListener("click", openMetricSpreadsheet);
 function npyBlob(values, rows, cols) {{
   const encoder = new TextEncoder();
   let header = `{{'descr': '<f8', 'fortran_order': False, 'shape': (${{rows}}, ${{cols}}), }}`;
@@ -1826,6 +1990,8 @@ function importPresetObject(payload) {{
 }}
 document.getElementById("saveManualLabels").addEventListener("click", saveManualLabels);
 document.getElementById("saveHtmlWithLabels").addEventListener("click", saveHtmlWithLabels);
+document.getElementById("saveMetricSpreadsheet").addEventListener("click", saveMetricSpreadsheet);
+document.getElementById("saveCurrentFilters").addEventListener("click", saveCurrentFilters);
 const saveLabelsDialog = document.getElementById("saveLabelsDialog");
 const saveLabelsHelp = document.getElementById("saveLabelsHelp");
 const saveLabelsInfo = document.getElementById("saveLabelsInfo");
@@ -1885,19 +2051,21 @@ document.getElementById("savePreset").addEventListener("click", () => {{
 document.getElementById("savePresetHtml").addEventListener("click", () => {{
   if (saveCurrentPresetToPage()) saveHtmlWithLabels();
 }});
-["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"].forEach(id => {{
+["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","autocorrEfoldMin","autocorrEfoldMax"].forEach(id => {{
   document.getElementById(id).addEventListener("change", evaluateFilter);
+  document.getElementById(id).addEventListener("input", drawMetricHistograms);
 }});
 window.addEventListener("keydown", event => {{
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
   if (event.key.toLowerCase() === "g") setLabel(1);
   else if (event.key.toLowerCase() === "b") setLabel(0);
-  else if (event.key.toLowerCase() === "s") setLabel(2);
-  else if (event.key.toLowerCase() === "u") setLabel(-1);
+  else if (event.key.toLowerCase() === "u") setLabel(2);
+  else if (event.key.toLowerCase() === "n") setLabel(-1);
   else if (event.key === "ArrowLeft") moveVisible(-1);
   else if (event.key === "ArrowRight") moveVisible(1);
 }});
 document.getElementById("stackCanvas").addEventListener("click", e => {{
+  if (!visibleRois.length) return;
   const rect=e.target.getBoundingClientRect(), frac=(e.clientY-rect.top)/rect.height;
   const row = Math.max(0, Math.min(visibleRois.length - 1, Math.floor(y0 + frac * (y1-y0+1))));
   setSelected(visibleRois[row]);
@@ -1916,7 +2084,7 @@ window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=d
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
 window.addEventListener("resize", () => {{ syncControlColumnHeight(); draw(); }});
-makeOverlays(); syncTimeInputs(); populatePresetSelect(data.targetStructure); resetFilter();
+makeOverlays(); syncTimeInputs(); updateMetricDefaults(); populatePresetSelect(data.targetStructure); resetFilter();
 if (data.initialMorphologyFilter) writeFilter(data.initialMorphologyFilter);
 applySort(); syncControlColumnHeight(); setSelected(visibleRois[0]);
 requestAnimationFrame(() => {{ syncControlColumnHeight(); draw(); }});
