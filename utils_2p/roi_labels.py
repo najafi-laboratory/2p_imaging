@@ -252,13 +252,13 @@ def temporal_smoothness_snr(dff: Sequence[float] | np.ndarray) -> float:
     return float(1.0 - diff_var / (2.0 * trace_var))
 
 
-def autocorrelation_decay_tau(
+def autocorrelation_efold_time(
     dff: Sequence[float] | np.ndarray,
     *,
     frame_rate: float = 1.0,
     max_lag_seconds: float = 10.0,
 ) -> float:
-    """Return the dF/F autocorrelation e-folding decay time in seconds."""
+    """Return the dF/F autocorrelation e-folding time in seconds."""
 
     trace = np.asarray(dff, dtype=float).ravel()
     trace = trace[np.isfinite(trace)]
@@ -291,6 +291,17 @@ def autocorrelation_decay_tau(
     return float(crossing / float(frame_rate)) if np.isfinite(crossing) else np.nan
 
 
+def autocorrelation_decay_tau(
+    dff: Sequence[float] | np.ndarray,
+    *,
+    frame_rate: float = 1.0,
+    max_lag_seconds: float = 10.0,
+) -> float:
+    """Backward-compatible alias for :func:`autocorrelation_efold_time`."""
+
+    return autocorrelation_efold_time(dff, frame_rate=frame_rate, max_lag_seconds=max_lag_seconds)
+
+
 def dff_qc_metrics(dff: np.ndarray, *, frame_rate: float = 1.0) -> list[dict[str, float]]:
     """Return QC metrics for every dF/F trace in ``dff``."""
 
@@ -298,7 +309,7 @@ def dff_qc_metrics(dff: np.ndarray, *, frame_rate: float = 1.0) -> list[dict[str
     for trace in np.asarray(dff, dtype=float):
         event = robust_event_snr(trace)
         temporal = temporal_smoothness_snr(trace)
-        decay_tau = autocorrelation_decay_tau(trace, frame_rate=frame_rate)
+        autocorr_efold = autocorrelation_efold_time(trace, frame_rate=frame_rate)
         postdoc_snr = andrea_postdoc_snr(trace)
         metrics.append(
             {
@@ -307,7 +318,7 @@ def dff_qc_metrics(dff: np.ndarray, *, frame_rate: float = 1.0) -> list[dict[str
                 "event_noise_sd": event["noise_sd"],
                 "andrea_postdoc_snr": float(postdoc_snr),
                 "temporal_snr": float(temporal),
-                "decay_tau_seconds": float(decay_tau),
+                "autocorr_efold_time_seconds": float(autocorr_efold),
             }
         )
     return metrics

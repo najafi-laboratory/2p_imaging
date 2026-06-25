@@ -10,6 +10,7 @@ import numpy as np
 from utils_2p.roi_labels import (
     andrea_postdoc_snr,
     autocorrelation_decay_tau,
+    autocorrelation_efold_time,
     apply_label_export,
     dff_qc_metrics,
     load_reviewed_dff,
@@ -186,7 +187,7 @@ class RoiLabelsTest(unittest.TestCase):
         event = robust_event_snr(trace, sigma=1.0, event_percentile=75.0, dilation=0)
         postdoc_snr = andrea_postdoc_snr(trace)
         temporal = temporal_smoothness_snr(trace)
-        decay = autocorrelation_decay_tau(trace, frame_rate=2.0, max_lag_seconds=5.0)
+        decay = autocorrelation_efold_time(trace, frame_rate=2.0, max_lag_seconds=5.0)
         metrics = dff_qc_metrics(np.asarray([trace], dtype=np.float32), frame_rate=2.0)
 
         self.assertTrue(np.isfinite(event["snr_95_50"]))
@@ -200,11 +201,12 @@ class RoiLabelsTest(unittest.TestCase):
         self.assertIn("snr_95_50", metrics[0])
         self.assertIn("andrea_postdoc_snr", metrics[0])
         self.assertIn("temporal_snr", metrics[0])
-        self.assertIn("decay_tau_seconds", metrics[0])
+        self.assertIn("autocorr_efold_time_seconds", metrics[0])
         self.assertTrue(np.isfinite(metrics[0]["snr_95_50"]))
         self.assertTrue(np.isfinite(metrics[0]["andrea_postdoc_snr"]))
         self.assertTrue(np.isfinite(metrics[0]["temporal_snr"]))
-        self.assertTrue(np.isfinite(metrics[0]["decay_tau_seconds"]))
+        self.assertTrue(np.isfinite(metrics[0]["autocorr_efold_time_seconds"]))
+        self.assertEqual(decay, autocorrelation_decay_tau(trace, frame_rate=2.0, max_lag_seconds=5.0))
 
 
 if __name__ == "__main__":

@@ -174,8 +174,8 @@ def _all_rois_filter() -> dict[str, float | int | None]:
         "eventSnrMax": None,
         "andreaPostdocSnrMin": None,
         "andreaPostdocSnrMax": None,
-        "decayTauMin": None,
-        "decayTauMax": None,
+        "autocorrEfoldMin": None,
+        "autocorrEfoldMax": None,
     }
 
 
@@ -196,8 +196,8 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
             "eventSnrMax": None,
             "andreaPostdocSnrMin": None,
             "andreaPostdocSnrMax": None,
-            "decayTauMin": None,
-            "decayTauMax": None,
+            "autocorrEfoldMin": None,
+            "autocorrEfoldMax": None,
         }
     return presets
 
@@ -799,11 +799,11 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       </div>
       <div id="customMetricSources" class="info-box" hidden>
         Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-        95/50 pctl SNR, Andrea/postdoc SNR, and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+        95/50 pctl SNR, Andrea/postdoc SNR, and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
         <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
         <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">95/50 pctl SNR calculation code</a>
         <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">Andrea/postdoc SNR source code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
+        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
       </div>
       <div class="filter-controls">
         <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
@@ -811,8 +811,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <label>95/50 pctl SNR max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
         <label>Andrea/postdoc SNR min <input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="optional"></label>
         <label>Andrea/postdoc SNR max <input id="andreaPostdocSnrMax" type="number" step="0.01" placeholder="optional"></label>
-        <label>Decay tau min (s) <input id="decayTauMin" type="number" step="0.01" placeholder="optional"></label>
-        <label>Decay tau max (s) <input id="decayTauMax" type="number" step="0.01" placeholder="optional"></label>
+        <label>Autocorrelation e-fold time min (s) <input id="autocorrEfoldMin" type="number" step="0.01" placeholder="optional"></label>
+        <label>Autocorrelation e-fold time max (s) <input id="autocorrEfoldMax" type="number" step="0.01" placeholder="optional"></label>
         <button id="resetFilter">Reset QC thresholds</button>
         <button id="applyFilterToLabels">Apply Filters</button>
       </div>
@@ -831,11 +831,11 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
     </div>
     <div id="sortCustomSources" class="info-box" hidden>
       Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-      95/50 pctl SNR, Andrea/postdoc SNR, and decay tau are calculated from the raw Suite2p-derived dF/F trace for each ROI.
+      95/50 pctl SNR, Andrea/postdoc SNR, and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
       <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">95/50 pctl SNR calculation code</a>
       <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">Andrea/postdoc SNR source code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Decay tau calculation code</a>
+      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/docs/summary-generation-examples/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
     </div>
     <div class="trace-sort">
       <label>Sort visible ROIs by
@@ -851,7 +851,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <optgroup label="Custom Metrics">
             <option value="snr_95_50">95/50 pctl SNR</option>
             <option value="andrea_postdoc_snr">Andrea/postdoc SNR</option>
-            <option value="decay_tau_seconds">Calcium decay constant (tau)</option>
+            <option value="autocorr_efold_time_seconds">Autocorrelation e-fold time</option>
             <option value="connectivity">Connectivity</option>
           </optgroup>
         </select>
@@ -1119,6 +1119,9 @@ function val(roi, frame) {{
 }}
 function dffMetric(roi, key, fallbackKey = null) {{
   const metrics = data.dffMetrics[roi] || {{}};
+  return dffMetricValue(metrics, key, fallbackKey);
+}}
+function dffMetricValue(metrics, key, fallbackKey = null) {{
   const value = metrics[key];
   if (value !== null && value !== undefined) return value;
   return fallbackKey ? metrics[fallbackKey] : undefined;
@@ -1126,7 +1129,7 @@ function dffMetric(roi, key, fallbackKey = null) {{
 function metricValue(roi, metric) {{
   if (metric === "snr_95_50" || metric === "event_snr") return dffMetric(roi, "snr_95_50", "event_snr");
   if (metric === "andrea_postdoc_snr") return dffMetric(roi, "andrea_postdoc_snr");
-  if (metric === "decay_tau_seconds") return data.dffMetrics[roi].decay_tau_seconds;
+  if (metric === "autocorr_efold_time_seconds") return dffMetric(roi, "autocorr_efold_time_seconds", "decay_tau_seconds");
   if (metric === "roi_area") return data.dffMetrics[roi].roi_area;
   if (metric === "connectivity") return data.morphology[roi].connect;
   if (metric === "skew") return data.morphology[roi].skew;
@@ -1139,7 +1142,7 @@ function metricValue(roi, metric) {{
 function metricLabel(metric) {{
   if (metric === "snr_95_50" || metric === "event_snr") return "95/50 pctl SNR";
   if (metric === "andrea_postdoc_snr") return "Andrea/postdoc SNR";
-  if (metric === "decay_tau_seconds") return "Calcium decay constant (tau)";
+  if (metric === "autocorr_efold_time_seconds") return "Autocorrelation e-fold time";
   if (metric === "roi_area") return "ROI area (px)";
   if (metric === "connectivity") return "Connectivity";
   if (metric === "skew") return "Skew";
@@ -1219,7 +1222,7 @@ function setSelected(roi) {{
   const suite2pRoi = data.suite2pIndices[selected];
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | 95/50 pctl SNR ${{fmt(snr9550)}} | Andrea/postdoc SNR ${{fmt(postdocSnr)}} | decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} s`;
+  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | 95/50 pctl SNR ${{fmt(snr9550)}} | Andrea/postdoc SNR ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -1289,7 +1292,7 @@ function readFilter() {{
     compactMin: filterValue("compactMin"), compactMax: filterValue("compactMax"),
     eventSnrMin: filterValue("eventSnrMin"), eventSnrMax: filterValue("eventSnrMax"),
     andreaPostdocSnrMin: filterValue("andreaPostdocSnrMin"), andreaPostdocSnrMax: filterValue("andreaPostdocSnrMax"),
-    decayTauMin: filterValue("decayTauMin"), decayTauMax: filterValue("decayTauMax"),
+    autocorrEfoldMin: filterValue("autocorrEfoldMin"), autocorrEfoldMax: filterValue("autocorrEfoldMax"),
   }};
 }}
 function normalizeFilter(filter) {{
@@ -1302,7 +1305,7 @@ function normalizeFilter(filter) {{
     const value = Number(filter[key]);
     normalized[key] = Number.isFinite(value) ? value : null;
   }}
-  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","decayTauMin","decayTauMax"]) {{
+  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","autocorrEfoldMin","autocorrEfoldMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -1368,8 +1371,8 @@ function passesFilter(roi, metrics, filter) {{
     passesUpper(snr9550, filter.eventSnrMax) &&
     passesLower(postdocSnr, filter.andreaPostdocSnrMin) &&
     passesUpper(postdocSnr, filter.andreaPostdocSnrMax) &&
-    passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin) &&
-    passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)
+    passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin) &&
+    passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)
   );
 }}
 function morphologyReasons(metrics, dffMetrics, filter) {{
@@ -1389,8 +1392,8 @@ function morphologyReasons(metrics, dffMetrics, filter) {{
   if (!passesUpper(snr9550, filter.eventSnrMax)) reasons.push(`95/50 pctl SNR ${{fmt(snr9550)}} above ${{filter.eventSnrMax}}`);
   if (!passesLower(postdocSnr, filter.andreaPostdocSnrMin)) reasons.push(`Andrea/postdoc SNR ${{fmt(postdocSnr)}} below ${{filter.andreaPostdocSnrMin}}`);
   if (!passesUpper(postdocSnr, filter.andreaPostdocSnrMax)) reasons.push(`Andrea/postdoc SNR ${{fmt(postdocSnr)}} above ${{filter.andreaPostdocSnrMax}}`);
-  if (!passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin)) reasons.push(`decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} below ${{filter.decayTauMin}}`);
-  if (!passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)) reasons.push(`decay tau ${{fmt(dffMetrics.decay_tau_seconds)}} above ${{filter.decayTauMax}}`);
+  if (!passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} below ${{filter.autocorrEfoldMin}}`);
+  if (!passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} above ${{filter.autocorrEfoldMax}}`);
   return reasons;
 }}
 function evaluateFilter() {{
@@ -1664,7 +1667,7 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
       connectivity: metrics.connect,
       snr9550,
       postdocSnr,
-      decayTau: dffMetrics.decay_tau_seconds,
+      decayTau: dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"),
       fail: {{
         footprint: !(metrics.footprint >= filter.footprintMin && metrics.footprint <= filter.footprintMax),
         skew: !(metrics.skew >= filter.skewMin && metrics.skew <= filter.skewMax),
@@ -1673,7 +1676,7 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
         connectivity: !passesUpper(metrics.connect, filter.maxConnect),
         snr9550: !(passesLower(snr9550, filter.eventSnrMin) && passesUpper(snr9550, filter.eventSnrMax)),
         postdocSnr: !(passesLower(postdocSnr, filter.andreaPostdocSnrMin) && passesUpper(postdocSnr, filter.andreaPostdocSnrMax)),
-        decayTau: !(passesLower(dffMetrics.decay_tau_seconds, filter.decayTauMin) && passesUpper(dffMetrics.decay_tau_seconds, filter.decayTauMax)),
+        decayTau: !(passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin) && passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)),
       }},
       reason: reasons.join("; ") || "included",
     }};
@@ -1691,14 +1694,14 @@ document.getElementById("openExclusions").addEventListener("click", () => {{
     td(fmt(row.decayTau), row.fail.decayTau) +
     td(row.reason)
   }}</tr>`).join("");
-  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","snr_95_50","andrea_postdoc_snr","decay_tau_seconds","reason"];
+  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","reason"];
   const csvRows = rowsData.map(row => [
     row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
     row.connectivity, fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.decayTau), row.reason,
   ].map(csvEscape).join(","));
   const csv = [csvHeader.join(","), ...csvRows].join("\\n") + "\\n";
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>95/50 pctl SNR</th><th>Andrea/postdoc SNR</th><th>Decay tau (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>95/50 pctl SNR</th><th>Andrea/postdoc SNR</th><th>Autocorrelation e-fold time (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }});
 function npyBlob(values, rows, cols) {{
