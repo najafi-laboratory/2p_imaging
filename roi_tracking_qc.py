@@ -29,26 +29,21 @@ Two exporters share the same figure builder:
   export_html(...) → one self-contained HTML file with a UCID picker
 """
 
-import io
 import base64
+import io
+import json
 
-import numpy as np
 import matplotlib
+import numpy as np
 
 matplotlib.use("Agg")
+import matplotlib.axes as maxes
 import matplotlib.pyplot as plt
+import scipy.sparse as sp
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
-from scipy.ndimage import gaussian_filter, uniform_filter, binary_dilation
-
-try:
-    import scipy.sparse as sp
-
-    _HAVE_SCIPY = True
-except ImportError:
-    _HAVE_SCIPY = False
-
+from scipy.ndimage import binary_dilation, gaussian_filter, uniform_filter
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -60,15 +55,15 @@ def _footprint_image(rois_aligned, session, roi_idx, H, W):
     if roi_idx is None:
         return None
     block = rois_aligned[session]
-    if _HAVE_SCIPY and sp.issparse(block):
+    if sp.issparse(block):
         row = np.asarray(block[roi_idx].todense()).ravel()
         return row.reshape(H, W)
-    block = np.asarray(block)
-    if block.ndim == 2:
-        return block[roi_idx].reshape(H, W)
-    if block.ndim == 3:
-        return block[roi_idx]
-    raise ValueError(f"Unexpected ROIs_aligned[{session}] shape: {block.shape}")
+    dense = np.asarray(block)
+    if dense.ndim == 2:
+        return dense[roi_idx].reshape(H, W)
+    if dense.ndim == 3:
+        return dense[roi_idx]
+    raise ValueError(f"Unexpected ROIs_aligned[{session}] shape: {dense.shape}")
 
 
 def _weighted_centroid(fp):
@@ -461,8 +456,6 @@ def build_ucid_figure(
 
     # ── row labels (left-column y-axes) ──────────────────────────────────────
     # axes[row, col] is typed as ndarray by stubs; cast to Axes for attribute access
-    import matplotlib.axes as maxes
-
     def _ax(row: int, col: int) -> maxes.Axes:
         return axes[row, col]  # type: ignore[return-value]
 
@@ -509,15 +502,22 @@ def order_ucids_by_quality(
         return list(all_u)
     cs_sil = np.asarray(cs_sil)
     keyed = [(u, cs_sil[u] if 0 <= u < len(cs_sil) else np.nan) for u in all_u]
-    keyed.sort(
-        key=lambda t: (np.nan_to_num(t[1], nan=np.inf), t[0]), reverse=not ascending
-    )
+    # Sort by score in the requested direction; UCID stays an ascending tie-break.
+    score_sign = 1 if ascending else -1
+    keyed.sort(key=lambda t: (score_sign * np.nan_to_num(t[1], nan=np.inf), t[0]))
     return [u for u, _ in keyed]
 
 
 # ---------------------------------------------------------------------------
 # exporters
 # ---------------------------------------------------------------------------
+
+
+def _score_for(cs_sil, u):
+    """cs_sil score for UCID u as a float, or None if unavailable."""
+    if cs_sil is not None and 0 <= u < len(cs_sil):
+        return float(cs_sil[u])
+    return None
 
 
 def export_pdf(
@@ -535,11 +535,7 @@ def export_pdf(
     cs_sil = np.asarray(cs_sil) if cs_sil is not None else None
     with PdfPages(path) as pdf:
         for u in ucids:
-            score = (
-                float(cs_sil[u])
-                if (cs_sil is not None and 0 <= u < len(cs_sil))
-                else None
-            )
+            score = _score_for(cs_sil, u)
             fig = build_ucid_figure(
                 u,
                 fovs_aligned,
@@ -565,11 +561,11 @@ def _fig_to_b64(fig):
 _HTML = """<!doctype html><html><head><meta charset="utf-8">
 <title>ROICaT cross-session QC</title>
 <style>
- body{{font-family:system-ui,sans-serif;margin:24px;color:#1a1a1a}}
- .bar{{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}}
- select,button{{font-size:15px;padding:5px 9px}}
- #meta{{color:#555;font-size:14px}}
- img{{max-width:100%;border:1px solid #ddd;border-radius:6px}}
+ body{font-family:system-ui,sans-serif;margin:24px;color:#1a1a1a}
+ .bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
+ select,button{font-size:15px;padding:5px 9px}
+ #meta{color:#555;font-size:14px}
+ img{max-width:100%;border:1px solid #ddd;border-radius:6px}
 </style></head><body>
 <div class="bar">
  <strong>UCID</strong>
@@ -584,18 +580,18 @@ const DATA = {data_json};
 const pick = document.getElementById('pick');
 const fig  = document.getElementById('fig');
 const meta = document.getElementById('meta');
-DATA.forEach((d,i)=>{{
+DATA.forEach((d,i)=>{
   const o=document.createElement('option');
   o.value=i;
   o.text='UCID '+d.ucid+(d.score!=null?'  (cs_sil '+d.score.toFixed(3)+')':'');
   pick.appendChild(o);
-}});
-function show(i){{
+});
+function show(i){
   i=Math.max(0,Math.min(DATA.length-1,i));
   pick.value=i;
   fig.src='data:image/png;base64,'+DATA[i].png;
   meta.textContent=(i+1)+' / '+DATA.length;
-}}
+}
 pick.onchange=()=>show(+pick.value);
 document.getElementById('prev').onclick=()=>show(+pick.value-1);
 document.getElementById('next').onclick=()=>show(+pick.value+1);
@@ -621,8 +617,6 @@ def export_html(
     Every figure is pre-rendered and base64-embedded.  For large runs, pass a
     cs_sil-sorted subset rather than all clusters — max_ucids is a safety cap.
     """
-    import json
-
     if len(ucids) > max_ucids:
         raise ValueError(
             f"{len(ucids)} UCIDs exceeds max_ucids={max_ucids}; the HTML would be "
@@ -632,9 +626,7 @@ def export_html(
     cs_sil = np.asarray(cs_sil) if cs_sil is not None else None
     records = []
     for u in ucids:
-        score = (
-            float(cs_sil[u]) if (cs_sil is not None and 0 <= u < len(cs_sil)) else None
-        )
+        score = _score_for(cs_sil, u)
         fig = build_ucid_figure(
             u,
             fovs_aligned,
