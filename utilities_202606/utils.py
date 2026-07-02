@@ -898,19 +898,19 @@ class utils_basic:
             data_share = np.concatenate(neu_seq_share, axis=0) if neu_seq_share != None else None
             hm_data, hm_norm, hm_cmap = apply_colormap(data, norm_mode, data_share)
             # draw heatmap nyaoo~0w0.
-            if scale_bar:
-                ax_hm.imshow(hm_data, extent=[neu_time[0], neu_time[-1], 1, hm_data.shape[0]], interpolation='nearest', aspect='auto')
-                adjust_layout_heatmap(ax_hm)
-                ax_hm.set_ylabel('')
-                ax_hm.set_yticks([])
+            ax_hm.imshow(hm_data, extent=[neu_time[0], neu_time[-1], 1, hm_data.shape[0]], interpolation='nearest', aspect='auto')
+            adjust_layout_heatmap(ax_hm)
+            ax_hm.set_ylabel('')
+            ax_hm.set_yticks([])
             # add neuron-count scale bar nyaoo~0w0.
-            trans = mtransforms.blended_transform_factory(ax_hm.transAxes, ax_hm.transData)
-            bar_count = max(1, int(np.floor((n_neurons / 2) / (10 ** np.floor(np.log10(max(n_neurons / 2, 1))))) * (10 ** np.floor(np.log10(max(n_neurons / 2, 1))))))
-            scale = hm_data.shape[0] / n_neurons
-            y0 = hm_data.shape[0] - bar_count * scale - 1
-            y1 = hm_data.shape[0] - 1
-            ax_hm.plot([-0.05, -0.05], [y0, y1], color='black', lw=1, transform=trans, clip_on=False)
-            ax_hm.text(-0.05, (y0 + y1) / 2, f'{bar_count}', rotation=90, va='center', ha='right', transform=trans)
+            if scale_bar:
+                trans = mtransforms.blended_transform_factory(ax_hm.transAxes, ax_hm.transData)
+                bar_count = max(1, int(np.floor((n_neurons / 2) / (10 ** np.floor(np.log10(max(n_neurons / 2, 1))))) * (10 ** np.floor(np.log10(max(n_neurons / 2, 1))))))
+                scale = hm_data.shape[0] / n_neurons
+                y0 = hm_data.shape[0] - bar_count * scale - 1
+                y1 = hm_data.shape[0] - 1
+                ax_hm.plot([-0.05, -0.05], [y0, y1], color='black', lw=1, transform=trans, clip_on=False)
+                ax_hm.text(-0.05, (y0 + y1) / 2, f'{bar_count}', rotation=90, va='center', ha='right', transform=trans)
             add_heatmap_colorbar(ax_cb, hm_cmap, hm_norm, cbar_label or r'$\Delta F/F$')
 
     # plot trial-by-time heatmap nyaoo~0w0.
