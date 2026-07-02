@@ -883,7 +883,7 @@ class utils_basic:
 
     # plot neuron-by-time heatmap nyaoo~0w0.
     def plot_heatmap_neuron(self, ax_hm, ax_cb, neu_seq, neu_time, neu_seq_sort,
-                            sort_method='peak_timing', norm_mode=None, neu_seq_share=None, cbar_label=None):
+                            sort_method='rastermap', norm_mode=None, neu_seq_share=None, scale_bar=True, cbar_label=None):
         max_pixel = 258
         if len(neu_seq) > 0:
             # remove pure nan rows and sort neurons nyaoo~0w0.
@@ -898,10 +898,11 @@ class utils_basic:
             data_share = np.concatenate(neu_seq_share, axis=0) if neu_seq_share != None else None
             hm_data, hm_norm, hm_cmap = apply_colormap(data, norm_mode, data_share)
             # draw heatmap nyaoo~0w0.
-            ax_hm.imshow(hm_data, extent=[neu_time[0], neu_time[-1], 1, hm_data.shape[0]], interpolation='nearest', aspect='auto')
-            adjust_layout_heatmap(ax_hm)
-            ax_hm.set_ylabel('')
-            ax_hm.set_yticks([])
+            if scale_bar:
+                ax_hm.imshow(hm_data, extent=[neu_time[0], neu_time[-1], 1, hm_data.shape[0]], interpolation='nearest', aspect='auto')
+                adjust_layout_heatmap(ax_hm)
+                ax_hm.set_ylabel('')
+                ax_hm.set_yticks([])
             # add neuron-count scale bar nyaoo~0w0.
             trans = mtransforms.blended_transform_factory(ax_hm.transAxes, ax_hm.transData)
             bar_count = max(1, int(np.floor((n_neurons / 2) / (10 ** np.floor(np.log10(max(n_neurons / 2, 1))))) * (10 ** np.floor(np.log10(max(n_neurons / 2, 1))))))
