@@ -93,14 +93,6 @@ def read_masks(ops):
         masks_anat = create_memmap(f['masks_anat'], 'float32', os.path.join(mm_path, 'masks_anat.mmap')) if ops['nchannels'] == 2 else None
     return [labels, masks, mean_func, max_func, mean_anat, masks_anat]
 
-# read motion correction offsets.
-def read_move_offset(ops):
-    mm_path, file_path = get_memmap_path(ops, 'move_offset.h5')
-    with h5py.File(file_path, 'r') as f:
-        xoff = create_memmap(f['xoff'], 'int8', os.path.join(mm_path, 'xoff.mmap'))
-        yoff = create_memmap(f['yoff'], 'int8', os.path.join(mm_path, 'yoff.mmap'))
-    return [xoff, yoff]
-
 # read trailized neural traces with stimulus alignment.
 def read_neural_trials(ops, smooth):
     mm_path, file_path = get_memmap_path(ops, 'neural_trials.h5')
@@ -127,6 +119,36 @@ def read_neural_trials(ops, smooth):
         neural_trials['camera_time']  = create_memmap(f['neural_trials']['camera_time'],  'float32', os.path.join(mm_path, 'camera_time.mmap'))
         neural_trials['camera_pupil'] = create_memmap(f['neural_trials']['camera_pupil'], 'float32', os.path.join(mm_path, 'camera_pupil.mmap'))
     return neural_trials
+
+# unpack one released h5 session for analysis.
+def unpack_packed_session(session_data_path, smooth=False):
+    h5_file_name = [f for f in os.listdir(session_data_path) if f.endswith('.h5')][0]
+    mm_path = os.path.join(session_data_path, 'memmap')
+    file_path = os.path.join(session_data_path, h5_file_name)
+    with h5py.File(file_path, 'r') as f:
+        labels = create_memmap(f['labels'], 'int8', os.path.join(mm_path, 'labels.mmap'))
+        masks = create_memmap(f['masks']['masks_func'], 'float32', os.path.join(mm_path, 'masks_func.mmap'))
+        mean_func = create_memmap(f['masks']['mean_func'], 'float32', os.path.join(mm_path, 'mean_func.mmap'))
+        max_func = create_memmap(f['masks']['max_func'], 'float32', os.path.join(mm_path, 'max_func.mmap'))
+        mean_anat = create_memmap(f['masks']['mean_anat'], 'float32', os.path.join(mm_path, 'mean_anat.mmap')) if 'mean_anat' in f['masks'] else None
+        masks_anat = create_memmap(f['masks']['masks_anat'], 'float32', os.path.join(mm_path, 'masks_anat.mmap')) if 'masks_anat' in f['masks'] else None
+        neural_trials = dict()
+        dff = np.array(f['neural_trials']['dff'])
+        if smooth:
+            window_length=11
+            polyorder=2
+            dff = np.apply_along_axis(
+                savgol_filter, 1, dff,
+                window_length=window_length,
+                polyorder=polyorder)
+        neural_trials['dff'] = create_memmap(dff, 'float32', os.path.join(mm_path, 'dff.mmap'))
+        for key in f['neural_trials'].keys():
+            if key != 'dff':
+                neural_trials[key] = create_memmap(
+                    f['neural_trials'][key],
+                    f['neural_trials'][key].dtype,
+                    os.path.join(mm_path, key+'.mmap'))
+    return [labels, [masks, mean_func, max_func, mean_anat, masks_anat], neural_trials]
 
 # read bpod session data.
 def read_bpod_mat_data(ops):
@@ -181,7 +203,6 @@ def read_subject(list_ops, force_label, smooth):
     list_labels = []
     list_masks = []
     list_neural_trials = []
-    list_move_offset = []
     for ops in tqdm(list_ops):
         if not os.path.exists(os.path.join(ops['save_path0'], 'memmap')):
             os.makedirs(os.path.join(ops['save_path0'], 'memmap'))
@@ -189,8 +210,6 @@ def read_subject(list_ops, force_label, smooth):
         labels, masks, mean_func, max_func, mean_anat, masks_anat = read_masks(ops)
         # trials.
         neural_trials = read_neural_trials(ops, smooth)
-        # movement offset.
-        xoff, yoff = read_move_offset(ops)
         # labels.
         if force_label != None:
             labels = np.ones_like(labels) * force_label
@@ -201,42 +220,65 @@ def read_subject(list_ops, force_label, smooth):
              mean_func, max_func,
              mean_anat, masks_anat])
         list_neural_trials.append(neural_trials)
-        list_move_offset.append([xoff, yoff])
         # clear memory usages.
         del labels
         del masks, mean_func, max_func, mean_anat, masks_anat
         del neural_trials
-        del xoff, yoff
         gc.collect()
-    return [list_labels, list_masks, list_neural_trials, list_move_offset]
+    return [list_labels, list_masks, list_neural_trials]
+
+# get released h5 results for one subject.
+def read_packed_subject(list_session_data_path, force_label, smooth):
+    list_labels = []
+    list_masks = []
+    list_neural_trials = []
+    for session_data_path in tqdm(list_session_data_path):
+        if not os.path.exists(os.path.join(session_data_path, 'memmap')):
+            os.makedirs(os.path.join(session_data_path, 'memmap'))
+        labels, masks, neural_trials = unpack_packed_session(session_data_path, smooth)
+        if force_label != None:
+            labels = np.ones_like(labels) * force_label
+        list_labels.append(labels)
+        list_masks.append(masks)
+        list_neural_trials.append(neural_trials)
+        del labels
+        del masks
+        del neural_trials
+        gc.collect()
+    return [list_labels, list_masks, list_neural_trials]
 
 # get session results for all subject.
 def read_all(session_config_list, smooth):
     list_labels = []
     list_masks = []
     list_neural_trials = []
-    list_move_offset = []
+    use_packed = session_config_list.get('use_packed', False)
+    results_dir = 'results_pack' if use_packed else 'results'
     for i in range(len(session_config_list['list_config'])):
         # read ops for each subject.
         print('Reading subject {}/{}'.format(i+1, len(session_config_list['list_config'])))
         list_session_data_path = [
-            os.path.join('results', session_config_list['list_config'][i]['session_folder'], n)
+            os.path.join(results_dir, session_config_list['list_config'][i]['session_folder'], n)
             for n in session_config_list['list_config'][i]['list_session_name']]
-        list_ops = read_ops(list_session_data_path)
         # read results for each subject.
-        labels, masks, neural_trials, move_offset = read_subject(
-             list_ops,
-             force_label=session_config_list['list_config'][i]['force_label'],
-             smooth=smooth)
+        if use_packed:
+            labels, masks, neural_trials = read_packed_subject(
+                list_session_data_path,
+                force_label=session_config_list['list_config'][i]['force_label'],
+                smooth=smooth)
+        else:
+            list_ops = read_ops(list_session_data_path)
+            labels, masks, neural_trials = read_subject(
+                list_ops,
+                force_label=session_config_list['list_config'][i]['force_label'],
+                smooth=smooth)
         # append to list.
         list_labels += labels
         list_masks += masks
         list_neural_trials += neural_trials
-        list_move_offset += move_offset
         # clear memory usages.
         del labels
         del masks
         del neural_trials
-        del move_offset
         gc.collect()
-    return [list_labels, list_masks, list_neural_trials, list_move_offset]
+    return [list_labels, list_masks, list_neural_trials]

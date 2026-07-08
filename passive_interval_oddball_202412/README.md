@@ -1,5 +1,9 @@
 # Intrinsic timing, not temporal prediction, underlies ramping dynamics in visual and parietal cortex during passive behavior
 
+In both:
+https://github.com/najafi-laboratory/2p_imaging/tree/main/passive_interval_oddball_202412
+https://github.com/HilbertHuang/NajafiLabPHD/tree/main/Analysis/passive_interval_oddball_202412
+
 ## Overall workflow
 
 This project analyzes passive interval oddball imaging sessions from raw session outputs to a webpage report. Session groups are defined in `session_configs.py`, then `main.py` selects the requested subject/config list, creates a temporary results folder, reads each session's Suite2p `ops.npy`, and runs the enabled analysis blocks.
@@ -820,6 +824,7 @@ Finally, `webpage/pack_webpage_main.py` embeds the generated SVGs and notes into
 - Rewritten plot_corr_time.
 - Rewritten get_pair_corr.
 
-
-
-
+### 2026.06.08
+- Added read_packed_subject.
+- Added pack_reults modules.
+- Removed move_offset from analysis.

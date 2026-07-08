@@ -35,7 +35,7 @@ def run(session_config_list, smooth, cate_list):
     else:
         print('Reading saved results')
         sub_session_config_list = filter_session_config_list(session_config_list, target_sess)
-        [list_labels, _, list_neural_trials, _
+        [list_labels, _, list_neural_trials
          ] = read_all(sub_session_config_list, smooth)
         print('Read {} session results'.format(np.sum(idx_target_sess)))
         print('Initiating alignment results')

@@ -18,31 +18,6 @@ def plot_surgery_window(axs, imgs):
             axs[i].set_yticks([])
     except: pass
 
-# motion correction offsets.
-def plot_motion_offset_hist(ax, list_move_offset):
-    xoff = np.concatenate([l[0] for l in list_move_offset])
-    yoff = np.concatenate([l[1] for l in list_move_offset])
-    center = np.arange(-5,6)
-    width = 0.25
-    for c in center:
-        ax.bar(
-            x=c-width/2,
-            height=np.sum(xoff[xoff!=0]==c)/len(xoff),
-            width=width, color='mediumseagreen', label='x')
-        ax.bar(
-            x=c+width/2,
-            height=np.sum(yoff[yoff!=0]==c)/len(yoff),
-            width=width, color='coral', label='y')
-    ax.tick_params(tick1On=False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['top'].set_visible(False)
-    ax.set_xticks(center)
-    ax.set_xlabel('offset pixels')
-    ax.set_ylabel('fraction of frames')
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles[:2], labels[:2], loc='upper right')
-    ax.set_title('motion correction offset distribution')
-
 # inhibitory/excitory labels.
 def plot_inh_exc_label_pc(ax, list_labels):
     _, _, c_exc, _ = get_roi_label_color([-1], 0)

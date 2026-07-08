@@ -15,21 +15,23 @@ from plot.misc import plot_surgery_window
 
 def run(session_config_list, smooth, cate_list):
     size_scale = 3
-    [list_labels, list_masks, list_neural_trials, list_move_offset
+    [list_labels, list_masks, list_neural_trials
      ] = read_all(session_config_list, smooth)
     def plot_window():
         title = 'surgery window'
         print('-----------------------------------------------')
         print(title)
         filename = 'fov_window'
+        results_dir = 'results_pack' if session_config_list.get('use_packed', False) else 'results'
         session_folder = [
-            os.path.join('results', sc['session_folder'])
+            os.path.join(results_dir, sc['session_folder'])
             for sc in session_config_list['list_config']]
         path_window = []
         path_note = []
         for sf in session_folder:
-            path_window += [os.path.join(sf, f) for f in os.listdir(sf) if 'window' in f]
-            path_note +=[os.path.join(sf, f) for f in os.listdir(sf) if 'note' in f]
+            if os.path.exists(sf):
+                path_window += [os.path.join(sf, f) for f in os.listdir(sf) if 'window' in f]
+                path_note +=[os.path.join(sf, f) for f in os.listdir(sf) if 'note' in f]
         img_window = [plt.imread(wp) for wp in path_window]
         img_note = [plt.imread(wp) for wp in path_note]
         n_row = 2

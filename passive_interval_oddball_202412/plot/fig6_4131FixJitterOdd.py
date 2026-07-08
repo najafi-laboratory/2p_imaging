@@ -1454,8 +1454,8 @@ class plotter_utils(utils_basic):
             # get correlations.
             corr_fix = np.concatenate([get_pair_corr(ns) for ns in neu_seq_fix_pair], axis=0)
             corr_jitter = np.concatenate([get_pair_corr(ns) for ns in neu_seq_jitter_pair], axis=0)
-            m_0, s_0 = get_mean_sem(corr_fix)
-            m_1, s_1 = get_mean_sem(corr_jitter)
+            m_0, s_0 = get_mean_sem(corr_fix, method_s='confidence interval')
+            m_1, s_1 = get_mean_sem(corr_jitter, method_s='confidence interval')
             # define evaluation windows.
             if oddball == 0:
                 win_eval = [stim_seq[c_idx+1,0], stim_seq[c_idx+1,0]+500]
