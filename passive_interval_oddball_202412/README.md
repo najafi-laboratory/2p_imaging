@@ -1,7 +1,9 @@
 # Intrinsic timing, not temporal prediction, underlies ramping dynamics in visual and parietal cortex during passive behavior
 
 In both:
+
 https://github.com/najafi-laboratory/2p_imaging/tree/main/passive_interval_oddball_202412
+
 https://github.com/HilbertHuang/NajafiLabPHD/tree/main/Analysis/passive_interval_oddball_202412
 
 ## Overall workflow
