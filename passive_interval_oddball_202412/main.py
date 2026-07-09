@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-import sys
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -18,8 +17,11 @@ def combine_session_config_list(session_config_list, results_dir='results'):
         list_session_data_path += [
             os.path.join(results_dir, sc['session_folder'], n)
             for n in sc['list_session_name'].keys()]
-    list_session_name = [sc['list_session_name'] for sc in session_config_list['list_config']]
-    list_session_name = {k: v for d in list_session_name for k, v in d.items()}
+    list_session_name = {}
+    for sc in session_config_list['list_config']:
+        list_session_name.update({
+            os.path.join(sc['session_folder'], k): v
+            for k, v in sc['list_session_name'].items()})
     session_config_list['list_session_name'] = list_session_name
     session_config_list['list_session_data_path'] = list_session_data_path
     return session_config_list
@@ -120,8 +122,7 @@ def run(session_config_list, cate_list, do_trialization=False, use_packed=False)
 
 if __name__ == "__main__":
     COMMANDLINE_MODE = 1
-    cate_list = [[-1,1,2]]
-    #cate_list = [[-1], [1], [2], [-1,1,2]]
+    cate_list = [[-1], [1], [2], [-1,1,2]]
     from session_configs import all_config_list
     
     if COMMANDLINE_MODE:
@@ -140,112 +141,4 @@ if __name__ == "__main__":
                 run(session_config_list, cate_list, args.do_trialization, args.use_packed)
 
     else:
-
-        session_config_test = {
-            'list_session_name' : {
-                #'VTYH02_PPC_20250214_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250213_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250212_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250211_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250210_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250208_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250207_1451ShortLong' : 'short_long',
-                #'VTYH02_PPC_20250206_1451ShortLong' : 'short_long',     
-                #'YH18VT_V1_20250526_3331Random' : 'random',
-                #'YH18VT_V1_20250527_3331Random' : 'random',
-                #'YH18VT_V1_20250528_3331Random' : 'random',
-                #'YH18VT_V1_20250529_3331Random' : 'random',
-                #'YH18VT_V1_20250530_3331Random' : 'random',
-                'YH18VT_V1_20250326_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250328_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250331_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250401_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250402_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250403_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250407_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250408_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250409_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH18VT_V1_20250410_4131FixJitterOdd' : 'fix_jitter_odd',
-                #'VTYH02_PPC_20250118_4131FixJitterOdd' : 'fix_jitter_odd',
-                #'VTYH02_PPC_20250127_4131FixJitterOdd' : 'fix_jitter_odd',
-                #'VTYH02_PPC_20250123_4131FixJitterOdd' : 'fix_jitter_odd',
-                #'VTYH02_PPC_20250122_4131FixJitterOdd' : 'fix_jitter_odd',
-                #'VTYH02_PPC_20250121_4131FixJitterOdd' : 'fix_jitter_odd',
-                #'VTYH02_PPC_20250120_4131FixJitterOdd' : 'fix_jitter_odd',
-                },
-            'session_folder' : 'test',
-            'sig_tag' : 'all',
-            'force_label' : None,
-            }
-        session_config_test2 = {
-            'list_session_name' : {
-                #'YH17VT_V1_20250526_3331Random' : 'random',
-                #'YH17VT_V1_20250527_3331Random' : 'random',
-                #'YH17VT_V1_20250528_3331Random' : 'random',
-                #'YH17VT_V1_20250529_3331Random' : 'random',
-                #'YH17VT_V1_20250530_3331Random' : 'random',
-                #'YH14SC_PPC_20250421_1451ShortLong' : 'short_long',
-                #'YH14SC_PPC_20250422_1451ShortLong' : 'short_long',
-                #'YH14SC_PPC_20250423_1451ShortLong' : 'short_long',
-                #'YH14SC_PPC_20250424_1451ShortLong' : 'short_long',
-                #'YH14SC_PPC_20250425_1451ShortLong' : 'short_long',  
-                'YH14SC_PPC_20250326_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH14SC_PPC_20250327_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH14SC_PPC_20250328_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH14SC_PPC_20250401_4131FixJitterOdd' : 'fix_jitter_odd',
-                'YH14SC_PPC_20250402_4131FixJitterOdd' : 'fix_jitter_odd',
-                },
-            'session_folder' : 'test',
-            'sig_tag' : 'all',
-            'force_label' : 2,
-            }
-        session_config_list_test = {
-            'list_config': [
-                session_config_test,
-                session_config_test2,
-                ],
-            'label_names' : {
-                '-1':'Exc',
-                '1':'VIP',
-                '2':'SST',
-                },
-            'subject_name' : 'test',
-            'output_filename' : 'test_passive'
-            }
-        
-        '''
-
-        # run(session_config_list_test, cate_list)
-        
-        import matplotlib.pyplot as plt
-        session_config_list = combine_session_config_list(session_config_list_test)
-        list_ops = read_ops(session_config_list['list_session_data_path'])
-        ops = list_ops[0]
-
-        from modules.ReadResults import read_all
-        [list_labels, list_masks,
-         list_neural_trials
-         ] = read_all(session_config_list, smooth=False)
-        neural_trials = list_neural_trials[0]
-        dff = neural_trials['dff']
-        label_names = {'-1':'Exc', '1':'Inh_VIP', '2':'Inh_SST'}
-        cate = [-1,1,2]
-        roi_id = None
-        norm_mode='none'
-        jitter_trial_mode='global'
-        scaled=True
-        
-        cluster_cmap = plt.cm.hsv
-        standard = 1
-        oddball = 1
-        block = 0
-        mode = 'post'
-        temp_folder = 'temp_'+session_config_list['subject_name']
-        if not os.path.exists(os.path.join('results', 'temp_'+session_config_list['subject_name'])):
-            os.makedirs(os.path.join('results', 'temp_'+session_config_list['subject_name']))
-            
-        camera_time = neural_trials['camera_time']
-        camera_pupil = neural_trials['camera_pupil']
-        plt.plot(camera_time, camera_pupil)
-
-        '''
+        520
