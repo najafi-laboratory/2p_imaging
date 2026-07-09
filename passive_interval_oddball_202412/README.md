@@ -6,6 +6,154 @@ https://github.com/najafi-laboratory/2p_imaging/tree/main/passive_interval_oddba
 
 https://github.com/HilbertHuang/NajafiLabPHD/tree/main/Analysis/passive_interval_oddball_202412
 
+## Quick start
+
+Use the packed h5 results first. This is the fastest way to validate the project and generate a report because it skips raw trialization.
+
+1. Create or activate an environment with the analysis dependencies.
+
+```bash
+conda create -n passive-oddball python=3.11 -y
+conda activate passive-oddball
+pip install numpy scipy h5py matplotlib scikit-learn tqdm
+```
+
+Install PyTorch too if you want to run the TRF model notebook:
+
+```bash
+pip install torch
+```
+
+2. Get the data into `results_pack`.
+
+This checkout can use compact packed sessions under:
+
+```text
+results_pack/<subject>/<session>/<session>.h5
+```
+
+If you only have the `.7z` archives in `results_pack`, extract each archive in place with 7-Zip so the subject folders appear next to the archives. For raw reprocessing, place raw Suite2p/Bpod/voltage/camera session folders under:
+
+```text
+results/<subject>/<session>/
+```
+
+3. Validate one packed session in notebooks.
+
+Open these notebooks in order:
+
+```text
+notebooks/00_quick_start.ipynb
+notebooks/01_validate_packed_results.ipynb
+```
+
+`00_quick_start.ipynb` checks the project folders, lists available packed sessions, and prints the first report command. `01_validate_packed_results.ipynb` opens one packed h5 file, checks the main array shapes, and plots a quick population trace plus a stimulus-aligned response.
+
+The model walkthrough notebooks are:
+
+```text
+notebooks/02_run_glm_model.ipynb
+notebooks/03_run_trf_model.ipynb
+```
+
+`02_run_glm_model.ipynb` fits the visual stimulus GLM on one packed session and plots stimulus kernels. `03_run_trf_model.ipynb` fits the temporal response function model to those GLM kernels and plots fitted pre/post ramp examples.
+
+The plotting walkthrough notebooks are:
+
+```text
+notebooks/04_plot_basic_session_figures.ipynb
+notebooks/05_plot_aligned_trial_figures.ipynb
+```
+
+`04_plot_basic_session_figures.ipynb` builds field-of-view, trace, and interval summary figures from one packed session. `05_plot_aligned_trial_figures.ipynb` aligns trials to stimulus onset and plots heatmaps, mean responses, and pupil traces step by step.
+
+4. Generate a report from packed data.
+
+Run one subject first:
+
+```bash
+python main.py --config_list YH21SC --use_packed
+```
+
+The output is written to:
+
+```text
+results/YH21SC_V1_passive.html
+```
+
+To run all configured groups from packed h5 files:
+
+```bash
+python main.py --config_list "YH01VT, YH02VT, YH03VT, YH14SC, YH16SC, YH17VT, YH18VT, YH19VT, YH20SC, YH21SC, PPC, V1" --use_packed
+```
+
+5. Run from raw session folders when needed.
+
+Raw trialization expects each session folder to contain Suite2p output plus `dff.h5`, `raw_voltages.h5`, `bpod_session_data.mat`, and optional camera/DLC data. After placing raw sessions under `results`, run:
+
+```bash
+python main.py --config_list YH21SC --do_trialization
+```
+
+## Packed h5 data structure
+
+Each packed session is saved as:
+
+```text
+results_pack/<subject>/<session>/<session>.h5
+```
+
+The packed h5 file is created by `pack_data/pack_results.py`. It copies `labels` and all mask datasets from `masks.h5`, then copies everything under `/neural_trials` from `neural_trials.h5`.
+
+Use these symbols for dimensions:
+
+```text
+n_neurons   number of segmented ROIs/neurons
+n_times     number of calcium imaging frames
+n_stim      number of visual stimulus events
+n_vol_times number of voltage recording samples
+n_cam_times number of camera/pupil samples
+height      image height in pixels
+width       image width in pixels
+```
+
+Top-level datasets:
+
+| h5 path | shape | meaning |
+| --- | --- | --- |
+| `/labels` | `(n_neurons,)` | Cell category labels for each ROI. Common labels are `-1` excitatory, `1` VIP, and `2` SST; some sessions can include `0` or forced labels. |
+| `/masks/masks_func` | `(height, width)` | Functional ROI label image. Pixel value `0` is background; positive integer values identify ROIs. |
+| `/masks/mean_func` | `(height, width)` | Mean functional image. |
+| `/masks/max_func` | `(height, width)` | Max functional image. |
+| `/masks/mean_anat` | `(height, width)`, optional | Mean anatomical image when a second channel is available. |
+| `/masks/masks_anat` | `(height, width)`, optional | Anatomical ROI label image when a second channel is available. |
+
+Neural trial datasets:
+
+| h5 path | shape | meaning |
+| --- | --- | --- |
+| `/neural_trials/dff` | `(n_neurons, n_times)` | Calcium traces aligned to the imaging frame timestamps. |
+| `/neural_trials/time` | `(n_times,)` | Imaging frame times, corrected to the center of acquisition. |
+| `/neural_trials/stim_labels` | `(n_stim, 8)` | Per-stimulus timing and task labels. Columns are `[stim_start, stim_end, img_seq_label, standard_types, fix_jitter_types, oddball_types, random_types, opto_types]`. |
+| `/neural_trials/vol_time` | `(n_vol_times,)` | Voltage recording timestamps. |
+| `/neural_trials/vol_stim_vis` | `(n_vol_times,)` | Binary visual stimulus voltage trace after cleanup. |
+| `/neural_trials/vol_stim_aud` | `(n_vol_times,)` | Auditory stimulus voltage trace. |
+| `/neural_trials/vol_flir` | `(n_vol_times,)` | Camera trigger voltage trace. |
+| `/neural_trials/vol_pmt` | `(n_vol_times,)` | PMT trigger/status voltage trace. |
+| `/neural_trials/vol_led` | `(n_vol_times,)` | LED trigger/status voltage trace. |
+| `/neural_trials/camera_time` | `(n_cam_times,)` | Camera timestamps. |
+| `/neural_trials/camera_pupil` | `(n_cam_times,)` | Processed pupil trace; can contain `NaN` if camera data is unavailable. |
+
+Modeling functions often create derived aligned arrays in memory:
+
+| derived array | shape | meaning |
+| --- | --- | --- |
+| `neu_seq` from `modules.Alignment.get_stim_response` | `(n_trials, n_neurons, n_aligned_times)` | Stimulus-aligned calcium snippets. |
+| `stim_seq` from `modules.Alignment.get_stim_response` | `(n_trials, 2*n_stim_context+1, 2)` | Start/end times of nearby stimuli relative to the aligned stimulus. |
+| `glm['kernel_all']` | `(n_neurons, n_kernel_times)` | GLM kernel for each neuron. |
+| `glm['kernel_time']` | `(n_kernel_times,)` | Time axis for the GLM kernels. |
+| `trf_model['trf_param_pre']`, `trf_model['trf_param_post']` | `(n_neurons, 5)` | TRF parameters `[b, a, m, r, s]` for pre- and post-event ramp models. |
+
 ## Overall workflow
 
 This project analyzes passive interval oddball imaging sessions from raw session outputs to a webpage report. Session groups are defined in `session_configs.py`, then `main.py` selects the requested subject/config list, creates a temporary results folder, reads each session's Suite2p `ops.npy`, and runs the enabled analysis blocks.
