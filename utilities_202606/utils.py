@@ -538,23 +538,6 @@ def get_population_mean_sem(aligned_list):
 
 
 #%% plotting nyaoo~0w0.
-
-# create a report figure and gridspec, optionally with one selected axis nyaoo~0w0.
-def get_figure_layout(n_row, n_col, size_scale, layout='tight', ax_loc=None):
-    fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
-    gs = GridSpec(n_row, n_col, figure=fig)
-    if ax_loc is None:
-        return fig, gs
-    return fig, gs, plt.subplot(gs[ax_loc])
-
-# save a report figure to the subject temp folder nyaoo~0w0.
-def save_figure(fig, session_config_list, filename, n_row, n_col, size_scale):
-    fig.set_size_inches(n_col*size_scale, n_row*size_scale)
-    fig.savefig(
-        os.path.join('results', 'temp_'+session_config_list['subject_name'], filename+'.svg'),
-        dpi=300,
-        format='svg')
-    plt.close(fig)
     
 # bin rows by averaging adjacent groups me nyaoo~0w0.
 def bin_rows(data, max_rows=258):
