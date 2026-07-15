@@ -22,6 +22,7 @@ nav:
       - Processing Quickstart: processing-quickstart.md
       - Preprocessing: preprocessing.md
       - Postprocessing: postprocessing.md
+      - Manual ROI Workflow: manual-roi-workflow.md
       - Interactive Manual ROI Labeler: roi-reviewer-exports.md
   - Experiments and Analyses:
       - Passive: passive.md
