@@ -259,7 +259,7 @@ Open the workspace `stat.npy` in the Suite2p GUI:
 /path/to/session/manual_roi_workspace/stat.npy
 ```
 
-## Step 2: Edit ROIs in the interactive GUI
+## Step 2: Add ROIs in the interactive GUI
 
 ### Start the interactive desktop and Suite2p GUI
 
@@ -272,6 +272,10 @@ On the interactive desktop, launch the patched Suite2p 1.x GUI with:
 ```bash
 ~/suite2p1_gui/bin/suite2p
 ```
+
+Use this specific Suite2p 1.x installation for manual ROI work. The manual
+labelling flow has local patches for GUI extraction, ROI statistics, and manual
+mask display behavior that are not present in the unpatched PyPI install.
 
 The symlink currently points to:
 
