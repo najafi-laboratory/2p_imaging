@@ -603,6 +603,9 @@ def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict
     extraction_batch_size = data["pipeline"].get("suite2p_extraction_batch_size")
     if extraction_batch_size is not None:
         ops["extraction_batch_size"] = int(extraction_batch_size)
+    for key, value in session.get("suite2p_ops_overrides", {}).items():
+        if value is not None:
+            ops[key] = value
     ops.setdefault("delete_bin", True)
     torch_device = os.environ.get("TWO_P_SUITE2P_TORCH_DEVICE")
     if torch_device:
