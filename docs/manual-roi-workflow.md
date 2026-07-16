@@ -261,6 +261,8 @@ Open the workspace `stat.npy` in the Suite2p GUI:
 
 ## Step 2: Edit ROIs in the interactive GUI
 
+### Start the interactive desktop and Suite2p GUI
+
 Open a PACE interactive desktop through the
 [PACE OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard).
 You must be connected to the Georgia Tech VPN to access the dashboard.
