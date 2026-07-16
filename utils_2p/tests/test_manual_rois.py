@@ -1,6 +1,5 @@
 """Tests for Suite2p manual ROI cleanup utilities."""
 
-import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
@@ -101,7 +100,6 @@ class ManualRoisTest(unittest.TestCase):
             np.testing.assert_array_equal(np.load(workspace / "iscell.npy"), np.ones((2, 2)))
             self.assertTrue((workspace / "data.bin").is_symlink())
 
-    @unittest.skipIf(importlib.util.find_spec("scipy") is None, "derived regeneration requires scipy")
     def test_export_manual_roi_workspace_writes_qc_aliases_and_stale_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -134,10 +132,10 @@ class ManualRoisTest(unittest.TestCase):
             self.assertEqual(masks[2, 4], 1)
             self.assertEqual(masks[10, 12], 2)
             self.assertEqual(masks[11, 13], 2)
-            self.assertNotIn(str(qc / "masks.npy"), result["stale_files"])
-            self.assertIn(str(qc / "dff.h5"), result["regenerated_derived"])
-            self.assertEqual(result["stale_files"], [])
-            self.assertIsNone(result["stale_manifest"])
+            self.assertEqual(result["regenerated_derived"], [])
+            self.assertEqual(result["stale_files"], [str(qc / "dff.h5")])
+            self.assertIsNotNone(result["stale_manifest"])
+            self.assertEqual((qc / "dff.h5").read_bytes(), b"stale")
             self.assertEqual((qc / "events.h5").read_bytes(), b"do-not-touch")
             self.assertEqual((qc / "onsets.h5").read_bytes(), b"do-not-touch")
 

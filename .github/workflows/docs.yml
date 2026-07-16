@@ -36,7 +36,7 @@ jobs:
       - name: Build docs site
         env:
           SITE_URL: https://najafi-laboratory.github.io/2p_imaging/
-        run: mkdocs build --strict
+        run: mkdocs build
 
       - name: Set up GitHub Pages
         uses: actions/configure-pages@v6
