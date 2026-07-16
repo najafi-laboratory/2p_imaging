@@ -31,11 +31,11 @@ At minimum, the processed session must contain:
 ```
 
 `ops.npy` must contain the functional mean image produced by Suite2p. An
-existing `iscell.npy` is used when present; otherwise all Suite2p ROIs are
-initially available.
+existing `iscell.npy` is used when present for provenance, but the reviewer
+opens with all Suite2p ROIs available and not labeled.
 
-To restore the morphology QC target structure and initial Bad/Unlabeled labels
-from the preprocessing pipeline, the session should also contain:
+To make the pipeline's morphology QC target-structure presets available in the
+viewer, the session should also contain:
 
 ```text
 /path/to/processed/session/
@@ -45,8 +45,8 @@ from the preprocessing pipeline, the session should also contain:
 ```
 
 Without these morphology QC files, the summary can still be generated from the
-Suite2p files, but it cannot recreate the pipeline's morphology-based starting
-labels. `masks.h5` is optional and supplies anatomical images when available.
+Suite2p files, but the target-structure preset metadata will be unavailable.
+`masks.h5` is optional and supplies anatomical images when available.
 
 ### Generate locally
 
@@ -103,23 +103,21 @@ The processed session must be located at
 
 ## 2. Export format and downstream use
 
-The interactive HTML contains the original Suite2p ROI set. The morphology QC
-target structure used by the preprocessing pipeline provides the initial
-filtering state:
+The interactive HTML contains the original Suite2p ROI set. By default, every
+Suite2p ROI opens as **not labeled**, and no morphology/QC filter is applied.
+The preprocessing pipeline's target structure is still shown, and the built-in
+`neuron`, `dendrite`, and `cerebellum_lax` filters remain available for manual
+testing in the viewer.
 
-- ROIs excluded by the `neuron`, `dendrite`, or `cerebellum_lax` preset start
-  as **Bad**.
-- ROIs that passed the preset start as **Unlabeled**.
-
-The reviewer can change labels manually, apply another morphology preset, or
-use **Clear all labels / show all ROIs** to return every Suite2p ROI to the
-Unlabeled state.
+The reviewer can label ROIs manually, apply a morphology/custom metric filter,
+or use **Label all as ... → Not labeled** to return every visible Suite2p ROI
+to the not-labeled state.
 
 ```text
 All ROIs detected by Suite2p
         |
         v
-Morphology QC target structure
+Optional morphology/custom metric filters
         |
         v
 Manual Good / Bad / Unsure / Unlabeled review
@@ -141,20 +139,32 @@ sessions.
 
 ### `roi_manual_labels.npy`
 
-This file is a three-column NumPy array with one row per original Suite2p ROI:
+This file is a one-dimensional NumPy array with one value per original Suite2p
+ROI. The row index is the original Suite2p ROI index before morphology or
+manual filtering:
 
 ```python
 array([
-    [1.0, 1.0, 1.0],     # good, passed morphology
-    [0.0, 0.0, 0.0],     # bad, passed morphology
-    [0.0, 0.0, 1.0],     # unsure, passed morphology
-    [0.0, nan, nan],     # morphology-excluded ROI
+    1.0,     # Suite2p ROI 0: good
+    0.0,     # Suite2p ROI 1: bad
+    2.0,     # Suite2p ROI 2: unsure
+    nan,     # Suite2p ROI 3: not labeled
 ])
 ```
 
-Column 0 is the full Suite2p good mask. Column 1 is the morphology-filtered
-good mask, with morphology-excluded ROIs marked as `NaN`. Column 2 is the same
-as column 1, but includes Unsure ROIs with Good ROIs.
+Values are:
+
+| Value | Meaning |
+| --- | --- |
+| `NaN` | not labeled |
+| `0` | bad |
+| `1` | good |
+| `2` | unsure |
+
+The number of rows must match the original Suite2p ROI count, so
+`roi_manual_labels[i]` is always the manual label for original Suite2p ROI `i`.
+The reviewer initializes every Suite2p ROI as not labeled, so values are `NaN`
+unless the reviewer labels ROIs manually or applies labels from a filter.
 
 Place the reviewed file beside the original Suite2p files:
 
@@ -170,8 +180,8 @@ Place the reviewed file beside the original Suite2p files:
 
 ### Load reviewed dF/F
 
-With `roi_manual_labels.npy` in `suite2p/plane0/`, load morphology-filtered
-Good ROIs in a script or notebook:
+With `roi_manual_labels.npy` in `suite2p/plane0/`, load manually reviewed Good
+ROIs in a script or notebook:
 
 ```python
 from utils_2p.roi_labels import load_reviewed_dff
@@ -199,7 +209,7 @@ session = load_reviewed_dff(
 )
 ```
 
-Use `policy="full_suite2p_good"` to load the full Suite2p good mask, or
-`policy="good_or_unsure"` to include Unsure ROIs with Good ROIs. The companion
+Use `policy="good_or_unsure"` to include Unsure ROIs with Good ROIs, or
+`policy="not_bad"` to include Good, Unsure, and Not Labeled ROIs. The companion
 notebook contains the same example:
 [`utils_2p/roi_reviewer_exports.ipynb`](https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_reviewer_exports.ipynb).
