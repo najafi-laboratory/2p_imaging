@@ -1,4 +1,4 @@
-# Manual ROI workflow
+# Adding Manual ROIs
 
 This page documents the Suite2p 1.x manual ROI workflow used on the PACE
 interactive desktop, including the compatibility helpers for editing older
