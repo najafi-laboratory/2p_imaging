@@ -260,11 +260,12 @@ The direct Python CLI uses the same interface:
 
 ## Step 2: Add Manual ROIs in Suite2p GUI
 
-### Start the interactive desktop and Suite2p GUI
+After the Suite2p-compatible input directory is prepared, use the patched
+Suite2p GUI on a PACE interactive desktop to draw, extract, and save the manual
+ROI. The same GUI workflow is used whether you are editing an original
+`suite2p/plane0` folder or a temporary GUI-compatible workspace.
 
-Open a PACE interactive desktop through the
-[PACE OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard).
-You must be connected to the Georgia Tech VPN to access the dashboard.
+### Repository and helper access
 
 The command examples on this page assume access to the `2p_imaging` repository.
 On PACE, the shared working copy used here is:
@@ -281,6 +282,14 @@ The helper package lives inside that repo at:
 
 Run helper commands from the repo root, or make sure the repo root is on
 `PYTHONPATH` before importing `utils_2p`.
+
+### Start the interactive desktop
+
+Open a PACE interactive desktop through the
+[PACE OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard).
+You must be connected to the Georgia Tech VPN to access the dashboard.
+
+### Launch the patched Suite2p GUI
 
 On the interactive desktop, launch the patched Suite2p 1.x GUI with:
 
@@ -315,7 +324,7 @@ python -c "import sys; print(sys.executable); import suite2p.gui.drawroi as d; p
 Expected GUI environment paths should point to either `~/suite2p1_gui` or the
 real `suite2p1_gui` conda environment above.
 
-### GUI steps
+### Add the ROI in the GUI
 
 1. Open the target `stat.npy`.
 2. Open the manual labelling window.
