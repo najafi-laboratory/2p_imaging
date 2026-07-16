@@ -366,7 +366,7 @@ def _load_export_labels(label_path: Path, stat: Sequence[dict[str, Any]]) -> np.
         if expected_fingerprint is not None and expected_fingerprint != suite2p_stat_fingerprint(stat):
             raise ValueError("Label export does not match this Suite2p stat.npy")
 
-        values = np.full(len(stat), -1, dtype=np.int8)
+        values = np.full(len(stat), np.nan, dtype=np.float64)
         seen: set[int] = set()
         for item in labels:
             index = int(item["suite2p_roi"])
@@ -381,13 +381,17 @@ def _load_export_labels(label_path: Path, stat: Sequence[dict[str, Any]]) -> np.
             label = int(raw_label)
             if label not in (0, 1, 2):
                 raise ValueError(f"ROI label must be 0, 1, or 2, got {label}")
-            values[index] = label
+            values[index] = float(label)
         return values
 
-    masks = np.asarray(np.load(label_path, allow_pickle=False), dtype=np.float64)
-    if masks.shape != (len(stat), 3):
-        raise ValueError(f"Expected roi_manual_labels shape {(len(stat), 3)}, got {masks.shape}")
-    return masks
+    labels = np.asarray(np.load(label_path, allow_pickle=False), dtype=np.float64)
+    if labels.shape != (len(stat),):
+        raise ValueError(f"Expected roi_manual_labels shape {(len(stat),)}, got {labels.shape}")
+    finite = labels[np.isfinite(labels)]
+    invalid = finite[~np.isin(finite, [0.0, 1.0, 2.0])]
+    if invalid.size:
+        raise ValueError("roi_manual_labels values must be NaN, 0, 1, or 2")
+    return labels
 
 
 def load_reviewed_dff(
@@ -404,11 +408,11 @@ def load_reviewed_dff(
     ``suite2p/plane0/roi_manual_labels.npy`` is required. Suite2p's original
     ``iscell.npy`` is never selected implicitly.
 
-    For JSON labels, ``policy="good_only"`` keeps label 1, ``policy="not_bad"``
+    ``roi_manual_labels.npy`` is a one-dimensional float array with one row per
+    original Suite2p ROI: ``NaN`` means not labeled, ``0`` bad, ``1`` good, and
+    ``2`` unsure. ``policy="good_only"`` keeps label 1, ``policy="not_bad"``
     keeps all labels except 0, and ``policy="good_or_unsure"`` keeps labels 1
-    and 2. For ``roi_manual_labels.npy``, ``good_only`` selects column 1
-    (morphology-filtered good) and ``good_or_unsure`` selects column 2
-    (morphology-filtered good or unsure).
+    and 2.
     """
 
     session_path = Path(session_dir).expanduser().resolve()
@@ -423,27 +427,17 @@ def load_reviewed_dff(
     resolved_label_path = _find_label_export(session_path, label_path)
     labels = _load_export_labels(resolved_label_path, stat)
 
-    if labels.ndim == 2:
-        if policy in {"good_only", "morphology_good"}:
-            keep = labels[:, 1] == 1
-        elif policy in {"good_or_unsure", "morphology_good_or_unsure", "not_bad"}:
-            keep = labels[:, 2] == 1
-        elif policy == "full_suite2p_good":
-            keep = labels[:, 0] == 1
-        else:
-            raise ValueError(
-                "policy must be 'good_only', 'good_or_unsure', 'not_bad', "
-                "'morphology_good', 'morphology_good_or_unsure', or 'full_suite2p_good'"
-            )
+    if policy in {"good_only", "morphology_good", "full_suite2p_good"}:
+        keep = labels == 1
+    elif policy in {"not_bad", "morphology_good_or_unsure"}:
+        keep = labels != 0
+    elif policy == "good_or_unsure":
+        keep = (labels == 1) | (labels == 2)
     else:
-        if policy == "good_only":
-            keep = labels == 1
-        elif policy == "not_bad":
-            keep = labels != 0
-        elif policy == "good_or_unsure":
-            keep = (labels == 1) | (labels == 2)
-        else:
-            raise ValueError("policy must be 'good_only', 'good_or_unsure', or 'not_bad'")
+        raise ValueError(
+            "policy must be 'good_only', 'good_or_unsure', 'not_bad', "
+            "'morphology_good', 'morphology_good_or_unsure', or 'full_suite2p_good'"
+        )
 
     fluo = np.load(plane_dir / "F.npy", mmap_mode="r")
     neuropil = np.load(plane_dir / "Fneu.npy", mmap_mode="r")
@@ -496,7 +490,7 @@ def apply_label_export(
     expected_fingerprint = payload.get("suite2p_stat_fingerprint")
     if expected_fingerprint is not None and expected_fingerprint != suite2p_stat_fingerprint(stat):
         raise ValueError("Label export does not match this Suite2p stat.npy")
-    masks = np.zeros((len(stat), 3), dtype=np.float64)
+    label_values = np.full(len(stat), np.nan, dtype=np.float64)
 
     seen: set[int] = set()
     for item in labels:
@@ -507,18 +501,12 @@ def apply_label_export(
         if index in seen:
             raise ValueError(f"Suite2p ROI index {index} appears more than once")
         seen.add(index)
-        morphology_pass = bool(item.get("morphology_pass", True))
-        if not morphology_pass:
-            masks[index, 1:] = np.nan
         if raw_label is None:
             continue
         label = int(raw_label)
         if label not in (0, 1, 2):
             raise ValueError(f"ROI label must be 0, 1, or 2, got {label}")
-        masks[index, 0] = 1.0 if label == 1 else 0.0
-        if morphology_pass:
-            masks[index, 1] = 1.0 if label == 1 else 0.0
-            masks[index, 2] = 1.0 if label in (1, 2) else 0.0
+        label_values[index] = float(label)
 
     output = (
         Path(output_path).expanduser().resolve()
@@ -529,7 +517,7 @@ def apply_label_export(
     if backup and output.exists():
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         shutil.copy2(output, output.with_name(f"{output.name}.bak_{stamp}"))
-    np.save(output, masks)
+    np.save(output, label_values)
     return output
 
 

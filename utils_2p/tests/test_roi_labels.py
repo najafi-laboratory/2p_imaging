@@ -60,7 +60,7 @@ class RoiLabelsTest(unittest.TestCase):
         qc_stat = np.asarray([suite2p_stat[2], suite2p_stat[0]], dtype=object)
         np.testing.assert_array_equal(map_qc_to_suite2p_rois(qc_stat, suite2p_stat), [2, 0])
 
-    def test_applies_json_labels_to_manual_label_masks(self):
+    def test_applies_json_labels_to_manual_label_vector(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             stat = np.asarray([_stat_entry([(i, i)]) for i in range(3)], dtype=object)
@@ -85,9 +85,7 @@ class RoiLabelsTest(unittest.TestCase):
 
             output = apply_label_export(export, root, backup=False)
             updated = np.load(root / "roi_manual_labels.npy")
-            np.testing.assert_array_equal(updated[:, 0], [1, 0, 0])
-            np.testing.assert_allclose(updated[:, 1], [1, 0, np.nan], equal_nan=True)
-            np.testing.assert_allclose(updated[:, 2], [1, 1, np.nan], equal_nan=True)
+            np.testing.assert_allclose(updated, [1, 2, 0], equal_nan=True)
             np.testing.assert_array_equal(np.load(root / "iscell.npy"), original)
             self.assertEqual(output, (root / "roi_manual_labels.npy").resolve())
 
@@ -129,18 +127,11 @@ class RoiLabelsTest(unittest.TestCase):
             plane = root / "suite2p" / "plane0"
             np.save(
                 plane / "roi_manual_labels.npy",
-                np.asarray(
-                    [
-                        [0, 0, 0],
-                        [1, 1, 1],
-                        [1, np.nan, np.nan],
-                    ],
-                    dtype=float,
-                ),
+                np.asarray([0, 1, np.nan], dtype=float),
             )
 
             result = load_reviewed_dff(root, baseline_sigma=1.0)
-            permissive = load_reviewed_dff(root, policy="full_suite2p_good", baseline_sigma=1.0)
+            permissive = load_reviewed_dff(root, policy="not_bad", baseline_sigma=1.0)
 
             np.testing.assert_array_equal(result["roi_indices"], [1])
             np.testing.assert_array_equal(permissive["roi_indices"], [1, 2])

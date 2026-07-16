@@ -16,6 +16,7 @@ import matplotlib
 import numpy as np
 from PIL import Image
 from scipy.ndimage import gaussian_filter
+from scipy.special import ndtr
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -97,6 +98,24 @@ def _load_dff(session_dir: Path) -> np.ndarray:
     raise FileNotFoundError(f"Could not find dff.h5 in {session_dir} or {session_dir / 'qc_results'}")
 
 
+def _load_oasis_spikes(session_dir: Path, n_rois: int, n_frames: int) -> tuple[np.ndarray | None, dict[str, Any]]:
+    for path in (session_dir / "spikes.h5", session_dir / "qc_results" / "spikes.h5"):
+        if not path.exists():
+            continue
+        with h5py.File(path, "r") as h5:
+            if "spikes" not in h5:
+                continue
+            spikes = np.asarray(h5["spikes"], dtype=np.float32)
+            attrs = {key: h5.attrs[key].item() if hasattr(h5.attrs[key], "item") else h5.attrs[key] for key in h5.attrs}
+        spikes = spikes[:n_rois, :n_frames]
+        if spikes.shape != (n_rois, n_frames):
+            padded = np.full((n_rois, n_frames), np.nan, dtype=np.float32)
+            padded[: spikes.shape[0], : spikes.shape[1]] = spikes
+            spikes = padded
+        return spikes, attrs
+    return None, {}
+
+
 def _load_raw_fractional_dff(session_dir: Path, ops: dict[str, Any]) -> np.ndarray:
     fluo_path = session_dir / "qc_results" / "fluo.npy"
     neuropil_path = session_dir / "qc_results" / "neuropil.npy"
@@ -171,11 +190,17 @@ def _all_rois_filter() -> dict[str, float | int | None]:
         "compactMin": None,
         "compactMax": None,
         "eventSnrMin": None,
-        "eventSnrMax": None,
         "andreaPostdocSnrMin": None,
-        "andreaPostdocSnrMax": None,
+        "roiAreaMin": None,
+        "roiAreaMax": None,
         "autocorrEfoldMin": None,
         "autocorrEfoldMax": None,
+        "oasisEventSnrMin": None,
+        "oasisRiseTauMin": None,
+        "oasisRiseTauMax": None,
+        "oasisDecayTauMin": None,
+        "oasisDecayTauMax": None,
+        "oasisResidualKsMax": None,
     }
 
 
@@ -193,11 +218,17 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
             "compactMin": values["range_compact"][0],
             "compactMax": values["range_compact"][1],
             "eventSnrMin": None,
-            "eventSnrMax": None,
             "andreaPostdocSnrMin": None,
-            "andreaPostdocSnrMax": None,
+            "roiAreaMin": None,
+            "roiAreaMax": None,
             "autocorrEfoldMin": None,
             "autocorrEfoldMax": None,
+            "oasisEventSnrMin": None,
+            "oasisRiseTauMin": None,
+            "oasisRiseTauMax": None,
+            "oasisDecayTauMin": None,
+            "oasisDecayTauMax": None,
+            "oasisResidualKsMax": None,
         }
     return presets
 
@@ -276,6 +307,158 @@ def _add_roi_area_metrics(
     for metrics, entry in zip(dff_metrics, stat):
         xpix = np.asarray(entry.get("xpix", []), dtype=int)
         metrics["roi_area"] = float(xpix.size)
+    return dff_metrics
+
+
+def _event_window_residuals(trace: np.ndarray, spikes: np.ndarray, threshold: float) -> np.ndarray:
+    event_frames = np.flatnonzero(np.isfinite(spikes) & (spikes > threshold))
+    if event_frames.size == 0:
+        return np.array([], dtype=np.float32)
+    marked = np.zeros(trace.shape[0], dtype=bool)
+    for frame in event_frames:
+        start = max(0, int(frame) - 3)
+        stop = min(trace.shape[0], int(frame) + 4)
+        marked[start:stop] = True
+    frames = np.flatnonzero(marked)
+    residuals: list[float] = []
+    radius = 8
+    for frame in frames:
+        start = max(0, int(frame) - radius)
+        stop = min(trace.shape[0], int(frame) + radius + 1)
+        window = trace[start:stop]
+        finite = window[np.isfinite(window)]
+        value = trace[frame]
+        if finite.size and np.isfinite(value):
+            residuals.append(float(value - np.mean(finite)))
+    return np.asarray(residuals, dtype=np.float32)
+
+
+def _gaussian_ks_distance(values: np.ndarray) -> float:
+    values = np.asarray(values, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if values.size < 10:
+        return np.nan
+    mean = float(np.mean(values))
+    sd = float(np.std(values, ddof=1))
+    if not np.isfinite(sd) or sd <= 0:
+        return np.nan
+    sorted_values = np.sort(values)
+    gaussian_cdf = ndtr((sorted_values - mean) / sd)
+    empirical_hi = np.arange(1, sorted_values.size + 1, dtype=np.float64) / sorted_values.size
+    empirical_lo = np.arange(0, sorted_values.size, dtype=np.float64) / sorted_values.size
+    return float(np.max(np.maximum(np.abs(empirical_hi - gaussian_cdf), np.abs(gaussian_cdf - empirical_lo))))
+
+
+def _best_oasis_residual_threshold(
+    trace: np.ndarray, spikes: np.ndarray, default_threshold: float
+) -> tuple[float, float, int]:
+    finite_spikes = spikes[np.isfinite(spikes) & (spikes > 0)]
+    if finite_spikes.size == 0:
+        return np.nan, np.nan, 0
+    candidates = {float(default_threshold)}
+    for quantile in (0.5, 0.6, 0.7, 0.8, 0.9, 0.95):
+        candidates.add(float(np.nanquantile(finite_spikes, quantile)))
+    best_threshold = np.nan
+    best_ks = np.nan
+    best_count = 0
+    for threshold in sorted(value for value in candidates if np.isfinite(value) and value >= 0):
+        residuals = _event_window_residuals(trace, spikes, threshold)
+        ks = _gaussian_ks_distance(residuals)
+        if not np.isfinite(ks):
+            continue
+        if not np.isfinite(best_ks) or ks < best_ks:
+            best_ks = ks
+            best_threshold = float(threshold)
+            best_count = int(residuals.size)
+    return best_threshold, best_ks, best_count
+
+
+def _oasis_event_waveform_metrics(
+    trace: np.ndarray,
+    spikes: np.ndarray,
+    threshold: float,
+    frame_rate: float,
+) -> tuple[float, float, float]:
+    event_frames = np.flatnonzero(np.isfinite(spikes) & (spikes > threshold))
+    if event_frames.size == 0 or not np.isfinite(frame_rate) or frame_rate <= 0:
+        return np.nan, np.nan, np.nan
+    pre = max(2, int(round(frame_rate * 0.5)))
+    post = max(4, int(round(frame_rate * 2.0)))
+    windows = []
+    for frame in event_frames:
+        frame = int(frame)
+        if frame - pre < 0 or frame + post >= trace.size:
+            continue
+        window = np.asarray(trace[frame - pre : frame + post + 1], dtype=np.float32)
+        if np.all(np.isfinite(window)):
+            windows.append(window)
+    if len(windows) < 3:
+        return np.nan, np.nan, np.nan
+    event_mean = np.mean(np.stack(windows, axis=0), axis=0)
+    baseline = float(np.mean(event_mean[:pre]))
+    baseline_sd = float(np.std(event_mean[:pre], ddof=1))
+    peak_index = int(np.nanargmax(event_mean[pre:])) + pre
+    peak = float(event_mean[peak_index])
+    amplitude = peak - baseline
+    snr = amplitude / baseline_sd if baseline_sd > 0 and amplitude > 0 else np.nan
+
+    rise_tau = np.nan
+    if amplitude > 0 and peak_index > 0:
+        low = baseline + 0.1 * amplitude
+        high = baseline + 0.9 * amplitude
+        rise_segment = event_mean[: peak_index + 1]
+        low_hits = np.flatnonzero(rise_segment >= low)
+        high_hits = np.flatnonzero(rise_segment >= high)
+        if low_hits.size and high_hits.size:
+            rise_tau = float(max(0, high_hits[0] - low_hits[0]) / frame_rate)
+
+    decay_tau = np.nan
+    if amplitude > 0:
+        decay_target = baseline + amplitude / np.e
+        decay_segment = event_mean[peak_index:]
+        decay_hits = np.flatnonzero(decay_segment <= decay_target)
+        if decay_hits.size:
+            decay_tau = float(decay_hits[0] / frame_rate)
+    return float(snr), rise_tau, decay_tau
+
+
+def _add_oasis_residual_metrics(
+    dff_metrics: list[dict[str, float | None]],
+    dff: np.ndarray | None,
+    dff_sidecar_path: Path | None,
+    oasis_spikes: np.ndarray | None,
+    default_threshold: float,
+    frame_rate: float,
+) -> list[dict[str, float | None]]:
+    if oasis_spikes is None:
+        return dff_metrics
+    source = dff
+    if source is None and dff_sidecar_path is not None and dff_sidecar_path.exists():
+        source = np.load(dff_sidecar_path, mmap_mode="r")
+    if source is None:
+        return dff_metrics
+    n_rois = min(len(dff_metrics), int(source.shape[0]), int(oasis_spikes.shape[0]))
+    for roi in range(n_rois):
+        threshold, ks, count = _best_oasis_residual_threshold(
+            np.asarray(source[roi], dtype=np.float32),
+            np.asarray(oasis_spikes[roi], dtype=np.float32),
+            default_threshold,
+        )
+        dff_metrics[roi]["oasis_optimal_threshold"] = float(threshold) if np.isfinite(threshold) else None
+        dff_metrics[roi]["oasis_event_residual_ks"] = float(ks) if np.isfinite(ks) else None
+        dff_metrics[roi]["oasis_event_residual_count"] = float(count)
+        if np.isfinite(threshold):
+            snr, rise_tau, decay_tau = _oasis_event_waveform_metrics(
+                np.asarray(source[roi], dtype=np.float32),
+                np.asarray(oasis_spikes[roi], dtype=np.float32),
+                threshold,
+                frame_rate,
+            )
+        else:
+            snr, rise_tau, decay_tau = np.nan, np.nan, np.nan
+        dff_metrics[roi]["oasis_event_snr"] = float(snr) if np.isfinite(snr) else None
+        dff_metrics[roi]["oasis_rise_tau_seconds"] = float(rise_tau) if np.isfinite(rise_tau) else None
+        dff_metrics[roi]["oasis_decay_tau_seconds"] = float(decay_tau) if np.isfinite(decay_tau) else None
     return dff_metrics
 
 
@@ -372,13 +555,26 @@ def _roi_outline_path(xpix: np.ndarray, ypix: np.ndarray) -> str:
     return "".join(segments)
 
 
+def _roi_hit_path(xpix: np.ndarray, ypix: np.ndarray) -> str:
+    if not xpix.size:
+        return ""
+    return "".join(f"M{int(x)} {int(y)}h1v1h-1Z" for x, y in zip(xpix, ypix))
+
+
 def _roi_table(stat: np.ndarray, mask: np.ndarray, n_rois: int) -> list[dict[str, float | int | str]]:
     rois: list[dict[str, float | int | str]] = []
     for idx in range(n_rois):
         entry = stat[idx]
         ypix = np.asarray(entry.get("ypix", []), dtype=int)
         xpix = np.asarray(entry.get("xpix", []), dtype=int)
-        rois.append({"roi": idx, "path": _roi_outline_path(xpix, ypix), "npix": int(xpix.size)})
+        rois.append(
+            {
+                "roi": idx,
+                "path": _roi_outline_path(xpix, ypix),
+                "hitPath": _roi_hit_path(xpix, ypix),
+                "npix": int(xpix.size),
+            }
+        )
     return rois
 
 
@@ -613,10 +809,20 @@ def _write_html(
     dff_storage_mode: str,
     dff_sidecar_name: str | None,
     estimated_embedded_dff_bytes: int,
+    xoff: np.ndarray,
+    yoff: np.ndarray,
+    oasis_spikes: np.ndarray | None,
+    oasis_attrs: dict[str, Any],
+    oasis_storage_mode: str,
+    oasis_sidecar_name: str | None,
 ) -> None:
     rois = _roi_table(stat, mask, n_rois)
     red_available = mean_red is not None
     image_height, image_width = np.asarray(mean_green).shape[:2]
+    xoff = np.asarray(xoff, dtype=np.float32)
+    yoff = np.asarray(yoff, dtype=np.float32)
+    motion_frame_count = min(xoff.size, yoff.size)
+    motion_available = motion_frame_count > 0
     payload = {
         "session": session_name,
         "frameRate": float(frame_rate),
@@ -644,9 +850,21 @@ def _write_html(
         "dffStorageMode": dff_storage_mode,
         "dffSidecarName": dff_sidecar_name,
         "estimatedEmbeddedDffBytes": int(estimated_embedded_dff_bytes),
+        "motionAvailable": motion_available,
+        "motionFrameCount": int(motion_frame_count),
+        "xoff": _float32_b64(xoff[:motion_frame_count]) if motion_available else None,
+        "yoff": _float32_b64(yoff[:motion_frame_count]) if motion_available else None,
         "morphologyPresets": _morphology_preset_payload(),
         "dff": _float32_b64(dff) if dff_storage_mode == "embedded" and dff is not None else None,
         "dffLabel": dff_label,
+        "oasisAvailable": oasis_spikes is not None,
+        "oasisSpikes": _float32_b64(oasis_spikes)
+        if oasis_storage_mode == "embedded" and oasis_spikes is not None
+        else None,
+        "oasisStorageMode": oasis_storage_mode,
+        "oasisSidecarName": oasis_sidecar_name,
+        "oasisEventThreshold": float(oasis_attrs.get("event_threshold", 0.05)),
+        "oasisAttrs": oasis_attrs,
     }
     fov_grid_class = "with-red" if red_available else "single-channel"
     red_panel = (
@@ -669,63 +887,94 @@ body {{ margin: 0; font-family: Arial, Helvetica, sans-serif; color: #202124; ba
 .head {{ display: flex; justify-content: space-between; gap: 14px; align-items: end; margin-bottom: 12px; }}
 h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .meta {{ color: #667085; font-size: 13px; text-align: right; }}
-.grid {{ display: grid; gap: 8px; }}
-.review-main {{ margin-top: 8px; }}
-.viewer-column {{ display: flex; flex-direction: column; gap: 8px; }}
-.fov-row {{ display: grid; grid-template-columns: minmax(0, 1fr) clamp(300px, 22vw, 350px); gap: 6px; align-items: start; }}
-.fov-review {{ display: grid; gap: 8px; align-items: start; }}
-.grid.with-red {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
-.grid.single-channel {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
-.panel {{ background: #fff; border: 1px solid #d0d5dd; border-radius: 7px; padding: 8px; box-sizing: border-box; }}
-.title {{ font-size: 14px; font-weight: 700; margin-bottom: 6px; }}
+.grid {{ display: grid; gap: 6px; }}
+.review-main {{ margin-top: 8px; display: grid; grid-template-columns: minmax(0, 1fr) clamp(270px, 22vw, 340px); gap: 8px; align-items: start; }}
+.review-main.menu-collapsed {{ grid-template-columns: minmax(0, 1fr) 38px; }}
+.viewer-column {{ display: flex; flex-direction: column; gap: 6px; }}
+.fov-row {{ display: grid; grid-template-columns: 1fr; gap: 6px; align-items: start; }}
+.fov-review {{ display: grid; gap: 6px; align-items: start; justify-items: start; }}
+.fov-review > .grid {{ width: min(100%, 480px); }}
+.grid.with-red {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+.grid.single-channel {{ grid-template-columns: minmax(0, 1fr); }}
+.panel {{ background: #fff; border: 1px solid #d0d5dd; border-radius: 7px; padding: 7px; box-sizing: border-box; }}
+.title {{ font-size: 13px; font-weight: 700; margin-bottom: 4px; }}
 .imagewrap {{ position: relative; width: 100%; aspect-ratio: 1/1; background: #111; overflow: hidden; }}
 .imagewrap img, .imagewrap svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
 .imagewrap img {{ object-fit: contain; image-rendering: pixelated; }}
-.roi {{ fill: none; stroke: rgba(255,255,255,.86); stroke-width: .7; cursor: pointer; vector-effect: non-scaling-stroke; pointer-events: all; }}
-.roi:hover {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
+.imagewrap img, .imagewrap svg {{ transform-origin: 0 0; will-change: transform; }}
+.imagewrap {{ cursor: grab; }}
+.imagewrap.panning {{ cursor: grabbing; }}
+.roi-hit {{ fill: rgba(255,255,255,0); stroke: none; cursor: pointer; pointer-events: all; }}
+.roi {{ fill: none; stroke: rgba(255,255,255,.86); stroke-width: .7; vector-effect: non-scaling-stroke; pointer-events: none; }}
+.roi-hit:hover + .roi {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
 .roi.selected {{ fill: none; stroke: #ffffff; stroke-width: 2.8; }}
-.controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 7px; align-items: center; margin-top: 8px; }}
-.label-controls {{ display: flex; flex-direction: column; gap: 6px; align-items: stretch; }}
-.label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }}
-.label-controls .nav-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }}
+.controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 5px; align-items: center; margin-top: 6px; }}
+.label-controls {{ display: flex; flex-direction: column; gap: 4px; align-items: stretch; }}
+.label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }}
+.label-controls .nav-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }}
+.show-roi-menu {{ position: relative; display: inline-block; }}
+.show-roi-menu > summary {{ list-style: none; cursor: pointer; border: 1px solid #d0d5dd; border-radius: 6px; padding: 4px 7px; background: #fff; }}
+.show-roi-menu > summary::-webkit-details-marker {{ display: none; }}
+.show-roi-options {{ position: absolute; z-index: 20; top: calc(100% + 4px); left: 0; display: grid; gap: 4px; min-width: 165px; padding: 8px; border: 1px solid #d0d5dd; border-radius: 7px; background: #fff; box-shadow: 0 12px 30px rgba(16,24,40,.18); }}
+.show-roi-options label {{ display: flex; gap: 6px; align-items: center; white-space: nowrap; }}
+.show-roi-options input {{ width: auto; margin: 0; }}
 .roi-details summary {{ cursor: pointer; font-weight: 700; color: #344054; }}
-.roi-details #readout {{ margin-top: 5px; color: #475467; font-size: 12px; line-height: 1.35; }}
+.roi-details #readout {{ margin-top: 5px; color: #475467; font-size: 14px; line-height: 1.35; }}
 .save-option {{ display: grid; gap: 3px; justify-items: start; }}
 .save-option button, .save-options .docs-link {{ width: fit-content; }}
-.info-button {{ padding: 3px 7px; width: fit-content; font-size: 12px; color: #175cd3; font-weight: 600; }}
-.nav-button {{ font-size: 18px; font-weight: 700; }}
-.control-column {{ display: flex; flex-direction: column; gap: 6px; min-height: 0; overflow-y: auto; }}
-.morphology-card {{ display: flex; flex-direction: column; gap: 6px; }}
+.info-button {{ padding: 3px 7px; width: fit-content; font-size: 14px; color: #175cd3; font-weight: 600; }}
+.nav-button {{ font-size: 15px; font-weight: 700; }}
+.side-menu {{ position: fixed; top: 10px; right: max(16px, calc((100vw - 1600px) / 2)); width: clamp(270px, 22vw, 340px); z-index: 15; display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 20px); overflow-y: auto; align-self: start; }}
+.side-menu-toggle {{ align-self: stretch; font-weight: 700; }}
+.control-column {{ display: flex; flex-direction: column; gap: 5px; align-items: stretch; min-height: 0; overflow: visible; font-size: 14px; }}
+.review-main.menu-collapsed .control-column {{ display: none; }}
+.review-main.menu-collapsed .side-menu {{ width: 38px; overflow: visible; }}
+.review-main.menu-collapsed .side-menu-toggle {{ writing-mode: vertical-rl; min-height: 150px; padding: 8px 4px; }}
+.menu-card > summary {{ cursor: pointer; font-weight: 700; color: #202124; }}
+.menu-card > summary::marker {{ color: #667085; }}
+.menu-card-content {{ display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }}
+.morphology-card {{ display: flex; flex-direction: column; gap: 4px; }}
 .qc-header {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
-.qc-current {{ color: #667085; font-size: 12px; }}
-.sort-card {{ display: flex; flex-direction: column; gap: 6px; padding-top: 6px; border-top: 1px solid #eaecf0; }}
+.qc-current {{ color: #667085; font-size: 14px; }}
+.sort-card {{ display: flex; flex-direction: column; gap: 4px; padding-top: 4px; border-top: 1px solid #eaecf0; }}
 .sort-header {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
-.sort-current {{ color: #667085; font-size: 12px; }}
+.sort-current {{ color: #667085; font-size: 14px; }}
+.trace-header-row {{ display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between; }}
+.trace-header-controls {{ display: none; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: flex-end; font-size: 14px; }}
+.trace-header-controls.visible {{ display: flex; }}
+.trace-header-controls button {{ flex: 0 0 auto; white-space: nowrap; }}
 .filter-controls {{ display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: 8px; margin-top: 10px; align-items: end; }}
-.filter-controls label {{ font-size: 12px; color: #475467; }}
+.filter-controls label {{ font-size: 14px; color: #475467; }}
 .filter-controls input {{ display: block; margin-top: 3px; width: 100%; box-sizing: border-box; }}
 .metric-controls {{ display: grid; grid-template-columns: repeat(2, minmax(250px, 1fr)); gap: 10px; margin-top: 10px; }}
 .metric-control {{ display: grid; grid-template-columns: minmax(150px, 1fr) minmax(130px, .8fr); gap: 8px; align-items: center; padding: 8px; border: 1px solid #eaecf0; border-radius: 7px; background: #fff; }}
 .metric-control .threshold-inputs {{ display: grid; gap: 5px; }}
-.metric-control .threshold-default {{ color: #667085; font-size: 11px; }}
+.threshold-default {{ color: #667085; font-size: 14px; }}
 .metric-control canvas {{ height: 70px; }}
-.filter-subsection-title {{ margin-top: 10px; font-size: 13px; font-weight: 700; color: #344054; }}
+.metric-histogram-panel {{ min-width: 180px; }}
+.metric-histogram-panel summary {{ cursor: pointer; color: #175cd3; font-size: 14px; font-weight: 600; }}
+.metric-histogram {{ height: 92px; min-width: 180px; margin-top: 4px; }}
+.filter-subsection-title {{ margin-top: 10px; font-size: 15px; font-weight: 700; color: #344054; }}
 .source-heading {{ display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }}
-.filter-summary {{ color: #475467; font-size: 13px; }}
+.filter-summary {{ color: #475467; font-size: 15px; }}
 .dialog-actions {{ display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; margin-top: 12px; }}
 .dialog-header {{ display: flex; justify-content: space-between; gap: 10px; align-items: start; }}
-.dialog-title {{ font-size: 16px; font-weight: 700; }}
+.dialog-title {{ font-size: 18px; font-weight: 700; }}
+.dialog-close {{ border: 0; background: transparent; color: #667085; font-size: 20px; line-height: 1; padding: 0 4px; }}
+.dialog-close:hover {{ color: #111827; }}
 .dialog-section {{ margin-top: 12px; padding-top: 12px; border-top: 1px solid #eaecf0; }}
 .dialog-section:first-child {{ margin-top: 0; padding-top: 0; border-top: 0; }}
-.dialog-section-title {{ font-size: 14px; font-weight: 700; margin-bottom: 6px; }}
-.info-box {{ margin-top: 8px; padding: 8px 10px; background: #f8fafc; border: 1px solid #d0d5dd; border-radius: 6px; color: #475467; font-size: 12px; line-height: 1.35; }}
+.dialog-section-title {{ font-size: 16px; font-weight: 700; margin-bottom: 6px; }}
+.info-box {{ margin-top: 8px; padding: 8px 10px; background: #f8fafc; border: 1px solid #d0d5dd; border-radius: 6px; color: #475467; font-size: 14px; line-height: 1.35; }}
+.info-box p {{ margin: 0 0 6px; }}
+.info-box p:last-child {{ margin-bottom: 0; }}
 .save-options {{ display: grid; gap: 10px; margin-top: 10px; }}
 .bulk-label-controls {{ display: grid; gap: 8px; margin-top: 10px; justify-items: start; }}
 .bulk-label-controls select {{ width: auto; min-width: 160px; }}
 dialog {{ width: min(980px, calc(100vw - 40px)); border: 1px solid #d0d5dd; border-radius: 8px; padding: 14px; box-shadow: 0 24px 60px rgba(16,24,40,.24); }}
 dialog::backdrop {{ background: rgba(15,23,42,.38); }}
 button, input, select {{ font: inherit; }}
-button {{ border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 6px 9px; cursor: pointer; }}
+button {{ border: 1px solid #d0d5dd; background: #fff; border-radius: 6px; padding: 4px 7px; cursor: pointer; }}
 button.good {{ border-color: #16a34a; color: #166534; }}
 button.bad {{ border-color: #dc2626; color: #991b1b; }}
 button.unsure {{ border-color: #d97706; color: #92400e; }}
@@ -735,17 +984,30 @@ button.good.active {{ background: #16a34a; }}
 button.bad.active {{ background: #dc2626; }}
 button.unsure.active {{ background: #d97706; }}
 button.unlabeled.active {{ background: #667085; }}
-input, select {{ border: 1px solid #d0d5dd; border-radius: 6px; padding: 7px 8px; width: 86px; }}
+input, select {{ border: 1px solid #d0d5dd; border-radius: 6px; padding: 5px 7px; width: 82px; }}
 .filter-controls input {{ width: 100%; }}
 .filter-controls select {{ width: 100%; }}
 canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5dd; box-sizing: border-box; }}
 #stackCanvas {{ height: 560px; cursor: crosshair; }}
 #traceCanvas {{ height: 220px; cursor: grab; }}
 #traceCanvas.dragging {{ cursor: grabbing; }}
+#motionDriftCanvas {{ height: 470px; }}
+#motionDistributionCanvas {{ height: 286px; }}
+.oasis-panel {{ margin-top: 10px; }}
+.oasis-toggle {{ display: flex; gap: 6px; align-items: center; font-weight: 700; }}
+.oasis-toggle input {{ width: auto; }}
+.oasis-threshold-row {{ display: flex; flex: 0 0 auto; gap: 6px; align-items: center; }}
+.oasis-threshold-row input[type="range"] {{ width: 150px; padding: 0; }}
+.oasis-threshold-row input[type="number"] {{ width: 78px; }}
 .plots {{ display: grid; grid-template-columns: 1fr; gap: 8px; margin-top: 8px; }}
 .trace-sort {{ display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; margin: 6px 0 10px; padding: 8px 10px; background: #f8fafc; border: 1px solid #d0d5dd; border-radius: 6px; }}
-.trace-sort label {{ font-size: 12px; color: #475467; }}
-.trace-sort select {{ display: block; margin-top: 3px; min-width: 180px; width: auto; }}
+.trace-sort label {{ font-size: 14px; color: #475467; }}
+.trace-sort select {{ display: block; margin-top: 3px; min-width: 150px; width: auto; }}
+.sort-metric-list {{ display: grid; grid-template-columns: minmax(240px, 1fr); gap: 6px; align-items: start; }}
+.sort-metric-list label {{ display: flex; gap: 6px; align-items: center; margin: 0; }}
+.sort-metric-list input {{ width: auto; margin: 0; }}
+.sort-metric-group {{ font-weight: 700; color: #344054; grid-column: 1 / -1; margin-top: 4px; }}
+.sort-actions {{ display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }}
 .metric-formula {{ flex: 1 1 320px; }}
 .metric-formula summary {{ cursor: pointer; font-weight: 700; color: #344054; }}
 .metric-table-wrap {{ max-height: 75vh; overflow: auto; border: 1px solid #d0d5dd; margin-top: 12px; }}
@@ -759,171 +1021,217 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 .note {{ margin-top: 6px; color: #667085; font-size: 12px; }}
 .docs-link {{ display: inline-block; color: #175cd3; font-size: 13px; font-weight: 600; text-decoration: none; }}
 .docs-link:hover {{ text-decoration: underline; }}
-@media (max-width: 1100px) {{ .fov-row, .fov-review, .grid, .controls {{ grid-template-columns: 1fr; }} .head {{ display: block; }} .meta {{ text-align: left; }} }}
+@media (max-width: 1100px) {{ .review-main, .review-main.menu-collapsed, .fov-row, .fov-review, .grid, .controls {{ grid-template-columns: 1fr; }} .side-menu, .review-main.menu-collapsed .side-menu {{ position: static; width: auto; max-height: none; overflow: visible; }} .review-main.menu-collapsed .side-menu-toggle {{ writing-mode: horizontal-tb; min-height: 0; }} .head {{ display: block; }} .meta {{ text-align: left; }} }}
 </style>
 </head>
 <body>
 <div class="page">
   <div class="head"><h1>{session_name} preprocessing QC ({n_rois} ROIs)</h1><div class="meta" id="meta"></div></div>
   <dialog id="morphologyDialog">
-    <div class="dialog-title">ROI QC Filters</div>
+    <div class="dialog-header">
+      <div class="dialog-title">ROI QC Filters</div>
+      <button id="closeMorphologyDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
+    </div>
     <div class="dialog-section">
-      <div class="dialog-section-title">Suite2p morphology QC filters</div>
       <div id="targetStructureSummary" class="title"></div>
       <div class="filter-summary" id="filterSummary"></div>
       <div class="note">These preset thresholds preview pass/fail counts; labels change only when Apply Filters is clicked.</div>
-      <div class="filter-controls">
-        <label>Preset <select id="filterPreset"></select></label>
-        <label>Custom preset name <input id="presetName" type="text" placeholder="my preset"></label>
-        <button id="savePreset">Save preset</button>
-        <button id="savePresetHtml">Save preset into HTML</button>
-        <button id="exportPreset">Export preset JSON</button>
+      <div class="filter-controls metric-filter-controls">
+        <label>Target structure <select id="filterPreset"></select></label>
+        <button id="resetFilter">Restore selected QC thresholds</button>
         <input id="presetFile" type="file" accept=".json" style="display:none;">
-        <button id="importPreset">Import preset JSON</button>
+        <button id="importPreset">Import QC thresholds JSON</button>
       </div>
       <div class="filter-subsection-title source-heading">
-        <span>Suite2p Morphology Metrics</span>
+        <span>Suite2p Metrics</span>
         <button class="info-button" type="button" data-info-target="suite2pMetricSources" aria-expanded="false">Read more</button>
+        <button class="info-button" type="button" data-info-target="suite2pDistributionInfo" aria-expanded="false">Distribution Plot Info</button>
       </div>
       <div id="suite2pMetricSources" class="info-box" hidden>
-        Suite2p morphology metrics here come from ROI <code>stat.npy</code> fields such as <code>aspect_ratio</code>, <code>compact</code>, <code>footprint</code>, and <code>skew</code>.
-        <a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>
+        <p>Suite2p metrics here come from ROI <code>stat.npy</code> fields such as <code>aspect_ratio</code>, <code>compact</code>, <code>footprint</code>, and <code>skew</code>.</p>
+        <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a></p>
+      </div>
+      <div id="suite2pDistributionInfo" class="info-box" hidden>
+        <p>Distribution plots are hidden by default. When opened, each plot shows the metric values across ROIs. With no threshold values entered, vertical lines reflect the mean for Suite2p metrics and suggested min and max values for custom metrics. As threshold fields are updated the lines update to the new values.</p>
       </div>
       <div class="filter-controls">
-        <label>Skew min <input id="skewMin" type="number" step="0.01"></label>
-        <label>Skew max <input id="skewMax" type="number" step="0.01"></label>
-        <label>Aspect min <input id="aspectMin" type="number" step="0.01"></label>
-        <label>Aspect max <input id="aspectMax" type="number" step="0.01"></label>
-        <label>Footprint min <input id="footprintMin" type="number" step="0.01"></label>
-        <label>Footprint max <input id="footprintMax" type="number" step="0.01"></label>
-        <label>Compact min <input id="compactMin" type="number" step="0.01"></label>
-        <label>Compact max <input id="compactMax" type="number" step="0.01"></label>
+        <label>Skew min <input id="skewMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>Skew max <input id="skewMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="skew" data-min="skewMin" data-max="skewMax" aria-label="Skew distribution"></canvas></details>
+        <label>Aspect min <input id="aspectMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>Aspect max <input id="aspectMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="aspect" data-min="aspectMin" data-max="aspectMax" aria-label="Aspect ratio distribution"></canvas></details>
+        <label>Footprint min <input id="footprintMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>Footprint max <input id="footprintMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="footprint" data-min="footprintMin" data-max="footprintMax" aria-label="Footprint distribution"></canvas></details>
+        <label>Compact min <input id="compactMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>Compact max <input id="compactMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="compact" data-min="compactMin" data-max="compactMax" aria-label="Compactness distribution"></canvas></details>
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Custom Metrics</span>
         <button class="info-button" type="button" data-info-target="customMetricSources" aria-expanded="false">Read more</button>
+        <button class="info-button" type="button" data-info-target="metricSuggestionSources" aria-expanded="false">Suggested Thresholds Info</button>
       </div>
       <div id="customMetricSources" class="info-box" hidden>
-        Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-        SNR: 95/50 percentile, SNR: CaImAn (large-transient score), and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
-        The CaImAn-style score follows the exceptional-event logic used in <code>evaluate_components.py</code>; larger values mean a stronger large-transient score.
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a>
-        <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a>
-        <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>: number of 4-connected components in each ROI pixel mask.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_summary.py#L291-L297" target="_blank" rel="noopener noreferrer">ROI area calculation code</a>: number of pixels in the Suite2p ROI mask field <code>xpix</code>.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a>: robust transient amplitude, <code>P95 - P50</code>, divided by residual noise.</p>
+        <p><a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a>: exceptional-event score where larger values indicate stronger large-transient structure.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>: dF/F persistence time where autocorrelation drops to <code>1/e</code>; not a fitted calcium decay constant.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_summary.py#L376-L461" target="_blank" rel="noopener noreferrer">OASIS SNR calculation code</a>: inferred-spike-triggered mean dF/F peak amplitude divided by pre-spike baseline noise.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_summary.py#L376-L461" target="_blank" rel="noopener noreferrer">OASIS rise tau calculation code</a>: time for the inferred-spike-triggered mean dF/F waveform to rise from 10% to 90% of peak.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_summary.py#L376-L461" target="_blank" rel="noopener noreferrer">OASIS decay tau calculation code</a>: time for the inferred-spike-triggered mean dF/F waveform to decay from peak to <code>1/e</code> of peak.</p>
+        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_summary.py#L301-L358" target="_blank" rel="noopener noreferrer">OASIS residual Gaussian-fit distance code</a>: distance between inferred-spike-window residuals and a fitted Gaussian; lower is more Gaussian-like.</p>
       </div>
-      <div class="metric-controls">
-        <div class="metric-control">
-          <div class="threshold-inputs">
-            <label>Max connectivity <input id="maxConnect" type="number" min="0" step="1"></label>
-            <span class="threshold-default" id="maxConnectDefault"></span>
-          </div>
-          <canvas class="metric-histogram" data-metric="connectivity" data-min="" data-max="maxConnect"></canvas>
-        </div>
-        <div class="metric-control">
-          <div class="threshold-inputs">
-            <label>SNR: 95/50 percentile min <input id="eventSnrMin" type="number" step="0.01" placeholder="optional"></label>
-            <label>SNR: 95/50 percentile max <input id="eventSnrMax" type="number" step="0.01" placeholder="optional"></label>
-            <span class="threshold-default" id="eventSnrDefault"></span>
-          </div>
-          <canvas class="metric-histogram" data-metric="snr_95_50" data-min="eventSnrMin" data-max="eventSnrMax"></canvas>
-        </div>
-        <div class="metric-control">
-          <div class="threshold-inputs">
-            <label>SNR: CaImAn (large-transient score) min <input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="optional"></label>
-            <label>SNR: CaImAn (large-transient score) max <input id="andreaPostdocSnrMax" type="number" step="0.01" placeholder="optional"></label>
-            <span class="threshold-default" id="andreaPostdocSnrDefault"></span>
-          </div>
-          <canvas class="metric-histogram" data-metric="andrea_postdoc_snr" data-min="andreaPostdocSnrMin" data-max="andreaPostdocSnrMax"></canvas>
-        </div>
-        <div class="metric-control">
-          <div class="threshold-inputs">
-            <label>Autocorrelation e-fold time min (s) <input id="autocorrEfoldMin" type="number" step="0.01" placeholder="optional"></label>
-            <label>Autocorrelation e-fold time max (s) <input id="autocorrEfoldMax" type="number" step="0.01" placeholder="optional"></label>
-            <span class="threshold-default" id="autocorrEfoldDefault"></span>
-          </div>
-          <canvas class="metric-histogram" data-metric="autocorr_efold_time_seconds" data-min="autocorrEfoldMin" data-max="autocorrEfoldMax"></canvas>
-        </div>
+      <div id="metricSuggestionSources" class="info-box" hidden>
+        <p><strong>Suggested filter values are computed from the ROIs embedded in this HTML.</strong></p>
+        <p><strong>Connectivity:</strong> suggested max is the 75th percentile of connectivity values.</p>
+        <p><strong>ROI area:</strong> suggested min/max are the 25th and 75th percentiles across ROIs.</p>
+        <p><strong>SNR: 95/50 percentile:</strong> suggested min is the mean SNR value across ROIs.</p>
+        <p><strong>SNR: CaImAn:</strong> suggested min is the mean large-transient score across ROIs.</p>
+        <p><strong>Autocorrelation e-fold time:</strong> suggested min/max are the 25th and 75th percentiles across ROIs.</p>
+        <p><strong>OASIS metrics:</strong> suggested SNR min is the mean value, suggested rise/decay tau min/max are the 25th and 75th percentiles, and suggested residual Gaussian-fit max is the 75th percentile.</p>
       </div>
       <div class="filter-controls">
-        <button id="resetFilter">Reset QC thresholds</button>
-        <button id="applyFilterToLabels">Apply Filters</button>
+        <label>Connectivity max <span class="threshold-default" id="maxConnectDefault"></span><input id="maxConnect" type="number" min="0" step="1" placeholder="Not Used"></label>
+        <span></span>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="connectivity" data-max="maxConnect" aria-label="Connectivity distribution"></canvas></details>
+        <label>ROI area min (px) <span class="threshold-default" id="roiAreaMinDefault"></span><input id="roiAreaMin" type="number" min="0" step="1" placeholder="Not Used"></label>
+        <label>ROI area max (px) <span class="threshold-default" id="roiAreaMaxDefault"></span><input id="roiAreaMax" type="number" min="0" step="1" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="roi_area" data-min="roiAreaMin" data-max="roiAreaMax" aria-label="ROI area distribution"></canvas></details>
+        <label>SNR: 95/50 percentile min <span class="threshold-default" id="eventSnrDefault"></span><input id="eventSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <span></span>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="snr_95_50" data-min="eventSnrMin" aria-label="SNR 95/50 percentile distribution"></canvas></details>
+        <label>SNR: CaImAn (large-transient score) min <span class="threshold-default" id="andreaPostdocSnrDefault"></span><input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <span></span>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="andrea_postdoc_snr" data-min="andreaPostdocSnrMin" aria-label="CaImAn SNR distribution"></canvas></details>
+        <label>Autocorrelation e-fold time min (s) <span class="threshold-default" id="autocorrEfoldMinDefault"></span><input id="autocorrEfoldMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>Autocorrelation e-fold time max (s) <span class="threshold-default" id="autocorrEfoldMaxDefault"></span><input id="autocorrEfoldMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="autocorr_efold_time_seconds" data-min="autocorrEfoldMin" data-max="autocorrEfoldMax" aria-label="Autocorrelation e-fold time distribution"></canvas></details>
+        <label>OASIS SNR min <span class="threshold-default" id="oasisEventSnrDefault"></span><input id="oasisEventSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <span></span>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="oasis_event_snr" data-min="oasisEventSnrMin" aria-label="OASIS SNR distribution"></canvas></details>
+        <label>OASIS rise tau min (s) <span class="threshold-default" id="oasisRiseTauMinDefault"></span><input id="oasisRiseTauMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>OASIS rise tau max (s) <span class="threshold-default" id="oasisRiseTauMaxDefault"></span><input id="oasisRiseTauMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="oasis_rise_tau_seconds" data-min="oasisRiseTauMin" data-max="oasisRiseTauMax" aria-label="OASIS rise tau distribution"></canvas></details>
+        <label>OASIS decay tau min (s) <span class="threshold-default" id="oasisDecayTauMinDefault"></span><input id="oasisDecayTauMin" type="number" step="0.01" placeholder="Not Used"></label>
+        <label>OASIS decay tau max (s) <span class="threshold-default" id="oasisDecayTauMaxDefault"></span><input id="oasisDecayTauMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="oasis_decay_tau_seconds" data-min="oasisDecayTauMin" data-max="oasisDecayTauMax" aria-label="OASIS decay tau distribution"></canvas></details>
+        <label>OASIS residual Gaussian-fit distance max <span class="threshold-default" id="oasisResidualKsDefault"></span><input id="oasisResidualKsMax" type="number" step="0.01" placeholder="Not Used"></label>
+        <span></span>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="oasis_event_residual_ks" data-max="oasisResidualKsMax" aria-label="OASIS residual Gaussian-fit distance distribution"></canvas></details>
+      </div>
+      <div class="filter-subsection-title">Save QC Thresholds</div>
+      <div class="source-heading">
+        <span class="note">Save the current filter values for reuse or export/import them for another session.</span>
+        <button class="info-button" type="button" data-info-target="saveFiltersHelp" aria-expanded="false">Read more</button>
+      </div>
+      <div id="saveFiltersHelp" class="info-box" hidden>
+        <p><strong>Save new QC thresholds:</strong> saves the current threshold settings as a named filter inside the currently open reviewer session, so it appears in the target-structure dropdown during this browser session.</p>
+        <p><strong>Save QC thresholds into HTML:</strong> downloads a new HTML copy with the current thresholds embedded, so reopening that HTML later preserves them.</p>
+        <p><strong>Import QC thresholds JSON:</strong> loads a previously exported threshold JSON file into this reviewer.</p>
+      </div>
+      <div class="filter-controls">
+        <label>Custom filter name <input id="presetName" type="text" placeholder="my filters"></label>
+        <button id="savePreset">Save new QC thresholds</button>
+        <button id="savePresetHtml">Save QC thresholds into HTML</button>
       </div>
     </div>
-    <div class="dialog-actions"><button id="closeMorphologyDialog" type="button">Close</button></div>
+    <div class="dialog-actions">
+      <button id="applyFilterToLabels">Apply Filters</button>
+      <button id="closeMorphologyDialog" type="button">Close</button>
+    </div>
   </dialog>
   <dialog id="sortDialog">
-    <div class="dialog-title">Sort ROIs and dF/Fs</div>
+    <div class="dialog-header">
+      <div class="dialog-title">Sort ROIs and dF/Fs</div>
+      <button id="closeSortDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
+    </div>
     <div class="source-heading">
       <button class="info-button" type="button" data-info-target="sortSuite2pSources" aria-expanded="false">Read more: Suite2p metrics</button>
       <button class="info-button" type="button" data-info-target="sortCustomSources" aria-expanded="false">Read more: custom metrics</button>
     </div>
     <div id="sortSuite2pSources" class="info-box" hidden>
-      Suite2p morphology sort options come from ROI <code>stat.npy</code> fields.
+      Suite2p sort options come from ROI <code>stat.npy</code> fields.
       <a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>
     </div>
     <div id="sortCustomSources" class="info-box" hidden>
-      Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.
-      SNR: 95/50 percentile, SNR: CaImAn (large-transient score), and autocorrelation e-fold time are calculated from the raw Suite2p-derived dF/F trace for each ROI.
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a>
-      <a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a>
-      <a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>
+      <p>Connectivity is calculated by preprocessing QC as the number of 4-connected components in each ROI pixel mask.</p>
+      <p>ROI area is calculated from the Suite2p ROI pixel mask as the number of pixels in <code>stat.npy</code> field <code>xpix</code>.</p>
+      <p>SNR: 95/50 percentile, SNR: CaImAn (large-transient score), autocorrelation e-fold time, OASIS inferred spike SNR, OASIS rise tau, OASIS decay tau, and OASIS inferred spike residual Gaussian-fit distance are calculated from the raw Suite2p-derived dF/F trace for each ROI.</p>
+      <p>E-fold time is the time lag where the trace autocorrelation has dropped to <code>1/e</code>, about 37% of its starting value; it is a trace persistence metric, not an exponential calcium decay fit.</p>
+      <p>OASIS inferred spike SNR, rise tau, and decay tau are estimated from dF/F windows around inferred OASIS spikes using the selected ROI's precomputed default OASIS amplitude threshold.</p>
+      <p>The OASIS Gaussian-fit distance compares inferred-spike-window residuals with a fitted Gaussian across candidate amplitude thresholds. Lower values mean the residuals were closer to Gaussian at the best tested threshold.</p>
+      <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/2p_post_process_module_202404/modules/QualControlDataIO.py#L29-L36" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a></p>
+      <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/preprocessing_summary.py#L268-L274" target="_blank" rel="noopener noreferrer">ROI area calculation code</a></p>
+      <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a></p>
+      <p><a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a></p>
+      <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a></p>
     </div>
     <div class="trace-sort">
-      <label>Sort visible ROIs by
-        <select id="sortMetric">
-          <optgroup label="Suite2p Morphology Metrics">
-            <option value="roi_area">ROI area (px)</option>
-            <option value="skew">Skew</option>
-            <option value="aspect">Aspect ratio</option>
-            <option value="compact">Compactness</option>
-            <option value="footprint">Footprint</option>
-            <option value="original" selected>Original Suite2p index</option>
-          </optgroup>
-          <optgroup label="Custom Metrics">
-            <option value="snr_95_50">SNR: 95/50 percentile</option>
-            <option value="andrea_postdoc_snr">SNR: CaImAn (large-transient score)</option>
-            <option value="autocorr_efold_time_seconds">Autocorrelation e-fold time</option>
-            <option value="connectivity">Connectivity</option>
-          </optgroup>
-        </select>
-      </label>
-      <label>Sort order
-        <select id="sortDirection">
-          <option value="desc">Highest first</option>
-          <option value="asc" selected>Lowest first</option>
-        </select>
-      </label>
-      <button id="applySort">Apply sort</button>
+      <div>
+        <div class="note">Check one or more metrics. Multiple checked metrics are converted to 0-1 normalized values and summed with equal weight.</div>
+        <div id="sortMetricList" class="sort-metric-list">
+          <label><input type="checkbox" name="sortMetric" value="original" checked> Original Suite2p index</label>
+          <div class="sort-metric-group">Suite2p Metrics</div>
+          <label><input type="checkbox" name="sortMetric" value="skew"> Skew</label>
+          <label><input type="checkbox" name="sortMetric" value="aspect"> Aspect ratio</label>
+          <label><input type="checkbox" name="sortMetric" value="compact"> Compactness</label>
+          <label><input type="checkbox" name="sortMetric" value="footprint"> Footprint</label>
+          <div class="sort-metric-group">Custom Metrics</div>
+          <label><input type="checkbox" name="sortMetric" value="roi_area"> ROI area (px)</label>
+          <label><input type="checkbox" name="sortMetric" value="snr_95_50"> SNR: 95/50 percentile</label>
+          <label><input type="checkbox" name="sortMetric" value="andrea_postdoc_snr"> SNR: CaImAn (large-transient score)</label>
+          <label><input type="checkbox" name="sortMetric" value="autocorr_efold_time_seconds"> Autocorrelation e-fold time</label>
+          <label><input type="checkbox" name="sortMetric" value="oasis_event_snr"> SNR, OASIS</label>
+          <label><input type="checkbox" name="sortMetric" value="oasis_rise_tau_seconds"> Rise tau, OASIS</label>
+          <label><input type="checkbox" name="sortMetric" value="oasis_decay_tau_seconds"> Decay tau, OASIS</label>
+          <label><input type="checkbox" name="sortMetric" value="oasis_event_residual_ks"> OASIS inferred spike residual Gaussian-fit distance</label>
+          <label><input type="checkbox" name="sortMetric" value="connectivity"> Connectivity</label>
+        </div>
+      </div>
+      <div class="sort-actions">
+        <label>Sort order
+          <select id="sortDirection">
+            <option value="desc">Highest first</option>
+            <option value="asc" selected>Lowest first</option>
+          </select>
+        </label>
+        <button id="applySort">Apply sort</button>
+      </div>
     </div>
     <div class="dialog-actions"><button id="closeSortDialog" type="button">Close</button></div>
   </dialog>
   <dialog id="saveLabelsDialog">
     <div class="dialog-header">
       <div class="dialog-title">Save Labels</div>
-      <button id="saveLabelsInfo" class="info-button" type="button" aria-expanded="false" aria-controls="saveLabelsHelp">Read more</button>
+      <div>
+        <button id="saveLabelsInfo" class="info-button" type="button" aria-expanded="false" aria-controls="saveLabelsHelp">Read more</button>
+        <button id="closeSaveLabelsDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
+      </div>
     </div>
     <div id="saveLabelsHelp" class="info-box" hidden>
-      Save current state into HTML downloads a reviewed HTML copy that preserves labels and custom morphology presets inside the file.
-      Save roi_manual_labels.npy downloads a three-column NumPy mask for downstream scripts: full Suite2p good mask, morphology-filtered good mask, and morphology-filtered good-or-unsure mask.
-      The spreadsheet CSV records current labels, ROI metrics, and which current filter thresholds each ROI violates. The filters JSON records only the current threshold settings.
+      <p><strong>Save current state into HTML:</strong> downloads a reviewed HTML copy that preserves labels and custom filters inside the file.</p>
+      <p><strong>Export metric spreadsheet CSV:</strong> saves one row per ROI with code-friendly column names, current labels, ROI metrics, filter failures, and exclusion reasons.</p>
+      <p><strong>Export labels NPY:</strong> saves <code>roi_manual_labels.npy</code>, a one-dimensional NumPy label array with one row per original Suite2p ROI: <code>NaN</code> not labeled, <code>0</code> bad, <code>1</code> good, and <code>2</code> unsure.</p>
+      <p><strong>Export QC thresholds JSON:</strong> saves the current ROI metric thresholds/filter settings for reuse or documentation.</p>
     </div>
     <div class="save-options">
       <div class="save-option">
         <button id="saveHtmlWithLabels">Save current state into HTML</button>
-        <span class="note">Use this to save the current state (labels, presets) of the .html to return to after closing the browser.</span>
+        <span class="note">Use this to save the current state (labels, QC thresholds) of the .html to return to after closing the browser.</span>
       </div>
       <div class="save-option">
-        <button id="saveManualLabels">Save roi_manual_labels.npy</button>
-        <span class="note">Exports the downstream NumPy mask with full Suite2p, morphology-filtered good, and morphology-filtered good-or-unsure columns.</span>
-      </div>
-      <div class="save-option">
-        <button id="saveMetricSpreadsheet">Save ROI metric spreadsheet CSV</button>
+        <button id="saveMetricSpreadsheet">Export metric spreadsheet CSV</button>
         <span class="note">Exports one row per ROI with current labels, metrics, current filter failures, and reasons.</span>
       </div>
       <div class="save-option">
-        <button id="saveCurrentFilters">Save current filters JSON</button>
+        <button id="saveManualLabels">Export labels NPY (roi_manual_labels.npy)</button>
+        <span class="note">Exports a one-dimensional label array indexed by original Suite2p ROI.</span>
+      </div>
+      <div class="save-option">
+        <button id="saveCurrentFilters">Export QC thresholds JSON</button>
         <span class="note">Exports the current ROI metric thresholds so they can be reused or documented.</span>
       </div>
       <a class="docs-link" href="https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/#2-export-format-and-downstream-use" target="_blank" rel="noopener noreferrer">Output format details</a>
@@ -931,7 +1239,10 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
     <div class="dialog-actions"><button id="closeSaveLabelsDialog" type="button">Close</button></div>
   </dialog>
   <dialog id="labelAllDialog">
-    <div class="dialog-title">Label all visible ROIs as ...</div>
+    <div class="dialog-header">
+      <div class="dialog-title">Label all visible ROIs as ...</div>
+      <button id="closeLabelAllDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
+    </div>
     <div class="note">This applies only to the ROIs currently visible in the reviewer.</div>
     <div class="bulk-label-controls">
       <label>Label
@@ -955,20 +1266,68 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <div class="grid {fov_grid_class}">
             <div class="panel"><div class="title">Green functional mean</div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
             {red_panel}
-            <div class="panel"><div class="title">ROI masks</div><div class="imagewrap"><img id="mask"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
           </div>
         </div>
-        <div class="control-column">
-          <div class="panel morphology-card">
+      </div>
+      <div class="panel">
+        <div class="trace-header-row">
+          <div class="title" id="traceTitle">Selected ROI dF/F</div>
+          <div class="trace-header-controls" id="traceOasisControls">
+            <label class="oasis-toggle"><input id="showInferredSpikes" type="checkbox" checked> Show Inferred Spikes</label>
+            <label>Amplitude threshold</label>
+            <div class="oasis-threshold-row">
+              <input id="oasisThresholdSlider" type="range" min="0" max="1" step="0.001" value="0.05">
+              <input id="oasisThreshold" type="number" min="0" step="0.001" value="0.05">
+            </div>
+            <button id="resetOasisThreshold" type="button">Reset to ROI default</button>
+            <button class="info-button" type="button" data-info-target="oasisThresholdInfo" aria-expanded="false">Read more</button>
+          </div>
+        </div>
+        <div id="oasisThresholdInfo" class="info-box" hidden>
+          <p>Inferred spikes come from Suite2p's OASIS deconvolution run on the Suite2p-derived dF/F traces for each ROI.</p>
+          <p>The underlying values are inferred spike amplitudes from OASIS, not spike probabilities. Larger values mean OASIS inferred a stronger spike-like transient at that frame.</p>
+          <p>The amplitude threshold is a viewer-side cutoff: frames with OASIS value above the selected threshold are drawn as red dots on the dF/F trace. The default per ROI is the precomputed threshold whose inferred-spike-window residuals had the smallest distance to a fitted Gaussian among tested candidate thresholds.</p>
+          <p>The sortable OASIS residual Gaussian-fit metric is that minimized distance. Lower values mean the inferred-spike-window residuals were closer to Gaussian under the best tested threshold.</p>
+          <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/deconvolution/" target="_blank" rel="noopener noreferrer">Suite2p spike deconvolution / OASIS documentation</a></p>
+          <p><a class="docs-link" href="https://doi.org/10.1371/journal.pcbi.1005423" target="_blank" rel="noopener noreferrer">Original OASIS deconvolution paper</a></p>
+        </div>
+        <div class="trace-loader" id="traceLoader" style="display:none;">
+          <input id="dffFile" type="file" accept=".npy">
+          <button id="loadDffFile">Load dF/F file</button>
+        </div>
+        <div class="note" id="traceLoadNote"></div>
+        <canvas id="traceCanvas"></canvas>
+        <div class="note">Wheel or drag to zoom/pan time. Double-click to reset.</div>
+        <div class="controls">
+          <label>Start s <input id="timeStart" type="number" min="0" step="0.001" value="0"></label>
+          <label>End s <input id="timeEnd" type="number" min="0" step="0.001" value="0"></label>
+          <button id="reset">Reset zoom</button>
+        </div>
+      </div>
+    </div>
+    <aside class="side-menu">
+      <button id="toggleSideMenu" class="side-menu-toggle" type="button" aria-expanded="true">Hide menu</button>
+      <div class="control-column">
+          <details class="panel morphology-card menu-card" open>
+            <summary>Filter</summary>
+            <div class="menu-card-content">
             <div class="qc-header"><strong>ROI QC Filters</strong><span id="targetStructureInline" class="qc-current"></span></div>
             <div id="filterSummaryInline" class="filter-summary"></div>
             <button id="openMorphologyDialog" type="button">Filter ROIs</button>
-            <div class="sort-card">
+            </div>
+          </details>
+          <details class="panel sort-card menu-card" open>
+            <summary>Sort</summary>
+            <div class="menu-card-content">
               <div class="sort-header"><strong>Sorting</strong><span id="sortCurrent" class="sort-current"></span></div>
               <button id="openSortDialog" type="button">Sort filtered ROIs</button>
             </div>
-          </div>
-          <div class="panel label-controls">
+          </details>
+          <details class="panel label-controls menu-card" open>
+            <summary>Labeler</summary>
+            <div class="menu-card-content">
+            <span id="labelCounts"></span>
+            <span class="note">Keyboard: G/B/U/N label; left/right arrows select the previous/next visible ROI.</span>
             <strong>Manually label filtered ROIs</strong>
             <label>Selected ROI (Suite2p Index) <input id="roiInput" type="number" min="0" value="0"> <span id="selectedSortPosition" class="note"></span></label>
             <details class="roi-details">
@@ -988,41 +1347,27 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
               <button id="previousRoi" class="nav-button" title="Previous visible ROI (Left arrow)">&#8592; Previous</button>
               <button id="nextRoi" class="nav-button" title="Next visible ROI (Right arrow)">Next &#8594;</button>
             </div>
-            <span class="note">Keyboard: G/B/U/N label; left/right arrows select the previous/next visible ROI.</span>
-            <span id="labelCounts"></span>
+            <strong>Show ROIs</strong>
+            <details class="show-roi-menu" id="showRoiMenu">
+              <summary id="showRoiSummary">All filtered ROIs</summary>
+              <div class="show-roi-options">
+                <label><input type="checkbox" class="roi-display-checkbox" value="good" checked> Good</label>
+                <label><input type="checkbox" class="roi-display-checkbox" value="bad" checked> Bad</label>
+                <label><input type="checkbox" class="roi-display-checkbox" value="unsure" checked> Unsure</label>
+                <label><input type="checkbox" class="roi-display-checkbox" value="unlabeled" checked> Not labeled</label>
+              </div>
+            </details>
+            </div>
+          </details>
+          <details class="panel label-controls menu-card" open>
+            <summary>Export</summary>
+            <div class="menu-card-content">
             <button id="openExclusions">Open ROI metric spreadsheet</button>
             <button id="openSaveLabelsDialog" type="button">Save Labels</button>
-          </div>
-          <div class="panel label-controls">
-            <strong>Show ROIs</strong>
-            <label>Manual label
-              <select id="roiDisplayMode">
-                <option value="all" selected>All filtered ROIs</option>
-                <option value="good">Good</option>
-                <option value="bad">Bad</option>
-                <option value="unsure">Unsure</option>
-              </select>
-            </label>
-          </div>
+            </div>
+          </details>
         </div>
-      </div>
-      <div class="panel">
-        <div class="title" id="traceTitle">Selected ROI dF/F</div>
-        <div class="trace-loader" id="traceLoader" style="display:none;">
-          <input id="dffFile" type="file" accept=".npy">
-          <button id="loadDffFile">Load dF/F file</button>
-        </div>
-        <div class="note" id="traceLoadNote"></div>
-        <canvas id="traceCanvas"></canvas>
-        <div class="note">Wheel or drag to zoom/pan time. Double-click to reset.</div>
-        <div class="controls">
-          <strong>Trace window</strong>
-          <label>Start s <input id="timeStart" type="number" min="0" step="0.001" value="0"></label>
-          <label>End s <input id="timeEnd" type="number" min="0" step="0.001" value="0"></label>
-          <button id="reset">Reset zoom</button>
-        </div>
-      </div>
-    </div>
+    </aside>
   </div>
   <div class="plots">
     <div class="panel">
@@ -1031,9 +1376,17 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <strong>Stacked trace range</strong>
         <label>First ROI <input id="yStart" type="number" min="0" value="0"></label>
         <label>Last ROI <input id="yEnd" type="number" min="0" value="0"></label>
+        <button id="showAllVisibleTraces" type="button">Show all visible traces</button>
       </div>
       <canvas id="stackCanvas"></canvas>
       <div class="note">Wheel to zoom time.</div>
+    </div>
+    <div class="panel">
+      <div class="title">Motion correction drift per frame</div>
+      <canvas id="motionDriftCanvas"></canvas>
+      <div class="note">Rigid x/y drift per frame from Suite2p motion correction. These plots follow the current trace time window.</div>
+      <div class="title" style="margin-top:8px;">Shift cumulative distributions across frames</div>
+      <canvas id="motionDistributionCanvas"></canvas>
     </div>
   </div>
 </div>
@@ -1045,11 +1398,13 @@ document.getElementById("green").src = data.green;
 const redImage = document.getElementById("red");
 if (redImage && data.redAvailable) redImage.src = data.red;
 document.querySelectorAll(".imagewrap img").forEach(img => img.addEventListener("load", syncControlColumnHeight));
-document.getElementById("mask").style.display = "none";
 document.getElementById("meta").textContent = `${{data.nRois}} ROIs | ${{data.nFrames.toLocaleString()}} frames | ${{data.frameRate.toFixed(3)}} Hz${{data.redAvailable ? "" : " | no red channel detected"}}`;
 document.querySelectorAll(".overlay").forEach(svg => svg.setAttribute("viewBox", `0 0 ${{data.imageWidth}} ${{data.imageHeight}}`));
-document.getElementById("targetStructureSummary").textContent = `Target structure: ${{data.targetStructure}}`;
-document.getElementById("targetStructureInline").textContent = `Current preset target structure: ${{data.targetStructure}}`;
+function targetStructureLabel(name) {{
+  return name === "neuron" ? "soma" : name;
+}}
+document.getElementById("targetStructureSummary").textContent = `Pipeline target structure: ${{targetStructureLabel(data.targetStructure)}}; no ROI filter is applied on load.`;
+document.getElementById("targetStructureInline").textContent = `Pipeline target structure: ${{targetStructureLabel(data.targetStructure)}}; default view includes all Suite2p ROIs.`;
 document.getElementById("roiInput").max = Math.max(...data.suite2pIndices);
 const sessionDurationSec = (data.nFrames - 1) / data.frameRate;
 document.getElementById("timeStart").max = sessionDurationSec.toFixed(3);
@@ -1068,6 +1423,8 @@ function b64f64(base64) {{
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
   return new Float64Array(bytes.buffer);
 }}
+const motionX = data.motionAvailable && data.xoff ? b64f32(data.xoff) : null;
+const motionY = data.motionAvailable && data.yoff ? b64f32(data.yoff) : null;
 function parseNpy(arrayBuffer) {{
   const headerBytes = new Uint8Array(arrayBuffer);
   if (headerBytes.length < 10 || headerBytes[0] !== 0x93 || headerBytes[1] !== 0x4e || headerBytes[2] !== 0x55 || headerBytes[3] !== 0x4d || headerBytes[4] !== 0x50 || headerBytes[5] !== 0x59) {{
@@ -1103,6 +1460,51 @@ function parseNpy(arrayBuffer) {{
   throw new Error(`Unsupported .npy dtype: ${{descr}}`);
 }}
 let dff = null;
+let oasisSpikes = null;
+let oasisEventThreshold = Number(data.oasisEventThreshold ?? 0.05);
+let showInferredSpikes = true;
+let oasisSpikeMin = 0;
+let oasisSpikeMax = 1;
+let oasisResidualCache = new Map();
+function configureOasisThresholdControls() {{
+  const sp = spikeTrace(selected);
+  if (sp) {{
+    let minValue = Infinity;
+    let maxValue = -Infinity;
+    for (let i = 0; i < sp.length; i++) {{
+      const value = sp[i];
+      if (Number.isFinite(value)) {{
+        minValue = Math.min(minValue, value);
+        maxValue = Math.max(maxValue, value);
+      }}
+    }}
+    if (!Number.isFinite(minValue)) minValue = 0;
+    if (!Number.isFinite(maxValue) || maxValue <= minValue) {{
+      maxValue = minValue + 0.001;
+    }}
+    oasisSpikeMin = minValue;
+    oasisSpikeMax = Math.max(maxValue, oasisEventThreshold, minValue + 0.001);
+  }}
+  const slider = document.getElementById("oasisThresholdSlider");
+  const box = document.getElementById("oasisThreshold");
+  slider.min = oasisSpikeMin.toPrecision(6);
+  slider.max = oasisSpikeMax.toPrecision(6);
+  slider.value = oasisEventThreshold;
+  box.min = oasisSpikeMin.toPrecision(6);
+  box.max = oasisSpikeMax.toPrecision(6);
+  box.value = oasisEventThreshold;
+}}
+function setOasisThreshold(value, redraw = true) {{
+  const fallback = Number(data.oasisEventThreshold ?? 0.05);
+  const next = Number.isFinite(value) ? value : fallback;
+  oasisEventThreshold = Math.min(Math.max(next, oasisSpikeMin), oasisSpikeMax);
+  configureOasisThresholdControls();
+  if (redraw) drawSelectedTraceAndOasis();
+}}
+function selectedOasisDefaultThreshold() {{
+  const value = dffMetric(selected, "oasis_optimal_threshold");
+  return Number.isFinite(Number(value)) ? Number(value) : Number(data.oasisEventThreshold ?? 0.05);
+}}
 function setDffFromArrayBuffer(arrayBuffer) {{
   const parsed = parseNpy(arrayBuffer);
   dff = parsed.array;
@@ -1111,6 +1513,7 @@ function setDffFromArrayBuffer(arrayBuffer) {{
     data.nFrames = parsed.shape[1];
   }}
   document.getElementById("traceLoadNote").textContent = `Loaded dF/F file with ${{data.nRois}} ROIs x ${{data.nFrames}} frames.`;
+  oasisResidualCache.clear();
   draw();
 }}
 if (data.dffStorageMode === "embedded" && data.dff) {{
@@ -1121,10 +1524,16 @@ if (data.dffStorageMode === "embedded" && data.dff) {{
   loader.style.display = "";
   note.textContent = `This session was too large to fully embed (estimated ${{(data.estimatedEmbeddedDffBytes / (1024 * 1024)).toFixed(1)}} MB). Load ${{data.dffSidecarName || "the sidecar .npy file"}} to enable the trace viewer.`;
 }}
-const presetPass = Uint8Array.from(data.presetExclusionReasons, reasons => reasons.length === 0 ? 1 : 0);
+function setOasisFromArrayBuffer(arrayBuffer) {{
+  const parsed = parseNpy(arrayBuffer);
+  oasisSpikes = parsed.array;
+  oasisResidualCache.clear();
+  configureOasisThresholdControls();
+  draw();
+}}
 const labels = new Int8Array(data.nRois);
 for (let roi = 0; roi < data.nRois; roi++) {{
-  labels[roi] = presetPass[roi] ? -1 : 0;
+  labels[roi] = -1;
 }}
 if (Array.isArray(data.initialLabels) && data.initialLabels.length === data.nRois) {{
   for (let roi = 0; roi < data.nRois; roi++) {{
@@ -1134,9 +1543,9 @@ if (Array.isArray(data.initialLabels) && data.initialLabels.length === data.nRoi
 }}
 const filterPass = new Uint8Array(data.nRois);
 let customPresets = data.customMorphologyPresets && typeof data.customMorphologyPresets === "object" ? {{...data.customMorphologyPresets}} : {{}};
-const defaultFilter = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.all_rois;
+const defaultFilter = data.morphologyPresets.all_rois;
 let selected = 0, x0 = 0, x1 = data.nFrames - 1, y0 = 0, y1 = 0, visibleRois = [];
-let appliedSortMetric = "original";
+let appliedSortMetrics = ["original"];
 let appliedSortDirection = "asc";
 
 function fit(canvas) {{
@@ -1145,25 +1554,24 @@ function fit(canvas) {{
   canvas.height = Math.max(1, Math.round(box.height * r));
 }}
 function syncControlColumnHeight() {{
-  const fovReview = document.querySelector(".fov-review");
-  const controls = document.querySelector(".control-column");
-  if (!fovReview || !controls) return;
-  if (window.matchMedia("(max-width: 1100px)").matches) {{
-    controls.style.height = "";
-    controls.style.maxHeight = "";
-    controls.style.overflowY = "";
-    return;
-  }}
-  const fovHeight = Math.round(fovReview.getBoundingClientRect().height);
-  if (fovHeight > 0) {{
-    controls.style.height = `${{fovHeight}}px`;
-    controls.style.maxHeight = `${{fovHeight}}px`;
-    controls.style.overflowY = "auto";
-  }}
+  return;
 }}
 function trace(roi) {{
   if (!dff) return null;
   return dff.subarray(roi * data.nFrames, (roi + 1) * data.nFrames);
+}}
+function spikeTrace(roi) {{
+  if (!oasisSpikes) return null;
+  return oasisSpikes.subarray(roi * data.nFrames, (roi + 1) * data.nFrames);
+}}
+if (data.oasisAvailable) {{
+  document.getElementById("traceOasisControls").classList.add("visible");
+  if (data.oasisStorageMode === "embedded" && data.oasisSpikes) {{
+    oasisSpikes = b64f32(data.oasisSpikes);
+    configureOasisThresholdControls();
+  }} else {{
+    configureOasisThresholdControls();
+  }}
 }}
 function val(roi, frame) {{
   if (!dff) return NaN;
@@ -1182,6 +1590,10 @@ function metricValue(roi, metric) {{
   if (metric === "snr_95_50" || metric === "event_snr") return dffMetric(roi, "snr_95_50", "event_snr");
   if (metric === "andrea_postdoc_snr") return dffMetric(roi, "andrea_postdoc_snr");
   if (metric === "autocorr_efold_time_seconds") return dffMetric(roi, "autocorr_efold_time_seconds", "decay_tau_seconds");
+  if (metric === "oasis_event_residual_ks") return dffMetric(roi, "oasis_event_residual_ks");
+  if (metric === "oasis_event_snr") return dffMetric(roi, "oasis_event_snr");
+  if (metric === "oasis_rise_tau_seconds") return dffMetric(roi, "oasis_rise_tau_seconds");
+  if (metric === "oasis_decay_tau_seconds") return dffMetric(roi, "oasis_decay_tau_seconds");
   if (metric === "roi_area") return data.dffMetrics[roi].roi_area;
   if (metric === "connectivity") return data.morphology[roi].connect;
   if (metric === "skew") return data.morphology[roi].skew;
@@ -1195,6 +1607,10 @@ function metricLabel(metric) {{
   if (metric === "snr_95_50" || metric === "event_snr") return "SNR: 95/50 percentile";
   if (metric === "andrea_postdoc_snr") return "SNR: CaImAn (large-transient score)";
   if (metric === "autocorr_efold_time_seconds") return "Autocorrelation e-fold time";
+  if (metric === "oasis_event_residual_ks") return "OASIS inferred spike residual Gaussian-fit distance";
+  if (metric === "oasis_event_snr") return "SNR, OASIS";
+  if (metric === "oasis_rise_tau_seconds") return "Rise tau, OASIS";
+  if (metric === "oasis_decay_tau_seconds") return "Decay tau, OASIS";
   if (metric === "roi_area") return "ROI area (px)";
   if (metric === "connectivity") return "Connectivity";
   if (metric === "skew") return "Skew";
@@ -1203,6 +1619,11 @@ function metricLabel(metric) {{
   if (metric === "footprint") return "Footprint";
   if (metric === "original" || metric === "suite2p_index") return "original Suite2p index";
   return metric.replace("_", " ");
+}}
+function sortMetricText(metrics = appliedSortMetrics) {{
+  if (!metrics.length) return metricLabel("original");
+  if (metrics.length === 1) return metricLabel(metrics[0]);
+  return metrics.map(metricLabel).join(" + ");
 }}
 function finiteMetricValues(metric) {{
   const values = [];
@@ -1224,26 +1645,107 @@ function mean(values) {{
   const finite = values.filter(Number.isFinite);
   return finite.length ? finite.reduce((total, value) => total + value, 0) / finite.length : NaN;
 }}
+const suggestedThresholds = {{}};
+function setSuggestedThreshold(inputId, value) {{
+  suggestedThresholds[inputId] = Number.isFinite(value) ? value : NaN;
+}}
 function updateMetricDefaults() {{
+  const skew = finiteMetricValues("skew");
+  const aspect = finiteMetricValues("aspect");
+  const footprint = finiteMetricValues("footprint");
+  const compact = finiteMetricValues("compact");
   const connect = finiteMetricValues("connectivity");
+  const roiArea = finiteMetricValues("roi_area");
   const snr9550 = finiteMetricValues("snr_95_50");
   const caiman = finiteMetricValues("andrea_postdoc_snr");
   const efold = finiteMetricValues("autocorr_efold_time_seconds");
-  document.getElementById("maxConnectDefault").textContent = `default guide: high 25 percentile max ${{fmt(percentile(connect, 0.75))}}`;
-  document.getElementById("eventSnrDefault").textContent = `default guide: mean min ${{fmt(mean(snr9550))}}`;
-  document.getElementById("andreaPostdocSnrDefault").textContent = `default guide: mean min ${{fmt(mean(caiman))}}`;
-  document.getElementById("autocorrEfoldDefault").textContent = `default guide: low/high 25 percentiles ${{fmt(percentile(efold, 0.25))}} to ${{fmt(percentile(efold, 0.75))}}`;
+  const oasisSnr = finiteMetricValues("oasis_event_snr");
+  const oasisRiseTau = finiteMetricValues("oasis_rise_tau_seconds");
+  const oasisDecayTau = finiteMetricValues("oasis_decay_tau_seconds");
+  const oasisResidualKs = finiteMetricValues("oasis_event_residual_ks");
+  const selectedPreset = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.all_rois || {{}};
+  setSuggestedThreshold("skewMin", selectedPreset.skewMin ?? mean(skew));
+  setSuggestedThreshold("skewMax", selectedPreset.skewMax ?? mean(skew));
+  setSuggestedThreshold("aspectMin", selectedPreset.aspectMin ?? mean(aspect));
+  setSuggestedThreshold("aspectMax", selectedPreset.aspectMax ?? mean(aspect));
+  setSuggestedThreshold("footprintMin", selectedPreset.footprintMin ?? mean(footprint));
+  setSuggestedThreshold("footprintMax", selectedPreset.footprintMax ?? mean(footprint));
+  setSuggestedThreshold("compactMin", selectedPreset.compactMin ?? mean(compact));
+  setSuggestedThreshold("compactMax", selectedPreset.compactMax ?? mean(compact));
+  setSuggestedThreshold("maxConnect", percentile(connect, 0.75));
+  setSuggestedThreshold("roiAreaMin", percentile(roiArea, 0.25));
+  setSuggestedThreshold("roiAreaMax", percentile(roiArea, 0.75));
+  setSuggestedThreshold("eventSnrMin", mean(snr9550));
+  setSuggestedThreshold("andreaPostdocSnrMin", mean(caiman));
+  setSuggestedThreshold("autocorrEfoldMin", percentile(efold, 0.25));
+  setSuggestedThreshold("autocorrEfoldMax", percentile(efold, 0.75));
+  setSuggestedThreshold("oasisEventSnrMin", mean(oasisSnr));
+  setSuggestedThreshold("oasisRiseTauMin", percentile(oasisRiseTau, 0.25));
+  setSuggestedThreshold("oasisRiseTauMax", percentile(oasisRiseTau, 0.75));
+  setSuggestedThreshold("oasisDecayTauMin", percentile(oasisDecayTau, 0.25));
+  setSuggestedThreshold("oasisDecayTauMax", percentile(oasisDecayTau, 0.75));
+  setSuggestedThreshold("oasisResidualKsMax", percentile(oasisResidualKs, 0.75));
+  document.getElementById("maxConnectDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.maxConnect)}})`;
+  document.getElementById("roiAreaMinDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.roiAreaMin)}})`;
+  document.getElementById("roiAreaMaxDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.roiAreaMax)}})`;
+  document.getElementById("eventSnrDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.eventSnrMin)}})`;
+  document.getElementById("andreaPostdocSnrDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.andreaPostdocSnrMin)}})`;
+  document.getElementById("autocorrEfoldMinDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.autocorrEfoldMin)}})`;
+  document.getElementById("autocorrEfoldMaxDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.autocorrEfoldMax)}})`;
+  document.getElementById("oasisEventSnrDefault").textContent = oasisSnr.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisEventSnrMin)}})` : "";
+  document.getElementById("oasisRiseTauMinDefault").textContent = oasisRiseTau.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisRiseTauMin)}})` : "";
+  document.getElementById("oasisRiseTauMaxDefault").textContent = oasisRiseTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisRiseTauMax)}})` : "";
+  document.getElementById("oasisDecayTauMinDefault").textContent = oasisDecayTau.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisDecayTauMin)}})` : "";
+  document.getElementById("oasisDecayTauMaxDefault").textContent = oasisDecayTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisDecayTauMax)}})` : "";
+  document.getElementById("oasisResidualKsDefault").textContent = oasisResidualKs.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisResidualKsMax)}})` : "";
+  configureOasisFilterControls();
+}}
+function configureOasisFilterControls() {{
+  const oasisMetricIds = [
+    ["oasisEventSnrMin", "oasis_event_snr"],
+    ["oasisRiseTauMin", "oasis_rise_tau_seconds"],
+    ["oasisRiseTauMax", "oasis_rise_tau_seconds"],
+    ["oasisDecayTauMin", "oasis_decay_tau_seconds"],
+    ["oasisDecayTauMax", "oasis_decay_tau_seconds"],
+    ["oasisResidualKsMax", "oasis_event_residual_ks"],
+  ];
+  for (const [inputId, metric] of oasisMetricIds) {{
+    const input = document.getElementById(inputId);
+    if (!input) continue;
+    const available = finiteMetricValues(metric).length > 0;
+    input.disabled = !available;
+    input.placeholder = available ? "Not Used" : "No OASIS run Detected";
+    if (!available) input.value = "";
+  }}
+}}
+function updateSuite2pSuggestedThresholds(filter) {{
+  const fallback = {{
+    skewMin: mean(finiteMetricValues("skew")),
+    skewMax: mean(finiteMetricValues("skew")),
+    aspectMin: mean(finiteMetricValues("aspect")),
+    aspectMax: mean(finiteMetricValues("aspect")),
+    footprintMin: mean(finiteMetricValues("footprint")),
+    footprintMax: mean(finiteMetricValues("footprint")),
+    compactMin: mean(finiteMetricValues("compact")),
+    compactMax: mean(finiteMetricValues("compact")),
+  }};
+  for (const id of ["skewMin","skewMax","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"]) {{
+    setSuggestedThreshold(id, filter && filter[id] !== null && filter[id] !== undefined ? filter[id] : fallback[id]);
+  }}
 }}
 function drawMetricHistogram(canvas) {{
   fit(canvas);
   const ctx = canvas.getContext("2d");
   const metric = canvas.dataset.metric;
   const values = finiteMetricValues(metric);
-  const w = canvas.width, h = canvas.height, pad = 18;
+  const w = canvas.width, h = canvas.height, pad = 24;
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
   ctx.strokeStyle = "#d0d5dd"; ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
   if (!values.length) return;
+  const r = window.devicePixelRatio || 1;
+  ctx.fillStyle = "#344054"; ctx.font = `${{11 * r}}px Arial`; ctx.textAlign = "left";
+  ctx.fillText(metricLabel(metric), pad, 12 * r);
   let lo = percentile(values, 0.01), hi = percentile(values, 0.99);
   if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = Math.min(...values); hi = Math.max(...values); }}
   if (hi <= lo) hi = lo + 1;
@@ -1253,35 +1755,85 @@ function drawMetricHistogram(canvas) {{
     counts[bin]++;
   }});
   const maxCount = Math.max(...counts, 1);
-  const plotW = w - pad * 2, plotH = h - pad * 1.5;
+  const plotW = w - pad * 2, plotTop = 32 * r, plotBottom = h - pad * 1.45;
+  const plotH = Math.max(1, plotBottom - plotTop);
   ctx.fillStyle = "#dbeafe";
   counts.forEach((count, index) => {{
     const x = pad + index / bins * plotW;
     const bw = Math.max(1, plotW / bins - 1);
     const bh = count / maxCount * plotH;
-    ctx.fillRect(x, h - pad - bh, bw, bh);
+    ctx.fillRect(x, plotBottom - bh, bw, bh);
   }});
-  function drawThreshold(inputId, color) {{
-    if (!inputId) return;
-    const value = filterValue(inputId);
+  function drawLine(value, color, label) {{
     if (!Number.isFinite(value)) return;
     const x = pad + (value - lo) / (hi - lo) * plotW;
     if (x < pad || x > pad + plotW) return;
-    ctx.strokeStyle = color; ctx.lineWidth = Math.max(1, window.devicePixelRatio || 1);
-    ctx.beginPath(); ctx.moveTo(x, 4); ctx.lineTo(x, h - pad + 2); ctx.stroke();
+    ctx.save();
+    ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, 1.5 * r);
+    ctx.beginPath(); ctx.moveTo(x, plotTop); ctx.lineTo(x, plotBottom + 2); ctx.stroke();
+    ctx.fillStyle = color; ctx.font = `${{10 * r}}px Arial`; ctx.textAlign = "center";
+    ctx.fillText(`${{label}} ${{fmt(value)}}`, x, plotTop - 3 * r);
+    ctx.restore();
   }}
-  drawThreshold(canvas.dataset.min, "#16a34a");
-  drawThreshold(canvas.dataset.max, "#dc2626");
+  function thresholdInfo(inputId, label) {{
+    if (!inputId) return;
+    const activeValue = filterValue(inputId);
+    const suggestedValue = suggestedThresholds[inputId];
+    const value = Number.isFinite(activeValue) ? activeValue : suggestedValue;
+    return {{value, label, active: Number.isFinite(activeValue)}};
+  }}
+  const minThreshold = thresholdInfo(canvas.dataset.min, "min");
+  const maxThreshold = thresholdInfo(canvas.dataset.max, "max");
+  if (
+    minThreshold && maxThreshold &&
+    !minThreshold.active && !maxThreshold.active &&
+    Number.isFinite(minThreshold.value) && Number.isFinite(maxThreshold.value) &&
+    Math.abs(minThreshold.value - maxThreshold.value) <= Math.max(1e-9, Math.abs(minThreshold.value) * 1e-9)
+  ) {{
+    drawLine(minThreshold.value, "#475467", "mean");
+  }} else {{
+    if (minThreshold) drawLine(minThreshold.value, "#16a34a", minThreshold.label);
+    if (maxThreshold) drawLine(maxThreshold.value, "#dc2626", maxThreshold.label);
+  }}
+  const binSize = (hi - lo) / bins;
+  const yText = h - 7 * (window.devicePixelRatio || 1);
+  ctx.fillStyle = "#475467"; ctx.font = `${{10 * (window.devicePixelRatio || 1)}}px Arial`;
+  ctx.textAlign = "left"; ctx.fillText(fmt(lo), pad, yText);
+  ctx.textAlign = "center"; ctx.fillText(`bin ${{fmt(binSize)}}`, pad + plotW / 2, yText);
+  ctx.textAlign = "right"; ctx.fillText(fmt(hi), pad + plotW, yText);
 }}
 function drawMetricHistograms() {{
-  document.querySelectorAll(".metric-histogram").forEach(drawMetricHistogram);
+  document.querySelectorAll(".metric-histogram-panel[open] .metric-histogram").forEach(drawMetricHistogram);
 }}
 function sortVisibleRois(rois) {{
-  const metric = appliedSortMetric;
+  const metrics = appliedSortMetrics.length ? appliedSortMetrics : ["original"];
   const direction = appliedSortDirection;
+  const ranges = {{}};
+  for (const metric of metrics) {{
+    const values = rois.map(roi => Number(metricValue(roi, metric))).filter(Number.isFinite);
+    const minValue = values.length ? Math.min(...values) : NaN;
+    const maxValue = values.length ? Math.max(...values) : NaN;
+    ranges[metric] = {{min: minValue, max: maxValue}};
+  }}
+  function normalizedMetricValue(roi, metric) {{
+    const value = Number(metricValue(roi, metric));
+    if (!Number.isFinite(value)) return NaN;
+    const range = ranges[metric];
+    if (!range || !Number.isFinite(range.min) || !Number.isFinite(range.max)) return NaN;
+    if (range.max === range.min) return 0.5;
+    return (value - range.min) / (range.max - range.min);
+  }}
+  function sortScore(roi) {{
+    let total = 0, count = 0;
+    for (const metric of metrics) {{
+      const value = normalizedMetricValue(roi, metric);
+      if (Number.isFinite(value)) {{ total += value; count++; }}
+    }}
+    return count ? total / count : NaN;
+  }}
   return rois.slice().sort((a, b) => {{
-    const av = metricValue(a, metric);
-    const bv = metricValue(b, metric);
+    const av = sortScore(a);
+    const bv = sortScore(b);
     const aFinite = Number.isFinite(av);
     const bFinite = Number.isFinite(bv);
     if (aFinite !== bFinite) return aFinite ? -1 : 1;
@@ -1299,18 +1851,22 @@ function roiFromSuite2pIndex(value) {{
 function currentSortPositionText() {{
   const position = visibleRois.includes(selected) ? visibleRois.indexOf(selected) + 1 : 0;
   const total = visibleRois.length;
-  return `${{position}}/${{total}} by ${{metricLabel(appliedSortMetric)}} ${{appliedSortDirection}}`;
+  return `${{position}}/${{total}} by ${{sortMetricText()}} ${{appliedSortDirection}}`;
 }}
 function updateSortCurrent() {{
-  document.getElementById("sortCurrent").textContent = `Current order: ${{metricLabel(appliedSortMetric)}}, ${{appliedSortDirection}}`;
+  document.getElementById("sortCurrent").textContent = `Current order: ${{sortMetricText()}}, ${{appliedSortDirection}}`;
   document.getElementById("selectedSortPosition").textContent = currentSortPositionText();
 }}
+function selectedSortMetrics() {{
+  const checked = Array.from(document.querySelectorAll('input[name="sortMetric"]:checked')).map(input => input.value);
+  return checked.length ? checked : ["original"];
+}}
 function applySort() {{
-  appliedSortMetric = document.getElementById("sortMetric").value;
+  appliedSortMetrics = selectedSortMetrics();
   appliedSortDirection = document.getElementById("sortDirection").value;
   updateVisibleRois(true);
   updateSortCurrent();
-  if (visibleRois.includes(selected)) setSelected(selected);
+  if (visibleRois.length) setSelected(visibleRois[0]);
 }}
 function syncTimeInputs() {{
   document.getElementById("timeStart").value = (x0 / data.frameRate).toFixed(3);
@@ -1344,9 +1900,10 @@ function setSelected(roi) {{
   const snr9550 = dffMetric(selected, "snr_95_50", "event_snr");
   const postdocSnr = dffMetric(selected, "andrea_postdoc_snr");
   const suite2pRoi = data.suite2pIndices[selected];
+  if (data.oasisAvailable) setOasisThreshold(selectedOasisDefaultThreshold(), false);
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s`;
+  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s | OASIS inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -1354,12 +1911,32 @@ function setSelected(roi) {{
   draw();
 }}
 function roiMatchesDisplayMode(roi) {{
-  const mode = document.getElementById("roiDisplayMode").value;
-  if (mode === "all") return true;
-  if (mode === "good") return labels[roi] === 1;
-  if (mode === "bad") return labels[roi] === 0;
-  if (mode === "unsure") return labels[roi] === 2;
-  return true;
+  const active = selectedRoiDisplayLabels();
+  if (active.has("all")) return true;
+  if (labels[roi] === 1) return active.has("good");
+  if (labels[roi] === 0) return active.has("bad");
+  if (labels[roi] === 2) return active.has("unsure");
+  return active.has("unlabeled");
+}}
+function selectedRoiDisplayLabels() {{
+  const checked = Array.from(document.querySelectorAll(".roi-display-checkbox:checked")).map(input => input.value);
+  return new Set(checked.length ? checked : ["all"]);
+}}
+function updateRoiDisplaySummary() {{
+  const summary = document.getElementById("showRoiSummary");
+  const boxes = Array.from(document.querySelectorAll(".roi-display-checkbox"));
+  const checked = boxes.filter(input => input.checked).map(input => input.value);
+  if (!checked.length || checked.length === boxes.length) {{
+    summary.textContent = "All filtered ROIs";
+    return;
+  }}
+  const active = new Set(checked);
+  const labelsText = [];
+  if (active.has("good")) labelsText.push("good");
+  if (active.has("bad")) labelsText.push("bad");
+  if (active.has("unsure")) labelsText.push("unsure");
+  if (active.has("unlabeled")) labelsText.push("not labeled");
+  summary.textContent = labelsText.length ? labelsText.join(", ") : "All filtered ROIs";
 }}
 function updateVisibleRois(resetRange = false) {{
   const rois = [];
@@ -1376,7 +1953,7 @@ function updateVisibleRois(resetRange = false) {{
   }}
   document.getElementById("yStart").value = y0;
   document.getElementById("yEnd").value = y1;
-  document.querySelectorAll(".roi").forEach(path => {{
+  document.querySelectorAll(".roi, .roi-hit").forEach(path => {{
     const roi = Number(path.dataset.roi);
     path.style.display = (filterPass[roi] && roiMatchesDisplayMode(roi)) ? "" : "none";
   }});
@@ -1426,9 +2003,14 @@ function readFilter() {{
     aspectMin: filterValue("aspectMin"), aspectMax: filterValue("aspectMax"),
     footprintMin: filterValue("footprintMin"), footprintMax: filterValue("footprintMax"),
     compactMin: filterValue("compactMin"), compactMax: filterValue("compactMax"),
-    eventSnrMin: filterValue("eventSnrMin"), eventSnrMax: filterValue("eventSnrMax"),
-    andreaPostdocSnrMin: filterValue("andreaPostdocSnrMin"), andreaPostdocSnrMax: filterValue("andreaPostdocSnrMax"),
+    roiAreaMin: filterValue("roiAreaMin"), roiAreaMax: filterValue("roiAreaMax"),
+    eventSnrMin: filterValue("eventSnrMin"),
+    andreaPostdocSnrMin: filterValue("andreaPostdocSnrMin"),
     autocorrEfoldMin: filterValue("autocorrEfoldMin"), autocorrEfoldMax: filterValue("autocorrEfoldMax"),
+    oasisEventSnrMin: filterValue("oasisEventSnrMin"),
+    oasisRiseTauMin: filterValue("oasisRiseTauMin"), oasisRiseTauMax: filterValue("oasisRiseTauMax"),
+    oasisDecayTauMin: filterValue("oasisDecayTauMin"), oasisDecayTauMax: filterValue("oasisDecayTauMax"),
+    oasisResidualKsMax: filterValue("oasisResidualKsMax"),
   }};
 }}
 function normalizeFilter(filter) {{
@@ -1443,7 +2025,7 @@ function normalizeFilter(filter) {{
     const value = Number(filter[key]);
     normalized[key] = Number.isFinite(value) ? value : null;
   }}
-  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","autocorrEfoldMin","autocorrEfoldMax"]) {{
+  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -1466,7 +2048,7 @@ function populatePresetSelect(selectedName = data.targetStructure) {{
   const select = document.getElementById("filterPreset");
   select.textContent = "";
   for (const name of Object.keys(data.morphologyPresets)) {{
-    const option = document.createElement("option"); option.value = `built-in:${{name}}`; option.textContent = name; select.appendChild(option);
+    const option = document.createElement("option"); option.value = `built-in:${{name}}`; option.textContent = targetStructureLabel(name); select.appendChild(option);
   }}
   for (const name of Object.keys(customPresets).sort()) {{
     const option = document.createElement("option"); option.value = `custom:${{name}}`; option.textContent = `${{name}} (saved)`; select.appendChild(option);
@@ -1477,18 +2059,21 @@ function populatePresetSelect(selectedName = data.targetStructure) {{
 function loadSelectedPreset() {{
   const [kind, name] = document.getElementById("filterPreset").value.split(":", 2);
   const preset = kind === "built-in" ? data.morphologyPresets[name] : customPresets[name];
-  if (preset) writeFilter(preset);
+  if (preset) {{
+    updateSuite2pSuggestedThresholds(preset);
+    writeFilter(preset);
+  }}
 }}
 function currentPresetName() {{
   return document.getElementById("presetName").value.trim();
 }}
 function saveCurrentPresetToPage() {{
   const name = currentPresetName();
-  if (!name) {{ alert("Enter a custom preset name first."); return null; }}
+  if (!name) {{ alert("Enter a custom filter name first."); return null; }}
   try {{
     customPresets[name] = normalizeFilter(readFilter());
   }} catch (error) {{
-    alert(`Could not save preset: ${{error.message}}`);
+    alert(`Could not save QC thresholds: ${{error.message}}`);
     return null;
   }}
   populatePresetSelect(name);
@@ -1499,24 +2084,38 @@ function passesFilter(roi, metrics, filter) {{
   const dffMetrics = data.dffMetrics[roi];
   const snr9550 = dffMetric(roi, "snr_95_50", "event_snr");
   const postdocSnr = dffMetric(roi, "andrea_postdoc_snr");
+  const oasisEventSnr = dffMetricValue(dffMetrics, "oasis_event_snr");
+  const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
+  const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
+  const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
   return (
     passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax) &&
     passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax) &&
     passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax) &&
     passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax) &&
     passesUpper(metrics.connect, filter.maxConnect) &&
+    passesLower(dffMetrics.roi_area, filter.roiAreaMin) &&
+    passesUpper(dffMetrics.roi_area, filter.roiAreaMax) &&
     passesLower(snr9550, filter.eventSnrMin) &&
-    passesUpper(snr9550, filter.eventSnrMax) &&
     passesLower(postdocSnr, filter.andreaPostdocSnrMin) &&
-    passesUpper(postdocSnr, filter.andreaPostdocSnrMax) &&
     passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin) &&
-    passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)
+    passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax) &&
+    passesLower(oasisEventSnr, filter.oasisEventSnrMin) &&
+    passesLower(oasisRiseTau, filter.oasisRiseTauMin) &&
+    passesUpper(oasisRiseTau, filter.oasisRiseTauMax) &&
+    passesLower(oasisDecayTau, filter.oasisDecayTauMin) &&
+    passesUpper(oasisDecayTau, filter.oasisDecayTauMax) &&
+    passesUpper(oasisResidualKs, filter.oasisResidualKsMax)
   );
 }}
 function morphologyReasons(metrics, dffMetrics, filter) {{
   const reasons = [];
   const snr9550 = dffMetrics.snr_95_50 ?? dffMetrics.event_snr;
   const postdocSnr = dffMetrics.andrea_postdoc_snr;
+  const oasisEventSnr = dffMetricValue(dffMetrics, "oasis_event_snr");
+  const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
+  const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
+  const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
   if (!passesLower(metrics.footprint, filter.footprintMin)) reasons.push(`footprint ${{fmt(metrics.footprint)}} below ${{filter.footprintMin}}`);
   if (!passesUpper(metrics.footprint, filter.footprintMax)) reasons.push(`footprint ${{fmt(metrics.footprint)}} above ${{filter.footprintMax}}`);
   if (!passesLower(metrics.skew, filter.skewMin)) reasons.push(`skew ${{fmt(metrics.skew)}} below ${{filter.skewMin}}`);
@@ -1526,12 +2125,18 @@ function morphologyReasons(metrics, dffMetrics, filter) {{
   if (!passesLower(metrics.compact, filter.compactMin)) reasons.push(`compact ${{fmt(metrics.compact)}} below ${{filter.compactMin}}`);
   if (!passesUpper(metrics.compact, filter.compactMax)) reasons.push(`compact ${{fmt(metrics.compact)}} above ${{filter.compactMax}}`);
   if (!passesUpper(metrics.connect, filter.maxConnect)) reasons.push(`connectivity ${{metrics.connect}} exceeds ${{filter.maxConnect}}`);
+  if (!passesLower(dffMetrics.roi_area, filter.roiAreaMin)) reasons.push(`ROI area ${{fmt(dffMetrics.roi_area)}} below ${{filter.roiAreaMin}}`);
+  if (!passesUpper(dffMetrics.roi_area, filter.roiAreaMax)) reasons.push(`ROI area ${{fmt(dffMetrics.roi_area)}} above ${{filter.roiAreaMax}}`);
   if (!passesLower(snr9550, filter.eventSnrMin)) reasons.push(`SNR: 95/50 percentile ${{fmt(snr9550)}} below ${{filter.eventSnrMin}}`);
-  if (!passesUpper(snr9550, filter.eventSnrMax)) reasons.push(`SNR: 95/50 percentile ${{fmt(snr9550)}} above ${{filter.eventSnrMax}}`);
   if (!passesLower(postdocSnr, filter.andreaPostdocSnrMin)) reasons.push(`SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} below ${{filter.andreaPostdocSnrMin}}`);
-  if (!passesUpper(postdocSnr, filter.andreaPostdocSnrMax)) reasons.push(`SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} above ${{filter.andreaPostdocSnrMax}}`);
   if (!passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} below ${{filter.autocorrEfoldMin}}`);
   if (!passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} above ${{filter.autocorrEfoldMax}}`);
+  if (!passesLower(oasisEventSnr, filter.oasisEventSnrMin)) reasons.push(`OASIS SNR ${{fmt(oasisEventSnr)}} below ${{filter.oasisEventSnrMin}}`);
+  if (!passesLower(oasisRiseTau, filter.oasisRiseTauMin)) reasons.push(`OASIS rise tau ${{fmt(oasisRiseTau)}} below ${{filter.oasisRiseTauMin}}`);
+  if (!passesUpper(oasisRiseTau, filter.oasisRiseTauMax)) reasons.push(`OASIS rise tau ${{fmt(oasisRiseTau)}} above ${{filter.oasisRiseTauMax}}`);
+  if (!passesLower(oasisDecayTau, filter.oasisDecayTauMin)) reasons.push(`OASIS decay tau ${{fmt(oasisDecayTau)}} below ${{filter.oasisDecayTauMin}}`);
+  if (!passesUpper(oasisDecayTau, filter.oasisDecayTauMax)) reasons.push(`OASIS decay tau ${{fmt(oasisDecayTau)}} above ${{filter.oasisDecayTauMax}}`);
+  if (!passesUpper(oasisResidualKs, filter.oasisResidualKsMax)) reasons.push(`OASIS residual Gaussian-fit distance ${{fmt(oasisResidualKs)}} above ${{filter.oasisResidualKsMax}}`);
   return reasons;
 }}
 function evaluateFilter() {{
@@ -1541,7 +2146,7 @@ function evaluateFilter() {{
     filterPass[roi] = passesFilter(roi, data.morphology[roi], filter) ? 1 : 0;
     pass += filterPass[roi];
   }}
-  const summary = `${{pass}} / ${{data.nRois}} original Suite2p ROIs pass the current morphology and custom metric filters.`;
+  const summary = `${{pass}} / ${{data.nRois}} original Suite2p ROIs pass the current QC metric filters.`;
   document.getElementById("filterSummary").textContent = summary;
   document.getElementById("filterSummaryInline").textContent = summary;
   drawMetricHistograms();
@@ -1564,19 +2169,80 @@ function setLabel(label) {{
   updateVisibleRois();
 }}
 function moveVisible(direction) {{
+  if (!visibleRois.length) return;
   const currentIndex = visibleRois.indexOf(selected);
-  const nextIndex = Math.max(0, Math.min(visibleRois.length - 1, currentIndex + direction));
+  const origin = currentIndex >= 0 ? currentIndex : 0;
+  const nextIndex = (origin + direction + visibleRois.length) % visibleRois.length;
   setSelected(visibleRois[nextIndex]);
 }}
 function makeOverlays() {{
   document.querySelectorAll(".overlay").forEach(svg => {{
     data.rois.forEach(r => {{
+      const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      hitPath.setAttribute("d", r.hitPath || r.path);
+      hitPath.dataset.roi = r.roi; hitPath.classList.add("roi-hit"); hitPath.addEventListener("click", () => setSelected(r.roi)); svg.appendChild(hitPath);
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", r.path);
-      path.dataset.roi = r.roi; path.classList.add("roi"); path.addEventListener("click", () => setSelected(r.roi)); svg.appendChild(path);
+      path.dataset.roi = r.roi; path.classList.add("roi"); svg.appendChild(path);
     }});
   }});
 }}
+const fovZoom = {{ scale: 1, x: 0, y: 0, dragging: false, lastX: 0, lastY: 0 }};
+function applyFovTransform() {{
+  const transform = `translate(${{fovZoom.x}}px, ${{fovZoom.y}}px) scale(${{fovZoom.scale}})`;
+  document.querySelectorAll(".fov-review .imagewrap img, .fov-review .imagewrap svg").forEach(el => {{
+    el.style.transform = transform;
+  }});
+}}
+function clampFovPan() {{
+  const wrap = document.querySelector(".fov-review .imagewrap");
+  if (!wrap) return;
+  const rect = wrap.getBoundingClientRect();
+  const minX = rect.width * (1 - fovZoom.scale);
+  const minY = rect.height * (1 - fovZoom.scale);
+  fovZoom.x = Math.min(0, Math.max(minX, fovZoom.x));
+  fovZoom.y = Math.min(0, Math.max(minY, fovZoom.y));
+}}
+function resetFovZoom() {{
+  fovZoom.scale = 1; fovZoom.x = 0; fovZoom.y = 0; applyFovTransform();
+}}
+function setupFovZoom() {{
+  document.querySelectorAll(".fov-review .imagewrap").forEach(wrap => {{
+    wrap.addEventListener("wheel", event => {{
+      event.preventDefault();
+      const rect = wrap.getBoundingClientRect();
+      const oldScale = fovZoom.scale;
+      const nextScale = Math.min(8, Math.max(1, oldScale * (event.deltaY < 0 ? 1.18 : 1 / 1.18)));
+      const px = event.clientX - rect.left;
+      const py = event.clientY - rect.top;
+      fovZoom.x = px - (px - fovZoom.x) * (nextScale / oldScale);
+      fovZoom.y = py - (py - fovZoom.y) * (nextScale / oldScale);
+      fovZoom.scale = nextScale;
+      clampFovPan();
+      applyFovTransform();
+    }}, {{passive: false}});
+    wrap.addEventListener("mousedown", event => {{
+      if (event.button !== 0) return;
+      fovZoom.dragging = true; fovZoom.lastX = event.clientX; fovZoom.lastY = event.clientY;
+      wrap.classList.add("panning");
+    }});
+    wrap.addEventListener("dblclick", resetFovZoom);
+  }});
+  window.addEventListener("mousemove", event => {{
+    if (!fovZoom.dragging) return;
+    fovZoom.x += event.clientX - fovZoom.lastX;
+    fovZoom.y += event.clientY - fovZoom.lastY;
+    fovZoom.lastX = event.clientX; fovZoom.lastY = event.clientY;
+    clampFovPan();
+    applyFovTransform();
+  }});
+  window.addEventListener("mouseup", () => {{
+    if (!fovZoom.dragging) return;
+    fovZoom.dragging = false;
+    document.querySelectorAll(".fov-review .imagewrap").forEach(wrap => wrap.classList.remove("panning"));
+  }});
+}}
+setupFovZoom();
 function drawAxes(ctx, w, h, l, t, pw, ph, xLabel, yLabel) {{
   ctx.strokeStyle = "#d0d5dd"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(l,t); ctx.lineTo(l,t+ph); ctx.lineTo(l+pw,t+ph); ctx.stroke();
   ctx.fillStyle = "#475467"; ctx.font = `${{12 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText(xLabel, l + pw / 2, h - 8);
@@ -1622,10 +2288,10 @@ function drawStack() {{
   const firstRow = Math.max(0, Math.floor(y0));
   const lastRow = Math.min(visibleRois.length - 1, Math.ceil(y1));
   const selectedPosition = visibleRois.includes(selected) ? visibleRois.indexOf(selected) + 1 : 0;
-  document.getElementById("stackTitle").textContent = `stacked raw dF/F, selected is ${{selectedPosition}}/${{visibleRois.length}} sorted by ${{metricLabel(appliedSortMetric)}} ${{appliedSortDirection}}`;
+  document.getElementById("stackTitle").textContent = `stacked raw dF/F, selected is ${{selectedPosition}}/${{visibleRois.length}} sorted by ${{sortMetricText()}} ${{appliedSortDirection}}`;
   const canvas = document.getElementById("stackCanvas"); fit(canvas); const ctx = canvas.getContext("2d");
   const w = canvas.width, h = canvas.height, l = 62, r = 16, t = 14, b = 56, pw = w-l-r, ph = h-t-b;
-  ctx.clearRect(0,0,w,h); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h); drawAxes(ctx,w,h,l,t,pw,ph,"time (s)","ROI index");
+  ctx.clearRect(0,0,w,h); ctx.fillStyle = "#fff"; ctx.fillRect(0,0,w,h); drawAxes(ctx,w,h,l,t,pw,ph,"time (s)","Current Sort Order");
   if (!visibleRois.length) {{
     ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText("No ROIs match the current metric and label display filters.", l + pw / 2, t + ph / 2);
     return;
@@ -1637,7 +2303,7 @@ function drawStack() {{
   const ys = Math.max(0, Math.floor(y0)), ye = Math.min(visibleRois.length - 1, Math.ceil(y1));
   const xs = Math.max(0, Math.floor(x0)), xe = Math.min(data.nFrames - 1, Math.ceil(x1));
   drawTimeGrid(ctx, l, t, pw, ph);
-  const count = Math.max(1, ye - ys + 1), rowH = ph / count, pixelCount = Math.max(1, Math.floor(pw));
+  const count = Math.max(1, ye - ys + 1), rowH = ph / (count + 1), pixelCount = Math.max(1, Math.floor(pw));
   let amplitudes = [];
   for (let rowIndex = ys; rowIndex <= ye; rowIndex++) {{
     const roi = visibleRois[rowIndex];
@@ -1652,9 +2318,11 @@ function drawStack() {{
   const sortedAmp = amplitudes.slice().sort((a,b) => a-b);
   const typicalAmp = Math.max(sortedAmp[Math.floor(sortedAmp.length / 2)] || 1, 0.2);
   const scale = (rowH * 0.24) / typicalAmp;
+  const rowLabels = [];
   ctx.save(); ctx.beginPath(); ctx.rect(l, t, pw, ph); ctx.clip();
   for (let rowIndex = ys; rowIndex <= ye; rowIndex++) {{
-    const roi = visibleRois[rowIndex], tr = trace(roi), row = rowIndex - ys, baseline = t + rowH * (row + 0.5), color = colorForRoi(roi);
+    const roi = visibleRois[rowIndex], tr = trace(roi), row = rowIndex - ys, baseline = t + rowH * (row + 1), color = colorForRoi(roi);
+    rowLabels.push({{roi, rowIndex, baseline, color}});
     ctx.strokeStyle = roi === selected ? "#111827" : color;
     ctx.lineWidth = roi === selected ? Math.max(1.8, 1.8 * (window.devicePixelRatio || 1)) : Math.max(0.8, window.devicePixelRatio || 1);
     ctx.beginPath();
@@ -1685,12 +2353,17 @@ function drawStack() {{
       }}
     }}
     ctx.stroke();
-    if (count <= 80) {{
-      ctx.fillStyle = color; ctx.textAlign = "right"; ctx.textBaseline = "middle";
-      ctx.fillText(String(data.suite2pIndices[roi]), l - 8, baseline);
-    }}
   }}
   ctx.restore();
+  if (count <= 80) {{
+    ctx.textAlign = "right";
+    ctx.textBaseline = "middle";
+    ctx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+    for (const rowLabel of rowLabels) {{
+      ctx.fillStyle = rowLabel.roi === selected ? "#111827" : rowLabel.color;
+      ctx.fillText(String(rowLabel.rowIndex + 1), l - 8, rowLabel.baseline);
+    }}
+  }}
 }}
 function drawTrace() {{
   const canvas = document.getElementById("traceCanvas"); fit(canvas); const ctx = canvas.getContext("2d");
@@ -1718,15 +2391,218 @@ function drawTrace() {{
     }}
   }}
   ctx.stroke();
+  const sp = showInferredSpikes ? spikeTrace(selected) : null;
+  if (sp) {{
+    ctx.save();
+    ctx.fillStyle = "rgba(220,38,38,.9)";
+    const radius = Math.max(2.4, 2.4 * (window.devicePixelRatio || 1));
+    for (let f=xs; f<=xe; f++) {{
+      const s = sp[f];
+      if (!Number.isFinite(s) || s <= oasisEventThreshold) continue;
+      const x = xOf(f);
+      const y = yOf(tr[f]);
+      if (!Number.isFinite(y)) continue;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, 0, Math.PI * 2);
+      ctx.fill();
+    }}
+    ctx.restore();
+  }}
   ctx.fillStyle="#475467"; ctx.textAlign="right"; ctx.textBaseline="middle"; for (let i=0; i<=4; i++) {{ const v=lo+i/4*(hi-lo); ctx.fillText(v.toFixed(2), l-8, yOf(v)); }}
 }}
-function draw() {{ drawTrace(); drawStack(); }}
+function motionFiniteValues(values) {{
+  if (!values) return [];
+  const out = [];
+  for (let i = 0; i < values.length; i++) if (Number.isFinite(values[i])) out.push(values[i]);
+  return out;
+}}
+function drawMotionDrift() {{
+  const canvas = document.getElementById("motionDriftCanvas");
+  fit(canvas);
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height, l = 62, r = 18, t = 18, b = 56;
+  const gap = 30 * (window.devicePixelRatio || 1);
+  const panelH = (h - t - b - gap) / 2;
+  const pw = w - l - r;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  if (!motionX || !motionY) {{
+    ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center";
+    ctx.fillText("Motion offsets not available for this session.", l + pw / 2, h / 2);
+    return;
+  }}
+  const n = Math.min(motionX.length, motionY.length, data.nFrames);
+  const xs = Math.max(0, Math.min(n - 1, Math.floor(x0)));
+  const xe = Math.max(xs, Math.min(n - 1, Math.ceil(x1)));
+  function drawPanel(values, top, title, color) {{
+    const ph = panelH;
+    let lo = Infinity, hi = -Infinity;
+    for (let f = xs; f <= xe; f++) {{
+      const value = values[f];
+      if (Number.isFinite(value)) {{ lo = Math.min(lo, value); hi = Math.max(hi, value); }}
+    }}
+    if (!Number.isFinite(lo) || hi <= lo) {{ lo = -1; hi = 1; }}
+    const pad = Math.max((hi - lo) * 0.08, 0.5); lo -= pad; hi += pad;
+    const xOf = f => l + (f - x0) / (x1 - x0) * pw;
+    const yOf = v => top + (1 - (v - lo) / (hi - lo)) * ph;
+    drawAxes(ctx, w, h, l, top, pw, ph, "time (s)", "shift (px)");
+    drawTimeGrid(ctx, l, top, pw, ph);
+    const zeroY = yOf(0);
+    if (zeroY >= top && zeroY <= top + ph) {{
+      ctx.strokeStyle = "#9ca3af"; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(l, zeroY); ctx.lineTo(l + pw, zeroY); ctx.stroke();
+    }}
+    ctx.save();
+    ctx.beginPath(); ctx.rect(l, top, pw, ph); ctx.clip();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1, window.devicePixelRatio || 1);
+    ctx.beginPath();
+    let first = true;
+    const pixelCount = Math.max(1, Math.floor(pw));
+    const framesPerPixel = (xe - xs + 1) / pixelCount;
+    if (framesPerPixel <= 1.2) {{
+      for (let f = xs; f <= xe; f++) {{
+        const value = values[f];
+        if (!Number.isFinite(value)) continue;
+        const x = xOf(f), y = yOf(value);
+        if (first) {{ ctx.moveTo(x, y); first = false; }} else ctx.lineTo(x, y);
+      }}
+    }} else {{
+      for (let px = 0; px < pixelCount; px++) {{
+        const f0 = Math.max(xs, Math.floor(xs + px * framesPerPixel));
+        const f1 = Math.min(xe, Math.floor(xs + (px + 1) * framesPerPixel));
+        let minV = Infinity, maxV = -Infinity;
+        for (let f = f0; f <= f1; f++) {{
+          const value = values[f];
+          if (Number.isFinite(value)) {{ minV = Math.min(minV, value); maxV = Math.max(maxV, value); }}
+        }}
+        if (!Number.isFinite(minV)) continue;
+        const x = l + px;
+        ctx.moveTo(x, yOf(minV)); ctx.lineTo(x, yOf(maxV));
+      }}
+    }}
+    ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.font = `${{12 * (window.devicePixelRatio || 1)}}px Arial`;
+    ctx.fillText(title, l + 8, top + 8);
+    ctx.fillStyle = "#475467"; ctx.textAlign = "right"; ctx.textBaseline = "middle";
+    for (let i = 0; i <= 3; i++) {{
+      const value = lo + i / 3 * (hi - lo);
+      ctx.fillText(value.toFixed(1), l - 8, yOf(value));
+    }}
+  }}
+  drawPanel(motionX, t, "X shift per frame", "#2563eb");
+  drawPanel(motionY, t + panelH + gap, "Y shift per frame", "#dc2626");
+}}
+function drawMotionDistribution() {{
+  const canvas = document.getElementById("motionDistributionCanvas");
+  fit(canvas);
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height, l = 62, r = 18, t = 18, b = 42, pw = w - l - r, ph = h - t - b;
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
+  drawAxes(ctx, w, h, l, t, pw, ph, "shift (px)", "cumulative fraction");
+  const xValues = motionFiniteValues(motionX);
+  const yValues = motionFiniteValues(motionY);
+  if (!xValues.length || !yValues.length) {{
+    ctx.fillStyle = "#475467"; ctx.font = `${{14 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center";
+    ctx.fillText("Motion offsets not available for this session.", l + pw / 2, t + ph / 2);
+    return;
+  }}
+  const all = xValues.concat(yValues).sort((a, b) => a - b);
+  let lo = all[Math.floor(all.length * 0.005)], hi = all[Math.floor(all.length * 0.995)];
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = all[0]; hi = all[all.length - 1]; }}
+  if (hi <= lo) hi = lo + 1;
+  const xOf = value => l + (value - lo) / (hi - lo) * pw;
+  const yOf = value => t + (1 - value) * ph;
+  function drawCdf(values, color, label) {{
+    const sorted = values.slice().filter(value => Number.isFinite(value) && value >= lo && value <= hi).sort((a, b) => a - b);
+    if (!sorted.length) return;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(1.4, 1.4 * (window.devicePixelRatio || 1));
+    ctx.beginPath();
+    for (let i = 0; i < sorted.length; i++) {{
+      const fraction = sorted.length === 1 ? 1 : i / (sorted.length - 1);
+      const x = xOf(sorted[i]), y = yOf(fraction);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }}
+    ctx.stroke();
+    ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "top";
+    ctx.fillText(label, l + 8, t + (label === "x shift" ? 26 : 48));
+  }}
+  ctx.fillStyle = "#475467"; ctx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+  ctx.textAlign = "center"; ctx.textBaseline = "top";
+  ctx.fillText("CDF across frames", l + pw / 2, t + 8);
+  ctx.save();
+  ctx.beginPath(); ctx.rect(l, t, pw, ph); ctx.clip();
+  drawCdf(xValues, "#2563eb", "x shift");
+  drawCdf(yValues, "#dc2626", "y shift");
+  ctx.restore();
+  ctx.fillStyle = "#475467"; ctx.font = `${{10 * (window.devicePixelRatio || 1)}}px Arial`;
+  ctx.textAlign = "left"; ctx.fillText(fmt(lo), l, h - 18);
+  ctx.textAlign = "right"; ctx.fillText(fmt(hi), l + pw, h - 18);
+  ctx.textAlign = "right"; ctx.textBaseline = "middle";
+  for (let i = 0; i <= 4; i++) {{
+    const value = i / 4;
+    ctx.fillText(value.toFixed(2), l - 8, yOf(value));
+  }}
+}}
+function gaussianPdf(x, mean, sd) {{
+  if (!Number.isFinite(sd) || sd <= 0) return 0;
+  const z = (x - mean) / sd;
+  return Math.exp(-0.5 * z * z) / (sd * Math.sqrt(2 * Math.PI));
+}}
+function oasisResidualSummary(roi, threshold) {{
+  const key = `${{roi}}:${{Number(threshold).toPrecision(8)}}`;
+  if (oasisResidualCache.has(key)) return oasisResidualCache.get(key);
+  const tr = trace(roi), sp = spikeTrace(roi);
+  if (!tr || !sp) return null;
+  const eventFrames = new Uint8Array(data.nFrames);
+  let eventCount = 0;
+  for (let f=0; f<data.nFrames; f++) {{
+    if (Number.isFinite(sp[f]) && sp[f] > threshold) {{
+      eventCount++;
+      const start = Math.max(0, f - 3), stop = Math.min(data.nFrames - 1, f + 3);
+      for (let g=start; g<=stop; g++) eventFrames[g] = 1;
+    }}
+  }}
+  const eventResiduals = [];
+  const radius = Math.max(2, Math.round(data.frameRate * 0.25));
+  for (let f=0; f<data.nFrames; f++) {{
+    if (!eventFrames[f]) continue;
+    let sum = 0, n = 0;
+    const start = Math.max(0, f - radius), stop = Math.min(data.nFrames - 1, f + radius);
+    for (let g=start; g<=stop; g++) {{ const v=tr[g]; if (Number.isFinite(v)) {{ sum += v; n++; }} }}
+    if (!n || !Number.isFinite(tr[f])) continue;
+    eventResiduals.push(tr[f] - sum / n);
+  }}
+  const summary = {{eventCount, eventResiduals}};
+  oasisResidualCache.set(key, summary);
+  return summary;
+}}
+function drawOasisNoise() {{
+  return;
+}}
+function drawSelectedTraceAndOasis() {{ drawTrace(); }}
+function draw() {{ drawSelectedTraceAndOasis(); drawStack(); drawMotionDrift(); drawMotionDistribution(); }}
 function reset() {{ x0=0; x1=data.nFrames-1; y0=0; y1=Math.min(19, visibleRois.length-1); document.getElementById("yStart").value=0; document.getElementById("yEnd").value=y1; syncTimeInputs(); draw(); }}
+function showAllVisibleTraces() {{
+  y0 = 0;
+  y1 = Math.max(0, visibleRois.length - 1);
+  document.getElementById("yStart").value = y0;
+  document.getElementById("yEnd").value = y1;
+  draw();
+}}
+function closeDialog(dialog) {{
+  if (typeof dialog.close === "function") dialog.close();
+  else dialog.removeAttribute("open");
+}}
 document.getElementById("roiInput").addEventListener("change", e => setSelected(roiFromSuite2pIndex(e.target.value)));
 document.getElementById("timeStart").addEventListener("change", () => setTimeWindow(document.getElementById("timeStart").value, document.getElementById("timeEnd").value));
 document.getElementById("timeEnd").addEventListener("change", () => setTimeWindow(document.getElementById("timeStart").value, document.getElementById("timeEnd").value));
 document.getElementById("yStart").addEventListener("change", e => {{ y0=Number(e.target.value); draw(); }});
 document.getElementById("yEnd").addEventListener("change", e => {{ y1=Number(e.target.value); draw(); }});
+document.getElementById("showAllVisibleTraces").addEventListener("click", showAllVisibleTraces);
 document.getElementById("reset").addEventListener("click", reset);
 document.getElementById("markGood").addEventListener("click", () => setLabel(1));
 document.getElementById("markBad").addEventListener("click", () => setLabel(0));
@@ -1738,9 +2614,9 @@ document.getElementById("openLabelAllDialog").addEventListener("click", () => {{
   else labelAllDialog.setAttribute("open", "");
 }});
 document.getElementById("closeLabelAllDialog").addEventListener("click", () => {{
-  if (typeof labelAllDialog.close === "function") labelAllDialog.close();
-  else labelAllDialog.removeAttribute("open");
+  closeDialog(labelAllDialog);
 }});
+document.getElementById("closeLabelAllDialogTop").addEventListener("click", () => closeDialog(labelAllDialog));
 document.getElementById("applyLabelAll").addEventListener("click", () => {{
   const label = Number(document.getElementById("labelAllValue").value);
   for (const roi of visibleRois) {{
@@ -1748,12 +2624,16 @@ document.getElementById("applyLabelAll").addEventListener("click", () => {{
   }}
   updateLabelControls();
   updateVisibleRois();
-  if (typeof labelAllDialog.close === "function") labelAllDialog.close();
-  else labelAllDialog.removeAttribute("open");
+  closeDialog(labelAllDialog);
 }});
 document.getElementById("previousRoi").addEventListener("click", () => moveVisible(-1));
 document.getElementById("nextRoi").addEventListener("click", () => moveVisible(1));
-document.getElementById("roiDisplayMode").addEventListener("change", () => updateVisibleRois(true));
+document.querySelectorAll(".roi-display-checkbox").forEach(input => {{
+  input.addEventListener("change", () => {{
+    updateRoiDisplaySummary();
+    updateVisibleRois(true);
+  }});
+}});
 document.getElementById("applySort").addEventListener("click", applySort);
 const sortDialog = document.getElementById("sortDialog");
 document.getElementById("openSortDialog").addEventListener("click", () => {{
@@ -1761,9 +2641,9 @@ document.getElementById("openSortDialog").addEventListener("click", () => {{
   else sortDialog.setAttribute("open", "");
 }});
 document.getElementById("closeSortDialog").addEventListener("click", () => {{
-  if (typeof sortDialog.close === "function") sortDialog.close();
-  else sortDialog.removeAttribute("open");
+  closeDialog(sortDialog);
 }});
+document.getElementById("closeSortDialogTop").addEventListener("click", () => closeDialog(sortDialog));
 const dffFileInput = document.getElementById("dffFile");
 document.getElementById("loadDffFile").addEventListener("click", () => dffFileInput.click());
 dffFileInput.addEventListener("change", () => {{
@@ -1779,6 +2659,19 @@ dffFileInput.addEventListener("change", () => {{
   }};
   reader.readAsArrayBuffer(file);
 }});
+document.getElementById("showInferredSpikes").addEventListener("change", event => {{
+  showInferredSpikes = event.target.checked;
+  draw();
+}});
+document.getElementById("oasisThresholdSlider").addEventListener("input", event => {{
+  setOasisThreshold(Number(event.target.value));
+}});
+document.getElementById("oasisThreshold").addEventListener("input", event => {{
+  setOasisThreshold(Number(event.target.value));
+}});
+document.getElementById("resetOasisThreshold").addEventListener("click", () => {{
+  setOasisThreshold(selectedOasisDefaultThreshold());
+}});
 function csvEscape(value) {{
   const text = String(value ?? "");
   return /[",\\n]/.test(text) ? `"${{text.replaceAll('"', '""')}}"` : text;
@@ -1790,6 +2683,10 @@ function metricSpreadsheetRows() {{
     const snr9550 = dffMetric(roi, "snr_95_50", "event_snr");
     const postdocSnr = dffMetric(roi, "andrea_postdoc_snr");
     const autocorrEfold = dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds");
+    const oasisEventSnr = dffMetricValue(dffMetrics, "oasis_event_snr");
+    const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
+    const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
+    const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
     const reasons = morphologyReasons(metrics, dffMetrics, filter);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
@@ -1802,28 +2699,39 @@ function metricSpreadsheetRows() {{
       aspect: metrics.aspect,
       compact: metrics.compact,
       connectivity: metrics.connect,
+      roiArea: dffMetrics.roi_area,
       snr9550,
       postdocSnr,
       autocorrEfold,
+      oasisEventSnr,
+      oasisRiseTau,
+      oasisDecayTau,
+      oasisResidualKs,
       fail: {{
         footprint: !(passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax)),
         skew: !(passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax)),
         aspect: !(passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax)),
         compact: !(passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax)),
         connectivity: !passesUpper(metrics.connect, filter.maxConnect),
-        snr9550: !(passesLower(snr9550, filter.eventSnrMin) && passesUpper(snr9550, filter.eventSnrMax)),
-        postdocSnr: !(passesLower(postdocSnr, filter.andreaPostdocSnrMin) && passesUpper(postdocSnr, filter.andreaPostdocSnrMax)),
+        roiArea: !(passesLower(dffMetrics.roi_area, filter.roiAreaMin) && passesUpper(dffMetrics.roi_area, filter.roiAreaMax)),
+        snr9550: !passesLower(snr9550, filter.eventSnrMin),
+        postdocSnr: !passesLower(postdocSnr, filter.andreaPostdocSnrMin),
         autocorrEfold: !(passesLower(autocorrEfold, filter.autocorrEfoldMin) && passesUpper(autocorrEfold, filter.autocorrEfoldMax)),
+        oasisEventSnr: !passesLower(oasisEventSnr, filter.oasisEventSnrMin),
+        oasisRiseTau: !(passesLower(oasisRiseTau, filter.oasisRiseTauMin) && passesUpper(oasisRiseTau, filter.oasisRiseTauMax)),
+        oasisDecayTau: !(passesLower(oasisDecayTau, filter.oasisDecayTauMin) && passesUpper(oasisDecayTau, filter.oasisDecayTauMax)),
+        oasisResidualKs: !passesUpper(oasisResidualKs, filter.oasisResidualKsMax),
       }},
       reason: reasons.join("; ") || "included",
     }};
   }});
 }}
 function metricSpreadsheetCsv(rowsData = metricSpreadsheetRows()) {{
-  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","reason"];
+  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","oasis_event_snr","oasis_rise_tau_seconds","oasis_decay_tau_seconds","oasis_event_residual_ks","reason"];
   const csvRows = rowsData.map(row => [
     row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
-    row.connectivity, fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.autocorrEfold), row.reason,
+    row.connectivity, fmt(row.roiArea), fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.autocorrEfold),
+    fmt(row.oasisEventSnr), fmt(row.oasisRiseTau), fmt(row.oasisDecayTau), fmt(row.oasisResidualKs), row.reason,
   ].map(csvEscape).join(","));
   return [csvHeader.join(","), ...csvRows].join("\\n") + "\\n";
 }}
@@ -1844,14 +2752,19 @@ function openMetricSpreadsheet() {{
     td(fmt(row.aspect), row.fail.aspect) +
     td(fmt(row.compact), row.fail.compact) +
     td(row.connectivity, row.fail.connectivity) +
+    td(fmt(row.roiArea), row.fail.roiArea) +
     td(fmt(row.snr9550), row.fail.snr9550) +
     td(fmt(row.postdocSnr), row.fail.postdocSnr) +
     td(fmt(row.autocorrEfold), row.fail.autocorrEfold) +
+    td(fmt(row.oasisEventSnr), row.fail.oasisEventSnr) +
+    td(fmt(row.oasisRiseTau), row.fail.oasisRiseTau) +
+    td(fmt(row.oasisDecayTau), row.fail.oasisDecayTau) +
+    td(fmt(row.oasisResidualKs), row.fail.oasisResidualKs) +
     td(row.reason)
   }}</tr>`).join("");
   const csv = metricSpreadsheetCsv(rowsData);
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>Target structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>Suite2p index</th><th>Label</th><th>Footprint</th><th>Skew</th><th>Aspect ratio</th><th>Compact</th><th>Connectivity</th><th>SNR: 95/50 percentile</th><th>SNR: CaImAn (large-transient score)</th><th>Autocorrelation e-fold time (s)</th><th>Reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>label</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>andrea_postdoc_snr</th><th>autocorr_efold_time_seconds</th><th>oasis_event_snr</th><th>oasis_rise_tau_seconds</th><th>oasis_decay_tau_seconds</th><th>oasis_event_residual_ks</th><th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }}
 function saveMetricSpreadsheet() {{
@@ -1868,9 +2781,9 @@ function saveCurrentFilters() {{
   downloadBlob(new Blob([JSON.stringify(payload, null, 2) + "\\n"], {{type: "application/json"}}), `${{data.session}}_roi_metric_filters.json`);
 }}
 document.getElementById("openExclusions").addEventListener("click", openMetricSpreadsheet);
-function npyBlob(values, rows, cols) {{
+function npyBlob(values, rows) {{
   const encoder = new TextEncoder();
-  let header = `{{'descr': '<f8', 'fortran_order': False, 'shape': (${{rows}}, ${{cols}}), }}`;
+  let header = `{{'descr': '<f8', 'fortran_order': False, 'shape': (${{rows}},), }}`;
   const preambleLength = 10;
   const padding = (16 - ((preambleLength + header.length + 1) % 16)) % 16;
   header += " ".repeat(padding) + "\\n";
@@ -1888,22 +2801,20 @@ function downloadBlob(blob, filename) {{
   link.href = URL.createObjectURL(blob); link.download = filename; link.click();
   setTimeout(() => URL.revokeObjectURL(link.href), 1000);
 }}
-function reviewedMaskArray() {{
+function reviewedLabelArray() {{
   const rows = data.suite2pRoiCount;
-  const values = new Float64Array(rows * 3);
+  const values = new Float64Array(rows);
+  values.fill(NaN);
   for (let roi = 0; roi < data.nRois; roi++) {{
     const suite2pRoi = data.suite2pIndices[roi];
     const label = labels[roi];
-    const morphPass = filterPass[roi] === 1;
-    values[suite2pRoi * 3] = label === 1 ? 1 : 0;
-    values[suite2pRoi * 3 + 1] = morphPass ? (label === 1 ? 1 : 0) : NaN;
-    values[suite2pRoi * 3 + 2] = morphPass ? (label === 1 || label === 2 ? 1 : 0) : NaN;
+    values[suite2pRoi] = label === -1 ? NaN : label;
   }}
   return values;
 }}
 async function saveManualLabels() {{
-  const reviewedMasks = reviewedMaskArray();
-  const blob = npyBlob(reviewedMasks, data.suite2pRoiCount, 3);
+  const reviewedLabels = reviewedLabelArray();
+  const blob = npyBlob(reviewedLabels, data.suite2pRoiCount);
   if ("showSaveFilePicker" in window) {{
     try {{
       const handle = await window.showSaveFilePicker({{
@@ -1958,30 +2869,10 @@ async function saveHtmlWithLabels() {{
   }}
   downloadBlob(blob, filename);
 }}
-function exportPresetJson() {{
-  const select = document.getElementById("filterPreset");
-  const [kind, selectedName] = select.value.split(":", 2);
-  const name = currentPresetName() || selectedName || data.targetStructure || "morphology_preset";
-  let filter;
-  try {{
-    filter = normalizeFilter(readFilter());
-  }} catch (error) {{
-    alert(`Could not export preset: ${{error.message}}`);
-    return;
-  }}
-  const payload = {{
-    format: "utils_2p_morphology_preset_v1",
-    name,
-    source_session: data.session,
-    target_structure: data.targetStructure,
-    filter,
-  }};
-  downloadBlob(new Blob([JSON.stringify(payload, null, 2) + "\\n"], {{type: "application/json"}}), `${{name}}_morphology_preset.json`);
-}}
 function importPresetObject(payload) {{
   const name = String(payload.name || payload.preset_name || "").trim();
   const filter = payload.filter || payload.morphology_filter || payload;
-  if (!name) throw new Error("Preset JSON must include a name.");
+  if (!name) throw new Error("QC thresholds JSON must include a name.");
   customPresets[name] = normalizeFilter(filter);
   populatePresetSelect(name);
   document.getElementById("filterPreset").value = `custom:${{name}}`;
@@ -2000,9 +2891,9 @@ document.getElementById("openSaveLabelsDialog").addEventListener("click", () => 
   else saveLabelsDialog.setAttribute("open", "");
 }});
 document.getElementById("closeSaveLabelsDialog").addEventListener("click", () => {{
-  if (typeof saveLabelsDialog.close === "function") saveLabelsDialog.close();
-  else saveLabelsDialog.removeAttribute("open");
+  closeDialog(saveLabelsDialog);
 }});
+document.getElementById("closeSaveLabelsDialogTop").addEventListener("click", () => closeDialog(saveLabelsDialog));
 saveLabelsInfo.addEventListener("click", () => {{
   const shouldShow = saveLabelsHelp.hasAttribute("hidden");
   saveLabelsHelp.toggleAttribute("hidden", !shouldShow);
@@ -2017,7 +2908,6 @@ document.querySelectorAll("[data-info-target]").forEach(button => {{
     button.setAttribute("aria-expanded", String(shouldShow));
   }});
 }});
-document.getElementById("exportPreset").addEventListener("click", exportPresetJson);
 const presetFileInput = document.getElementById("presetFile");
 document.getElementById("importPreset").addEventListener("click", () => presetFileInput.click());
 presetFileInput.addEventListener("change", () => {{
@@ -2028,7 +2918,7 @@ presetFileInput.addEventListener("change", () => {{
     try {{
       importPresetObject(JSON.parse(reader.result));
     }} catch (error) {{
-      alert(`Could not import preset: ${{error.message}}`);
+      alert(`Could not import QC thresholds: ${{error.message}}`);
     }}
   }};
   reader.readAsText(file);
@@ -2039,11 +2929,12 @@ const morphologyDialog = document.getElementById("morphologyDialog");
 document.getElementById("openMorphologyDialog").addEventListener("click", () => {{
   if (typeof morphologyDialog.showModal === "function") morphologyDialog.showModal();
   else morphologyDialog.setAttribute("open", "");
+  requestAnimationFrame(drawMetricHistograms);
 }});
 document.getElementById("closeMorphologyDialog").addEventListener("click", () => {{
-  if (typeof morphologyDialog.close === "function") morphologyDialog.close();
-  else morphologyDialog.removeAttribute("open");
+  closeDialog(morphologyDialog);
 }});
+document.getElementById("closeMorphologyDialogTop").addEventListener("click", () => closeDialog(morphologyDialog));
 document.getElementById("filterPreset").addEventListener("change", loadSelectedPreset);
 document.getElementById("savePreset").addEventListener("click", () => {{
   saveCurrentPresetToPage();
@@ -2051,9 +2942,27 @@ document.getElementById("savePreset").addEventListener("click", () => {{
 document.getElementById("savePresetHtml").addEventListener("click", () => {{
   if (saveCurrentPresetToPage()) saveHtmlWithLabels();
 }});
-["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","autocorrEfoldMin","autocorrEfoldMax"].forEach(id => {{
+document.getElementById("toggleSideMenu").addEventListener("click", () => {{
+  const review = document.querySelector(".review-main");
+  const collapsed = !review.classList.contains("menu-collapsed");
+  review.classList.toggle("menu-collapsed", collapsed);
+  const button = document.getElementById("toggleSideMenu");
+  button.textContent = collapsed ? "Show menu" : "Hide menu";
+  button.setAttribute("aria-expanded", String(!collapsed));
+  requestAnimationFrame(draw);
+}});
+["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax"].forEach(id => {{
   document.getElementById(id).addEventListener("change", evaluateFilter);
   document.getElementById(id).addEventListener("input", drawMetricHistograms);
+}});
+document.querySelectorAll(".metric-histogram-panel").forEach(panel => {{
+  panel.addEventListener("toggle", () => {{
+    if (!panel.open) return;
+    requestAnimationFrame(() => {{
+      const canvas = panel.querySelector(".metric-histogram");
+      if (canvas) drawMetricHistogram(canvas);
+    }});
+  }});
 }});
 window.addEventListener("keydown", event => {{
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
@@ -2084,7 +2993,7 @@ window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=d
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
 window.addEventListener("resize", () => {{ syncControlColumnHeight(); draw(); }});
-makeOverlays(); syncTimeInputs(); updateMetricDefaults(); populatePresetSelect(data.targetStructure); resetFilter();
+makeOverlays(); syncTimeInputs(); updateMetricDefaults(); updateRoiDisplaySummary(); populatePresetSelect("all_rois"); resetFilter();
 if (data.initialMorphologyFilter) writeFilter(data.initialMorphologyFilter);
 applySort(); syncControlColumnHeight(); setSelected(visibleRois[0]);
 requestAnimationFrame(() => {{ syncControlColumnHeight(); draw(); }});
@@ -2157,6 +3066,22 @@ def create_preprocessing_summary(
         dff_sidecar_path,
     )
     dff_metrics = _add_roi_area_metrics(dff_metrics, stat)
+    oasis_spikes, oasis_attrs = _load_oasis_spikes(session_dir, n_rois, n_frames)
+    oasis_storage_mode = "none"
+    oasis_sidecar_name = None
+    if oasis_spikes is not None:
+        dff_metrics = _add_oasis_residual_metrics(
+            dff_metrics,
+            dff,
+            dff_sidecar_path,
+            oasis_spikes,
+            float(oasis_attrs.get("event_threshold", 0.05)),
+            frame_rate,
+        )
+        oasis_storage_mode = "embedded" if estimated_embedded_dff_bytes <= EMBEDDED_DFF_BYTE_LIMIT else "file"
+        if oasis_storage_mode == "file":
+            oasis_sidecar_name = f"{session_dir.name}_oasis_spikes.npy"
+            np.save(out_dir / oasis_sidecar_name, oasis_spikes)
     mask = _stat_to_mask(stat, np.asarray(mean_green).shape[:2])
     iscell_path = suite2p_dir / "iscell.npy"
     iscell = load_iscell(iscell_path, n_rois)
@@ -2210,6 +3135,12 @@ def create_preprocessing_summary(
         dff_storage_mode=dff_storage_mode,
         dff_sidecar_name=dff_sidecar_name,
         estimated_embedded_dff_bytes=estimated_embedded_dff_bytes,
+        xoff=xoff,
+        yoff=yoff,
+        oasis_spikes=oasis_spikes,
+        oasis_attrs=oasis_attrs,
+        oasis_storage_mode=oasis_storage_mode,
+        oasis_sidecar_name=oasis_sidecar_name,
     )
     return pdf_path, html_path
 
