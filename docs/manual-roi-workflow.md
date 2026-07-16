@@ -168,9 +168,7 @@ This writes:
     Suite2p binaries are raw `int16` movies and are often large. Approximate
     size is:
 
-    ```text
-    frames * Ly * Lx * 2 bytes * number_of_saved_channels
-    ```
+        frames * Ly * Lx * 2 bytes * number_of_saved_channels
 
     For a 512 x 512 movie, one channel is about 0.5 MB per frame. A 20,000
     frame recording is about 9.8 GB for one channel or 19.5 GB for two channels.
@@ -185,14 +183,12 @@ This writes:
     from filling with large duplicate binaries while still letting Suite2p find
     `data.bin` next to the `stat.npy` you are editing.
 
-    ```bash
-    ln -s /storage/scratch1/.../<session>/suite2p/plane0/data.bin \
-      /path/to/gui/session/suite2p/plane0/data.bin
+        ln -s /storage/scratch1/.../<session>/suite2p/plane0/data.bin \
+          /path/to/gui/session/suite2p/plane0/data.bin
 
-    # Two-channel sessions also need the second channel binary.
-    ln -s /storage/scratch1/.../<session>/suite2p/plane0/data_chan2.bin \
-      /path/to/gui/session/suite2p/plane0/data_chan2.bin
-    ```
+        # Two-channel sessions also need the second channel binary.
+        ln -s /storage/scratch1/.../<session>/suite2p/plane0/data_chan2.bin \
+          /path/to/gui/session/suite2p/plane0/data_chan2.bin
 
 The current prebuild helper is intended for single-plane TIFF inputs. It
 supports both one-channel recordings and the two-channel Bruker-style OME-TIFF
