@@ -6,6 +6,9 @@ The default chain is:
     prep (CPU) -> suite2p (high-memory CPU) -> qc (CPU) -> label (GPU, two-channel only)
     -> dff (CPU) -> summary (CPU)
 
+Use ``--run-oasis`` to insert the optional OASIS spike-inference stage between
+``dff`` and ``summary``.
+
 Job files and provenance are written beneath the requested output root. Source
 raw sessions are read in place; processed session outputs are not written back
 to raw storage.
@@ -68,7 +71,7 @@ SUITE2P_VERSIONED_PYTHONS = {
     "1.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
 }
 
-STAGE_ORDER = ("prep", "suite2p", "qc", "label", "dff", "summary")
+STAGE_ORDER = ("prep", "suite2p", "qc", "label", "dff", "spikes", "summary")
 
 
 def _repo_root() -> Path:
@@ -136,6 +139,7 @@ class SessionSpec:
     spatial_scale: int | None = None
     bpod_mat_path: Path | str | None = None
     run_label: bool | None = None
+    run_oasis: bool | None = None
     stages: Sequence[str] | str | None = None
 
     def normalized(self) -> "SessionSpec":
@@ -162,7 +166,8 @@ class SessionSpec:
         if not name:
             raise ValueError(f"Cannot derive an output session name from {raw_path}")
         run_label = self.run_label if self.run_label is not None else nchannels == 2
-        stages = _normalize_stages(self.stages, run_label=run_label)
+        run_oasis = bool(self.run_oasis) if self.run_oasis is not None else False
+        stages = _normalize_stages(self.stages, run_label=run_label, run_oasis=run_oasis)
         return SessionSpec(
             raw_path=raw_path,
             name=name,
@@ -173,6 +178,7 @@ class SessionSpec:
             spatial_scale=self.spatial_scale,
             bpod_mat_path=bpod,
             run_label=run_label,
+            run_oasis=run_oasis,
             stages=stages,
         )
 
@@ -218,6 +224,11 @@ class PipelineConfig:
     suite2p_binary_batch_size: int | None = 5000
     suite2p_registration_batch_size: int | None = 500
     suite2p_extraction_batch_size: int | None = 500
+    suite2p_detection_nbins: int | None = None
+    suite2p_diameter: float | None = None
+    keep_suite2p_bin: bool = False
+    oasis_tau: float | None = None
+    oasis_event_threshold: float = 0.05
 
     def normalized(self, output_root: Path) -> "PipelineConfig":
         repo = Path(self.repo_root).expanduser().resolve() if self.repo_root else _repo_root()
@@ -294,6 +305,9 @@ class PipelineConfig:
             suite2p_binary_batch_size=suite2p_binary_batch_size,
             suite2p_registration_batch_size=suite2p_registration_batch_size,
             suite2p_extraction_batch_size=suite2p_extraction_batch_size,
+            suite2p_detection_nbins=self.suite2p_detection_nbins,
+            suite2p_diameter=self.suite2p_diameter,
+            keep_suite2p_bin=self.keep_suite2p_bin,
         )
 
 
@@ -324,9 +338,15 @@ def _safe_id(name: str, index: int) -> str:
     return f"s{index + 1}_{re.sub(r'[^A-Za-z0-9_]+', '_', name).strip('_') or 'session'}"
 
 
-def _normalize_stages(stages: Sequence[str] | str | None, *, run_label: bool) -> tuple[str, ...]:
+def _normalize_stages(
+    stages: Sequence[str] | str | None, *, run_label: bool, run_oasis: bool = False
+) -> tuple[str, ...]:
     if stages is None:
-        requested = STAGE_ORDER if run_label else tuple(stage for stage in STAGE_ORDER if stage != "label")
+        requested = tuple(
+            stage
+            for stage in STAGE_ORDER
+            if (run_label or stage != "label") and (run_oasis or stage != "spikes")
+        )
     elif isinstance(stages, str):
         requested = tuple(part.strip() for part in stages.split(",") if part.strip())
     else:
@@ -582,9 +602,7 @@ def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict
             "save_path0": session["output_path"],
             "nchannels": session["nchannels"],
             "functional_chan": session["functional_chan"],
-            "align_by_chan": (
-                session["functional_chan"] if session["nchannels"] == 1 else 3 - session["functional_chan"]
-            ),
+            "align_by_chan": 3 - session["functional_chan"],
         }
     )
     if session.get("denoise") is not None:
@@ -603,10 +621,19 @@ def _processing_ops(data: dict[str, Any], session: dict[str, Any]) -> tuple[dict
     extraction_batch_size = data["pipeline"].get("suite2p_extraction_batch_size")
     if extraction_batch_size is not None:
         ops["extraction_batch_size"] = int(extraction_batch_size)
+    detection_nbins = data["pipeline"].get("suite2p_detection_nbins")
+    if detection_nbins is not None:
+        ops["suite2p_detection_nbins"] = int(detection_nbins)
+    diameter = data["pipeline"].get("suite2p_diameter")
+    if diameter is not None:
+        ops["diameter"] = float(diameter)
     for key, value in session.get("suite2p_ops_overrides", {}).items():
         if value is not None:
             ops[key] = value
     ops.setdefault("delete_bin", True)
+    if data["pipeline"].get("keep_suite2p_bin"):
+        ops["delete_bin"] = False
+        ops["move_bin"] = False
     torch_device = os.environ.get("TWO_P_SUITE2P_TORCH_DEVICE")
     if torch_device:
         ops["torch_device"] = torch_device
@@ -738,8 +765,14 @@ def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[di
     )
     settings["detection"].update(
         {
+            "algorithm": "sparsery" if bool(ops.get("sparse_mode", True)) else "sourcery",
             "denoise": bool(ops.get("denoise", settings["detection"]["denoise"])),
-            "block_size": tuple(ops.get("block_size", settings["detection"]["block_size"])),
+            "block_size": (
+                tuple(max(1, int(value) // 2) for value in ops.get("block_size", settings["detection"]["block_size"]))
+                if bool(ops.get("denoise", settings["detection"]["denoise"]))
+                else tuple(ops.get("block_size", settings["detection"]["block_size"]))
+            ),
+            "nbins": int(ops.get("suite2p_detection_nbins", settings["detection"]["nbins"])),
             "highpass_time": int(ops.get("high_pass", settings["detection"]["highpass_time"])),
             "threshold_scaling": float(
                 ops.get("threshold_scaling", settings["detection"]["threshold_scaling"])
@@ -753,6 +786,12 @@ def _suite2p_v1_settings_db(ops: dict[str, Any], db: dict[str, Any]) -> tuple[di
         {
             "highpass_neuropil": int(
                 ops.get("spatial_hp_detect", settings["detection"]["sparsery_settings"]["highpass_neuropil"])
+            ),
+            "max_ROIs": int(
+                ops.get(
+                    "suite2p_max_rois",
+                    250 * int(ops.get("max_iterations", settings["detection"]["sourcery_settings"]["max_iterations"])),
+                )
             ),
             "spatial_scale": int(ops.get("spatial_scale", settings["detection"]["sparsery_settings"]["spatial_scale"])),
         }
@@ -920,8 +959,12 @@ def _run_prep(data: dict[str, Any], session: dict[str, Any]) -> None:
     provenance.write_text(json.dumps(session, indent=2) + "\n", encoding="ascii")
 
 
-def _remove_empty_suite2p_binaries(output_path: Path, fast_disk: Path) -> None:
+def _remove_empty_suite2p_binaries(output_path: Path, fast_disk: Path, *, keep_bin: bool = False) -> None:
     """Remove failed-run binary placeholders before Suite2p sees them."""
+
+    if keep_bin:
+        print("Keeping Suite2p binaries; skipping stale-binary cleanup.")
+        return
 
     candidates = []
     for root in (output_path, fast_disk):
@@ -939,7 +982,11 @@ def _run_suite2p(data: dict[str, Any], session: dict[str, Any]) -> None:
     ops, db = _processing_ops(data, session)
     if ops.get("fast_disk"):
         Path(ops["fast_disk"]).mkdir(parents=True, exist_ok=True)
-    _remove_empty_suite2p_binaries(Path(session["output_path"]), Path(ops["fast_disk"]))
+    _remove_empty_suite2p_binaries(
+        Path(session["output_path"]),
+        Path(ops["fast_disk"]),
+        keep_bin=not bool(ops.get("delete_bin", True)),
+    )
     if "ops" in inspect.signature(run_s2p).parameters:
         run_s2p(ops=ops, db=db)
     else:
@@ -1024,6 +1071,18 @@ def _run_dff(data: dict[str, Any], session: dict[str, Any]) -> None:
     dff_traces.run(ops, normalize=False, correct_pmt=False)
 
 
+def _run_spikes(data: dict[str, Any], session: dict[str, Any]) -> None:
+    from utils_2p import oasis_spikes
+
+    ops = _read_ops(session)
+    pipeline = data["pipeline"]
+    oasis_spikes.run(
+        ops,
+        tau=pipeline.get("oasis_tau"),
+        event_threshold=float(pipeline.get("oasis_event_threshold", 0.05)),
+    )
+
+
 def _run_summary(data: dict[str, Any], session: dict[str, Any]) -> None:
     from utils_2p import preprocessing_summary as summary
 
@@ -1050,6 +1109,7 @@ def run_stage(manifest: Path | str, index: int, stage: str) -> None:
         "qc": _run_qc,
         "label": _run_label,
         "dff": _run_dff,
+        "spikes": _run_spikes,
         "summary": _run_summary,
     }
     handlers[stage](data, session)
@@ -1072,6 +1132,7 @@ def _specs_from_args(args: argparse.Namespace) -> list[SessionSpec]:
             denoise=args.denoise,
             spatial_scale=args.spatial_scale,
             run_label=False if args.no_label else None,
+            run_oasis=args.run_oasis,
             stages=args.stages,
         )
         for path in raw_paths
@@ -1099,6 +1160,11 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         suite2p_binary_batch_size=args.suite2p_binary_batch_size,
         suite2p_registration_batch_size=args.suite2p_registration_batch_size,
         suite2p_extraction_batch_size=args.suite2p_extraction_batch_size,
+        suite2p_detection_nbins=args.suite2p_detection_nbins,
+        suite2p_diameter=args.suite2p_diameter,
+        keep_suite2p_bin=args.keep_suite2p_bin,
+        oasis_tau=args.oasis_tau,
+        oasis_event_threshold=args.oasis_event_threshold,
     )
 
 
@@ -1194,6 +1260,40 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
         type=int,
         default=None,
         help="Override Suite2p 1.x extraction/deconvolution batch size. Default: 500.",
+    )
+    parser.add_argument(
+        "--suite2p-detection-nbins",
+        type=int,
+        default=None,
+        help="Override Suite2p 1.x detection nbins for the binned movie used by ROI detection.",
+    )
+    parser.add_argument(
+        "--suite2p-diameter",
+        type=float,
+        default=None,
+        help="Override Suite2p ROI diameter in pixels before 1.x settings translation.",
+    )
+    parser.add_argument(
+        "--keep-suite2p-bin",
+        action="store_true",
+        help="Keep Suite2p data.bin after TIFF-to-binary conversion instead of deleting it at the end.",
+    )
+    parser.add_argument(
+        "--run-oasis",
+        action="store_true",
+        help="Add the optional OASIS spike-inference stage between dF/F generation and summaries.",
+    )
+    parser.add_argument(
+        "--oasis-tau",
+        type=float,
+        default=None,
+        help="Override OASIS tau in seconds. Default: use Suite2p ops['tau'], falling back to 0.25.",
+    )
+    parser.add_argument(
+        "--oasis-event-threshold",
+        type=float,
+        default=0.05,
+        help="Threshold on inferred OASIS events used for HTML event/noise visualization. Default: 0.05.",
     )
 
 
