@@ -291,27 +291,33 @@ You must be connected to the Georgia Tech VPN to access the dashboard.
 
 ### Launch the patched Suite2p GUI
 
-On the interactive desktop, launch the patched Suite2p 1.x GUI with:
+On the interactive desktop, launch the patched Suite2p 1.x GUI with the full
+path to the shared patched environment:
+
+```bash
+/storage/project/r-fnajafi3-0/grubin6/.conda/envs/suite2p1_gui/bin/suite2p
+```
+
+Use this specific Suite2p 1.x installation for manual ROI work instead of a
+generic Suite2p 1.x install. The manual labelling flow has local patches for GUI
+extraction, ROI statistics, and manual mask display behavior that are not
+present in the unpatched PyPI install.
+
+Users can optionally create their own shorter symlink in their home directory:
+
+```bash
+ln -s /storage/project/r-fnajafi3-0/grubin6/.conda/envs/suite2p1_gui ~/suite2p1_gui
+```
+
+Then launch through the symlink:
 
 ```bash
 ~/suite2p1_gui/bin/suite2p
 ```
 
-Use this specific Suite2p 1.x installation for manual ROI work. The manual
-labelling flow has local patches for GUI extraction, ROI statistics, and manual
-mask display behavior that are not present in the unpatched PyPI install.
-
-The symlink currently points to:
-
-```text
-/storage/project/r-fnajafi3-0/grubin6/.conda/envs/suite2p1_gui
-```
-
-If the symlink is missing, launch the GUI with the full path:
-
-```bash
-/storage/project/r-fnajafi3-0/grubin6/.conda/envs/suite2p1_gui/bin/suite2p
-```
+The `~` path resolves to the current user's home directory, so each user can
+make their own shortcut without depending on another user's home-directory
+symlink.
 
 You can verify the active executable from the terminal with:
 
@@ -321,8 +327,9 @@ which suite2p
 python -c "import sys; print(sys.executable); import suite2p.gui.drawroi as d; print(d.__file__)"
 ```
 
-Expected GUI environment paths should point to either `~/suite2p1_gui` or the
-real `suite2p1_gui` conda environment above.
+Expected GUI environment paths should point to either the full patched
+environment path above or to a user-created `~/suite2p1_gui` symlink that points
+to that same environment.
 
 ### Add the ROI in the GUI
 
