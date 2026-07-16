@@ -67,6 +67,44 @@ session/
 In this case, create a temporary Suite2p-style directory before opening the
 GUI.
 
+### Create Suite2p GUI compatible directory
+
+Older postprocessing folders may not contain Suite2p's expected GUI filenames.
+Create a temporary workspace from `qc_results/` or `manual_qc_results/` before
+opening the GUI:
+
+```bash
+python - <<'PY'
+from utils_2p.manual_rois import create_manual_roi_workspace
+
+result = create_manual_roi_workspace(
+    qc_dir="/path/to/session/manual_qc_results",
+    suite2p_plane_dir="/path/to/session/suite2p/plane0",
+    workspace_dir="/path/to/session/manual_roi_workspace",
+)
+print(result)
+PY
+```
+
+This creates a workspace with Suite2p's expected names:
+
+```text
+manual_roi_workspace/
+├── stat.npy        # copied from qc_dir/stat.npy
+├── F.npy           # copied from qc_dir/fluo.npy
+├── Fneu.npy        # copied from qc_dir/neuropil.npy
+├── spks.npy
+├── iscell.npy
+├── ops.npy
+├── data.bin        # symlinked by default
+└── manual_roi_workspace_source.txt
+```
+
+If `data.bin` was generated on scratch, make sure the Suite2p plane directory
+passed as `suite2p_plane_dir` has a valid `data.bin` symlink before creating the
+workspace. The helper symlinks that binary into the temporary GUI-compatible
+directory so Suite2p can extract fluorescence from the manual ROI.
+
 ### Required `data.bin`
 
 Suite2p manual ROI extraction needs access to the registered movie binary:
@@ -218,45 +256,6 @@ The direct Python CLI uses the same interface:
   --batch-size 5000 \
   --target-structure dendrite \
   --force
-```
-
-### Create a temporary Suite2p-style workspace
-
-Older postprocessing folders may not contain Suite2p's expected GUI filenames.
-Create a temporary workspace from `qc_results/` or `manual_qc_results/` before
-opening the GUI:
-
-```bash
-python - <<'PY'
-from utils_2p.manual_rois import create_manual_roi_workspace
-
-result = create_manual_roi_workspace(
-    qc_dir="/path/to/session/manual_qc_results",
-    suite2p_plane_dir="/path/to/session/suite2p/plane0",
-    workspace_dir="/path/to/session/manual_roi_workspace",
-)
-print(result)
-PY
-```
-
-This creates a workspace with Suite2p's expected names:
-
-```text
-manual_roi_workspace/
-├── stat.npy        # copied from qc_dir/stat.npy
-├── F.npy           # copied from qc_dir/fluo.npy
-├── Fneu.npy        # copied from qc_dir/neuropil.npy
-├── spks.npy
-├── iscell.npy
-├── ops.npy
-├── data.bin        # symlinked by default
-└── manual_roi_workspace_source.txt
-```
-
-Open the workspace `stat.npy` in the Suite2p GUI:
-
-```text
-/path/to/session/manual_roi_workspace/stat.npy
 ```
 
 ## Step 2: Add ROIs in the interactive GUI
