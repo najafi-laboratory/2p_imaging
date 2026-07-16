@@ -121,14 +121,48 @@ This writes:
 
 ```text
 /path/to/output_root/<session_name>/suite2p/plane0/data.bin
+/path/to/output_root/<session_name>/suite2p/plane0/data_chan2.bin  # two-channel only
 /path/to/output_root/<session_name>/suite2p/plane0/db.npy
 /path/to/output_root/<session_name>/suite2p/plane0/settings.npy
 ```
 
-The current prebuild helper is intended for single-plane, single-channel TIFF
-inputs. For multi-channel or multi-plane sessions, use the normal Suite2p
-pipeline path or verify the generated binary carefully before manual ROI
-extraction.
+!!! warning "Binary size"
+    Suite2p binaries are raw `int16` movies and are often large. Approximate
+    size is:
+
+    ```text
+    frames * Ly * Lx * 2 bytes * number_of_saved_channels
+    ```
+
+    For a 512 x 512 movie, one channel is about 0.5 MB per frame. A 20,000
+    frame recording is about 9.8 GB for one channel or 19.5 GB for two channels.
+    At 30 Hz, one hour is 108,000 frames, about 53 GB for one channel or 106 GB
+    for two channels. Build these files on PACE scratch when possible, and only
+    symlink or copy them into project/shared storage when they are needed for
+    Suite2p GUI work.
+
+    The preferred workflow is to write the `.bin` files to scratch, which has
+    much larger storage limits and faster read/write I/O, then symlink them into
+    the Suite2p folder you open in the GUI. This keeps project/CEDAR storage
+    from filling with large duplicate binaries while still letting Suite2p find
+    `data.bin` next to the `stat.npy` you are editing.
+
+    ```bash
+    ln -s /storage/scratch1/.../<session>/suite2p/plane0/data.bin \
+      /path/to/gui/session/suite2p/plane0/data.bin
+
+    # Two-channel sessions also need the second channel binary.
+    ln -s /storage/scratch1/.../<session>/suite2p/plane0/data_chan2.bin \
+      /path/to/gui/session/suite2p/plane0/data_chan2.bin
+    ```
+
+The current prebuild helper is intended for single-plane TIFF inputs. It
+supports both one-channel recordings and the two-channel Bruker-style OME-TIFF
+layout used in this repo, where files are paired by `Ch1` and `Ch2` in the
+filename. For two-channel sessions the helper writes `data.bin` for the
+functional channel and `data_chan2.bin` for the other channel, following
+Suite2p's own convention. Multi-plane sessions still need the normal Suite2p
+pipeline path or separate validation before manual ROI extraction.
 
 The same conversion is available from Python:
 
@@ -155,9 +189,22 @@ prebuild(
 The helper infers `nchannels`, `functional_chan`, `denoise`, `spatial_scale`,
 `input_format`, `fs`, and `tau` from an old `ops.npy` when no newer metadata is
 found. Set `target_structure` to the same class of Suite2p config that was used
-for the session, usually `neuron` or `dendrite`. The example above is for a
-single-channel recording because the current parallel prebuild helper only
-supports `nchannels=1`.
+for the session, usually `neuron` or `dendrite`.
+
+For one-channel sessions, the output contains only `data.bin`. For two-channel
+sessions, `nchannels` and `functional_chan` are read from the existing pipeline
+metadata or `suite2p/plane0/ops.npy`; there is no separate command-line flag for
+channel count. If `functional_chan=2`, `Ch2` is written to `data.bin` and the
+matching `Ch1` files are written to `data_chan2.bin`. If `functional_chan=1`,
+the opposite mapping is used. Keep both binary files together when opening the
+session in Suite2p, especially if registration or display depends on the
+anatomical channel.
+
+Two-channel conversion expects matched channel files in the same raw TIFF
+folder. For Bruker OME-TIFFs, this means a matching `Ch1` and `Ch2` file for
+each file index. Missing or mismatched channel files should be fixed before
+conversion rather than ignored, because otherwise Suite2p can load the wrong
+channel or frame count.
 
 The direct Python CLI uses the same interface:
 

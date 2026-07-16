@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import concurrent.futures
 import json
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -192,23 +193,42 @@ def _create_manifest_from_old_suite2p(
     return destination
 
 
-def _read_file_to_chunk(args: tuple[str, str, int]) -> dict[str, Any]:
-    source, chunk_path, batch_size = args
+def _read_file_to_chunk(args: tuple[str, str, str | None, int, int, int]) -> dict[str, Any]:
+    source, chunk_path, chunk_chan2_path, batch_size, nchannels, functional_chan = args
     from suite2p.io.tiff import open_tiff, read_tiff
 
     source_path = Path(source)
     chunk = Path(chunk_path)
     chunk.parent.mkdir(parents=True, exist_ok=True)
+    chunk_chan2 = Path(chunk_chan2_path) if chunk_chan2_path else None
+    if chunk_chan2 is not None:
+        chunk_chan2.parent.mkdir(parents=True, exist_ok=True)
+
+    if nchannels not in (1, 2):
+        raise ValueError(f"Parallel prebuild helper supports nchannels 1 or 2, got {nchannels}")
+    if functional_chan not in (1, 2):
+        raise ValueError(f"functional_chan must be 1 or 2, got {functional_chan}")
+    if nchannels == 1 and functional_chan != 1:
+        functional_chan = 1
+    if functional_chan > nchannels:
+        raise ValueError(f"functional_chan {functional_chan} is not available with nchannels={nchannels}")
+    functional_index = functional_chan - 1
+    alternate_index = 1 - functional_index
+    effective_batch_size = int(nchannels * np.ceil(batch_size / nchannels))
 
     tif, n_pages = open_tiff(str(source_path), True)
     nframes = 0
+    raw_frames = 0
     ly = lx = None
     mean_sum = None
+    mean_chan2_sum = None
     try:
-        with chunk.open("wb") as handle:
+        with chunk.open("wb") as handle, (
+            chunk_chan2.open("wb") if chunk_chan2 is not None else open(os.devnull, "wb")
+        ) as handle_chan2:
             ix = 0
             while True:
-                frames = read_tiff(str(source_path), tif, n_pages, ix, batch_size, True)
+                frames = read_tiff(str(source_path), tif, n_pages, ix, effective_batch_size, True)
                 if frames is None:
                     break
                 if frames.ndim != 3:
@@ -216,11 +236,30 @@ def _read_file_to_chunk(args: tuple[str, str, int]) -> dict[str, Any]:
                 if ly is None:
                     ly, lx = int(frames.shape[1]), int(frames.shape[2])
                     mean_sum = np.zeros((ly, lx), dtype=np.float64)
+                    if nchannels > 1:
+                        mean_chan2_sum = np.zeros((ly, lx), dtype=np.float64)
                 elif frames.shape[1:] != (ly, lx):
                     raise ValueError(f"{source_path} changed frame shape from {(ly, lx)} to {frames.shape[1:]}")
-                handle.write(np.ascontiguousarray(frames, dtype=np.int16).tobytes())
-                mean_sum += frames.sum(axis=0, dtype=np.float64)
-                nframes += int(frames.shape[0])
+
+                if nchannels == 1:
+                    functional_frames = frames
+                    alternate_frames = None
+                else:
+                    functional_frames = frames[functional_index::nchannels]
+                    alternate_frames = frames[alternate_index::nchannels]
+                    if functional_frames.shape[0] != alternate_frames.shape[0]:
+                        raise ValueError(
+                            f"{source_path} has unmatched two-channel frames in batch starting at frame {ix}: "
+                            f"functional={functional_frames.shape[0]}, alternate={alternate_frames.shape[0]}"
+                        )
+
+                handle.write(np.ascontiguousarray(functional_frames, dtype=np.int16).tobytes())
+                mean_sum += functional_frames.sum(axis=0, dtype=np.float64)
+                nframes += int(functional_frames.shape[0])
+                if alternate_frames is not None and mean_chan2_sum is not None:
+                    handle_chan2.write(np.ascontiguousarray(alternate_frames, dtype=np.int16).tobytes())
+                    mean_chan2_sum += alternate_frames.sum(axis=0, dtype=np.float64)
+                raw_frames += int(frames.shape[0])
                 ix += int(frames.shape[0])
     finally:
         close = getattr(tif, "close", None)
@@ -232,10 +271,86 @@ def _read_file_to_chunk(args: tuple[str, str, int]) -> dict[str, Any]:
     return {
         "source": str(source_path),
         "chunk": str(chunk),
+        "chunk_chan2": str(chunk_chan2) if chunk_chan2 is not None else None,
         "nframes": nframes,
+        "raw_frames": raw_frames,
         "Ly": ly,
         "Lx": lx,
         "mean_sum": mean_sum,
+        "mean_chan2_sum": mean_chan2_sum,
+    }
+
+
+def _write_single_channel_tiff_to_chunk(path: Path, chunk: Path, batch_size: int) -> tuple[int, int, int, np.ndarray]:
+    from suite2p.io.tiff import open_tiff, read_tiff
+
+    tif, n_pages = open_tiff(str(path), True)
+    chunk.parent.mkdir(parents=True, exist_ok=True)
+    nframes = 0
+    ly = lx = None
+    mean_sum = None
+    try:
+        with chunk.open("wb") as handle:
+            ix = 0
+            while True:
+                frames = read_tiff(str(path), tif, n_pages, ix, batch_size, True)
+                if frames is None:
+                    break
+                if frames.ndim != 3:
+                    raise ValueError(f"{path} produced frames with shape {frames.shape}; expected 3-D")
+                if ly is None:
+                    ly, lx = int(frames.shape[1]), int(frames.shape[2])
+                    mean_sum = np.zeros((ly, lx), dtype=np.float64)
+                elif frames.shape[1:] != (ly, lx):
+                    raise ValueError(f"{path} changed frame shape from {(ly, lx)} to {frames.shape[1:]}")
+                frames = np.ascontiguousarray(frames, dtype=np.int16)
+                handle.write(frames.tobytes())
+                mean_sum += frames.sum(axis=0, dtype=np.float64)
+                nframes += int(frames.shape[0])
+                ix += int(frames.shape[0])
+    finally:
+        close = getattr(tif, "close", None)
+        if callable(close):
+            close()
+
+    if ly is None or lx is None or mean_sum is None or nframes == 0:
+        raise ValueError(f"No frames read from {path}")
+    return nframes, ly, lx, mean_sum
+
+
+def _read_bruker_pair_to_chunk(args: tuple[str, str | None, str, str | None, int]) -> dict[str, Any]:
+    functional_source, alternate_source, chunk_path, chunk_chan2_path, batch_size = args
+    functional_path = Path(functional_source)
+    alternate_path = Path(alternate_source) if alternate_source else None
+    chunk = Path(chunk_path)
+    chunk.parent.mkdir(parents=True, exist_ok=True)
+    chunk_chan2 = Path(chunk_chan2_path) if chunk_chan2_path else None
+    if chunk_chan2 is not None:
+        chunk_chan2.parent.mkdir(parents=True, exist_ok=True)
+
+    nframes, ly, lx, mean_sum = _write_single_channel_tiff_to_chunk(functional_path, chunk, batch_size)
+    mean_chan2_sum = None
+
+    if alternate_path is not None and chunk_chan2 is not None:
+        alt_nframes, alt_ly, alt_lx, mean_chan2_sum = _write_single_channel_tiff_to_chunk(
+            alternate_path, chunk_chan2, batch_size
+        )
+        if (alt_nframes, alt_ly, alt_lx) != (nframes, ly, lx):
+            raise ValueError(
+                f"Channel pair shape mismatch: {functional_path} has {(nframes, ly, lx)}, "
+                f"{alternate_path} has {(alt_nframes, alt_ly, alt_lx)}"
+            )
+
+    return {
+        "source": str(functional_path),
+        "chunk": str(chunk),
+        "chunk_chan2": str(chunk_chan2) if chunk_chan2 is not None else None,
+        "nframes": nframes,
+        "raw_frames": nframes,
+        "Ly": ly,
+        "Lx": lx,
+        "mean_sum": mean_sum,
+        "mean_chan2_sum": mean_chan2_sum,
     }
 
 
@@ -324,6 +439,24 @@ def _staged_tiffs(raw_path: Path) -> list[Path]:
     return files
 
 
+def _bruker_channel_files(files: list[Path], functional_chan: int) -> tuple[list[Path], list[Path]]:
+    ch1 = sorted(path for path in files if "Ch1" in path.name)
+    ch2 = sorted(path for path in files if "Ch2" in path.name)
+    if not ch1 and not ch2:
+        return [], []
+    if functional_chan == 1:
+        functional, alternate = ch1, ch2
+    else:
+        functional, alternate = ch2, ch1
+    if not functional:
+        raise FileNotFoundError(f"No Bruker Ch{functional_chan} TIFF files found")
+    if alternate and len(functional) != len(alternate):
+        raise ValueError(
+            f"Bruker channel file count mismatch: functional={len(functional)}, alternate={len(alternate)}"
+        )
+    return functional, alternate
+
+
 def _prebuild_from_manifest(
     manifest: Path,
     index: int,
@@ -336,25 +469,31 @@ def _prebuild_from_manifest(
     session = dict(session)
     session["raw_path"] = str(raw_path)
 
-    if int(session["nchannels"]) != 1:
-        raise ValueError("Parallel prebuild helper currently supports nchannels=1 only")
-
     ops, db = _processing_ops(data, session)
     settings, new_db = _suite2p_v1_settings_db(ops, db)
     if int(new_db.get("nplanes", 1)) != 1:
         raise ValueError("Parallel prebuild helper currently supports nplanes=1 only")
-    if int(new_db.get("nchannels", 1)) != 1:
-        raise ValueError("Parallel prebuild helper currently supports nchannels=1 only")
+    nchannels = int(new_db.get("nchannels", 1))
+    if nchannels not in (1, 2):
+        raise ValueError(f"Parallel prebuild helper supports nchannels 1 or 2, got {nchannels}")
+    functional_chan = int(new_db.get("functional_chan", 1))
+    if functional_chan > nchannels:
+        raise ValueError(f"functional_chan {functional_chan} is not available with nchannels={nchannels}")
 
     output_path = Path(session["output_path"])
     suite2p_root = output_path / "suite2p"
     plane0 = suite2p_root / "plane0"
     data_bin = plane0 / "data.bin"
+    data_chan2_bin = plane0 / "data_chan2.bin" if nchannels > 1 else None
     if data_bin.exists() and not force:
         raise FileExistsError(f"{data_bin} already exists; pass --force to replace it")
+    if data_chan2_bin is not None and data_chan2_bin.exists() and not force:
+        raise FileExistsError(f"{data_chan2_bin} already exists; pass --force to replace it")
 
     if force:
-        for path in (data_bin, plane0 / "db.npy", plane0 / "settings.npy"):
+        for path in (data_bin, data_chan2_bin, plane0 / "db.npy", plane0 / "settings.npy"):
+            if path is None:
+                continue
             if path.exists():
                 path.unlink()
         chunk_dir = output_path / ".parallel_tiff_chunks"
@@ -362,9 +501,20 @@ def _prebuild_from_manifest(
             shutil.rmtree(chunk_dir)
 
     files = _staged_tiffs(raw_path)
+    bruker_functional_files: list[Path] = []
+    bruker_alternate_files: list[Path] = []
+    if str(new_db.get("input_format", "")).lower() == "bruker" or any(
+        "Ch1" in path.name or "Ch2" in path.name for path in files
+    ):
+        bruker_functional_files, bruker_alternate_files = _bruker_channel_files(files, functional_chan)
+        if nchannels > 1 and not bruker_alternate_files:
+            nchannels = 1
+            new_db["nchannels"] = 1
+            data_chan2_bin = None
     new_db["data_path"] = [str(raw_path)]
     new_db["file_list"] = [str(path) for path in files]
-    new_db["first_files"] = np.asarray([True] + [False] * (len(files) - 1), dtype=bool)
+    frame_count_files = bruker_functional_files if bruker_functional_files else files
+    new_db["first_files"] = np.asarray([True] + [False] * (len(frame_count_files) - 1), dtype=bool)
     new_db["fast_disk"] = str(output_path)
     new_db["save_path0"] = str(output_path)
     new_db["save_folder"] = "suite2p"
@@ -380,21 +530,43 @@ def _prebuild_from_manifest(
     chunk_dir = output_path / ".parallel_tiff_chunks"
     chunk_dir.mkdir(parents=True, exist_ok=True)
 
-    tasks = [
-        (str(path), str(chunk_dir / f"{i:04d}_{path.stem}.bin"), int(batch_size))
-        for i, path in enumerate(files)
-    ]
-    print(f"Prebuilding {data_bin} from {len(files)} TIFFs with {workers} workers")
+    if bruker_functional_files:
+        tasks = [
+            (
+                str(path),
+                str(bruker_alternate_files[i]) if nchannels > 1 and bruker_alternate_files else None,
+                str(chunk_dir / f"{i:04d}_{path.stem}.bin"),
+                str(chunk_dir / f"{i:04d}_{path.stem}_chan2.bin") if nchannels > 1 else None,
+                int(batch_size),
+            )
+            for i, path in enumerate(bruker_functional_files)
+        ]
+        worker = _read_bruker_pair_to_chunk
+    else:
+        tasks = [
+            (
+                str(path),
+                str(chunk_dir / f"{i:04d}_{path.stem}.bin"),
+                str(chunk_dir / f"{i:04d}_{path.stem}_chan2.bin") if nchannels > 1 else None,
+                int(batch_size),
+                nchannels,
+                functional_chan,
+            )
+            for i, path in enumerate(files)
+        ]
+        worker = _read_file_to_chunk
+    channel_note = f" and {data_chan2_bin}" if data_chan2_bin is not None else ""
+    print(f"Prebuilding {data_bin}{channel_note} from {len(files)} TIFFs with {workers} workers")
     results: list[dict[str, Any]] = []
     with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_read_file_to_chunk, task) for task in tasks]
+        futures = [executor.submit(worker, task) for task in tasks]
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
-            print(f"  read {Path(result['source']).name}: {result['nframes']} frames")
+            print(f"  read {Path(result['source']).name}: {result['nframes']} frames per Suite2p channel")
             results.append(result)
 
     by_source = {result["source"]: result for result in results}
-    ordered = [by_source[str(path)] for path in files]
+    ordered = [by_source[str(path)] for path in frame_count_files]
     ly_values = {result["Ly"] for result in ordered}
     lx_values = {result["Lx"] for result in ordered}
     if len(ly_values) != 1 or len(lx_values) != 1:
@@ -402,11 +574,20 @@ def _prebuild_from_manifest(
 
     total_frames = int(sum(result["nframes"] for result in ordered))
     mean_sum = np.zeros((ordered[0]["Ly"], ordered[0]["Lx"]), dtype=np.float64)
+    mean_chan2_sum = np.zeros((ordered[0]["Ly"], ordered[0]["Lx"]), dtype=np.float64) if nchannels > 1 else None
     with data_bin.open("wb") as output:
         for result in ordered:
             mean_sum += result["mean_sum"]
             with Path(result["chunk"]).open("rb") as chunk:
                 shutil.copyfileobj(chunk, output, length=1024 * 1024 * 64)
+    if data_chan2_bin is not None and mean_chan2_sum is not None:
+        with data_chan2_bin.open("wb") as output:
+            for result in ordered:
+                if not result["chunk_chan2"]:
+                    raise RuntimeError(f"Missing channel-2 chunk for {result['source']}")
+                mean_chan2_sum += result["mean_chan2_sum"]
+                with Path(result["chunk_chan2"]).open("rb") as chunk:
+                    shutil.copyfileobj(chunk, output, length=1024 * 1024 * 64)
 
     db0["Ly"] = int(ordered[0]["Ly"])
     db0["Lx"] = int(ordered[0]["Lx"])
@@ -423,6 +604,9 @@ def _prebuild_from_manifest(
     db0["save_path0"] = str(output_path)
     db0["db_path"] = str(plane0 / "db.npy")
     db0["settings_path"] = str(plane0 / "settings.npy")
+    if data_chan2_bin is not None and mean_chan2_sum is not None:
+        db0["reg_file_chan2"] = str(data_chan2_bin)
+        db0["meanImg_chan2"] = mean_chan2_sum / total_frames
 
     np.save(plane0 / "db.npy", db0)
     np.save(plane0 / "settings.npy", settings)
