@@ -258,13 +258,29 @@ The direct Python CLI uses the same interface:
   --force
 ```
 
-## Step 2: Add ROIs in the interactive GUI
+## Step 2: Add Manual ROIs in Suite2p GUI
 
 ### Start the interactive desktop and Suite2p GUI
 
 Open a PACE interactive desktop through the
 [PACE OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard).
 You must be connected to the Georgia Tech VPN to access the dashboard.
+
+The command examples on this page assume access to the `2p_imaging` repository.
+On PACE, the shared working copy used here is:
+
+```text
+/storage/home/hcoda1/3/grubin6/2p_imaging
+```
+
+The helper package lives inside that repo at:
+
+```text
+/storage/home/hcoda1/3/grubin6/2p_imaging/utils_2p
+```
+
+Run helper commands from the repo root, or make sure the repo root is on
+`PYTHONPATH` before importing `utils_2p`.
 
 On the interactive desktop, launch the patched Suite2p 1.x GUI with:
 

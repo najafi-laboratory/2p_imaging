@@ -22,7 +22,10 @@ nav:
       - Processing Quickstart: processing-quickstart.md
       - Preprocessing: preprocessing.md
       - Postprocessing: postprocessing.md
-      - Adding Manual ROIs: manual-roi-workflow.md
+      - Adding Manual ROIs:
+          - Overview: manual-roi-workflow.md
+          - Step 1: Prepare Suite2p-compatible inputs: manual-roi-workflow.md#step-1-prepare-suite2p-compatible-inputs
+          - Step 2: Add Manual ROIs in Suite2p GUI: manual-roi-workflow.md#step-2-add-manual-rois-in-suite2p-gui
       - Interactive ROI Labeling: roi-reviewer-exports.md
   - Experiments and Analyses:
       - Passive: passive.md
