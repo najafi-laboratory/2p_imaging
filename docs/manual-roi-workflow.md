@@ -263,7 +263,29 @@ ROI. The same GUI workflow is used whether you are editing an original
 
 ### Repository and helper access
 
-The command examples on this page assume access to the `2p_imaging` repository.
+The most recent versions of the `utils_2p` helper functions are in the
+`2p_imaging` GitHub repository on the `main` branch:
+
+```text
+https://github.com/najafi-laboratory/2p_imaging
+```
+
+If you do not already have a local checkout, clone the repository first:
+
+```bash
+git clone https://github.com/najafi-laboratory/2p_imaging.git
+cd 2p_imaging
+git checkout main
+```
+
+If you already have a checkout, update it before running helper commands:
+
+```bash
+cd /path/to/2p_imaging
+git checkout main
+git pull --ff-only
+```
+
 On PACE, the shared working copy used here is:
 
 ```text
