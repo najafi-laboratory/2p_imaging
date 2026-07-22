@@ -892,7 +892,7 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .review-main.menu-collapsed {{ grid-template-columns: minmax(0, 1fr) 38px; }}
 .viewer-column {{ display: flex; flex-direction: column; gap: 6px; }}
 .fov-row {{ display: grid; grid-template-columns: 1fr; gap: 6px; align-items: start; }}
-.fov-review {{ display: grid; gap: 6px; align-items: start; justify-items: start; }}
+.fov-review {{ display: grid; grid-template-columns: minmax(260px, 480px) minmax(280px, 1fr); gap: 6px; align-items: start; justify-items: start; }}
 .fov-review > .grid {{ width: min(100%, 480px); }}
 .grid.with-red {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
 .grid.single-channel {{ grid-template-columns: minmax(0, 1fr); }}
@@ -993,6 +993,10 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 #traceCanvas.dragging {{ cursor: grabbing; }}
 #motionDriftCanvas {{ height: 470px; }}
 #motionDistributionCanvas {{ height: 286px; }}
+.oasis-diagnostics {{ width: 100%; max-width: 520px; }}
+.oasis-diagnostics .note {{ margin-bottom: 6px; }}
+#oasisTransientCanvas {{ height: 178px; }}
+#oasisCdfCanvas {{ height: 178px; margin-top: 6px; }}
 .oasis-panel {{ margin-top: 10px; }}
 .oasis-toggle {{ display: flex; gap: 6px; align-items: center; font-weight: 700; }}
 .oasis-toggle input {{ width: auto; }}
@@ -1267,6 +1271,12 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
             <div class="panel"><div class="title">Green functional mean</div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
             {red_panel}
           </div>
+          <div class="panel oasis-diagnostics">
+            <div class="title">Selected ROI OASIS diagnostics</div>
+            <div class="note" id="oasisDiagnosticsSummary">OASIS inferred spikes not loaded for this session.</div>
+            <canvas id="oasisTransientCanvas"></canvas>
+            <canvas id="oasisCdfCanvas"></canvas>
+          </div>
         </div>
       </div>
       <div class="panel">
@@ -1466,6 +1476,7 @@ let showInferredSpikes = true;
 let oasisSpikeMin = 0;
 let oasisSpikeMax = 1;
 let oasisResidualCache = new Map();
+let oasisDiagnosticsCache = new Map();
 function configureOasisThresholdControls() {{
   const sp = spikeTrace(selected);
   if (sp) {{
@@ -1514,6 +1525,7 @@ function setDffFromArrayBuffer(arrayBuffer) {{
   }}
   document.getElementById("traceLoadNote").textContent = `Loaded dF/F file with ${{data.nRois}} ROIs x ${{data.nFrames}} frames.`;
   oasisResidualCache.clear();
+  oasisDiagnosticsCache.clear();
   draw();
 }}
 if (data.dffStorageMode === "embedded" && data.dff) {{
@@ -1528,6 +1540,7 @@ function setOasisFromArrayBuffer(arrayBuffer) {{
   const parsed = parseNpy(arrayBuffer);
   oasisSpikes = parsed.array;
   oasisResidualCache.clear();
+  oasisDiagnosticsCache.clear();
   configureOasisThresholdControls();
   draw();
 }}
@@ -2552,6 +2565,34 @@ function gaussianPdf(x, mean, sd) {{
   const z = (x - mean) / sd;
   return Math.exp(-0.5 * z * z) / (sd * Math.sqrt(2 * Math.PI));
 }}
+function erfApprox(x) {{
+  const sign = x < 0 ? -1 : 1;
+  x = Math.abs(x);
+  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
+  return sign * y;
+}}
+function normalCdf(x, mean, sd) {{
+  if (!Number.isFinite(sd) || sd <= 0) return NaN;
+  return 0.5 * (1 + erfApprox((x - mean) / (sd * Math.SQRT2)));
+}}
+function diagnosticMean(values) {{
+  let sum = 0, n = 0;
+  for (const value of values) if (Number.isFinite(value)) {{ sum += value; n++; }}
+  return n ? sum / n : NaN;
+}}
+function diagnosticSd(values, center) {{
+  let sum = 0, n = 0;
+  for (const value of values) if (Number.isFinite(value)) {{ const d = value - center; sum += d * d; n++; }}
+  return n > 1 ? Math.sqrt(sum / (n - 1)) : NaN;
+}}
+function diagnosticMedian(values) {{
+  const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
+  if (!sorted.length) return NaN;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}}
 function oasisResidualSummary(roi, threshold) {{
   const key = `${{roi}}:${{Number(threshold).toPrecision(8)}}`;
   if (oasisResidualCache.has(key)) return oasisResidualCache.get(key);
@@ -2580,10 +2621,183 @@ function oasisResidualSummary(roi, threshold) {{
   oasisResidualCache.set(key, summary);
   return summary;
 }}
-function drawOasisNoise() {{
-  return;
+function selectedOasisDiagnostics(roi, threshold) {{
+  const key = `${{roi}}:${{Number(threshold).toPrecision(8)}}`;
+  if (oasisDiagnosticsCache.has(key)) return oasisDiagnosticsCache.get(key);
+  const tr = trace(roi), sp = spikeTrace(roi);
+  if (!tr || !sp) return null;
+  const preFrames = Math.max(3, Math.round(data.frameRate * 0.5));
+  const postFrames = Math.max(6, Math.round(data.frameRate * 2.0));
+  const minSeparation = Math.max(1, Math.round(data.frameRate * 0.25));
+  const events = [];
+  let last = -Infinity;
+  for (let f = preFrames; f < data.nFrames - postFrames; f++) {{
+    if (!Number.isFinite(sp[f]) || sp[f] <= threshold) continue;
+    if (f - last < minSeparation) continue;
+    events.push(f);
+    last = f;
+  }}
+  if (!events.length) {{
+    const empty = {{events, waveform: [], times: [], expModel: [], expCdf: [], obsCdf: [], residuals: [], gaussianCdf: [], residualCdf: [], expKs: NaN, gaussianKs: NaN, tau: NaN}};
+    oasisDiagnosticsCache.set(key, empty);
+    return empty;
+  }}
+  const len = preFrames + postFrames + 1;
+  const sums = new Float64Array(len);
+  const counts = new Uint32Array(len);
+  for (const eventFrame of events) {{
+    const baselineValues = [];
+    for (let f = eventFrame - preFrames; f < eventFrame; f++) {{
+      const value = tr[f];
+      if (Number.isFinite(value)) baselineValues.push(value);
+    }}
+    const baseline = Number.isFinite(diagnosticMedian(baselineValues)) ? diagnosticMedian(baselineValues) : 0;
+    for (let offset = -preFrames; offset <= postFrames; offset++) {{
+      const value = tr[eventFrame + offset];
+      if (!Number.isFinite(value)) continue;
+      const index = offset + preFrames;
+      sums[index] += value - baseline;
+      counts[index] += 1;
+    }}
+  }}
+  const waveform = [];
+  const times = [];
+  for (let i = 0; i < len; i++) {{
+    waveform.push(counts[i] ? sums[i] / counts[i] : NaN);
+    times.push((i - preFrames) / data.frameRate);
+  }}
+  let peakIndex = preFrames;
+  let peak = -Infinity;
+  for (let i = preFrames; i < waveform.length; i++) {{
+    const value = waveform[i];
+    if (Number.isFinite(value) && value > peak) {{ peak = value; peakIndex = i; }}
+  }}
+  const baselineTail = diagnosticMedian(waveform.slice(Math.max(0, waveform.length - Math.max(3, Math.round(data.frameRate * 0.25)))));
+  const amplitude = peak - (Number.isFinite(baselineTail) ? baselineTail : 0);
+  let tau = Number(dffMetric(roi, "oasis_decay_tau_seconds"));
+  if (!Number.isFinite(tau) || tau <= 0) {{
+    tau = Number(data.oasisAttrs?.tau ?? 0.25);
+  }}
+  const expModel = waveform.map((_, i) => {{
+    if (!Number.isFinite(amplitude) || amplitude <= 0 || i < peakIndex) return NaN;
+    return (Number.isFinite(baselineTail) ? baselineTail : 0) + amplitude * Math.exp(-(times[i] - times[peakIndex]) / tau);
+  }});
+  const obsCdf = [];
+  const expCdf = [];
+  let expKs = NaN;
+  if (Number.isFinite(amplitude) && amplitude > 0 && Number.isFinite(tau) && tau > 0) {{
+    let maxDiff = 0;
+    for (let i = peakIndex; i < waveform.length; i++) {{
+      const observed = Math.min(1, Math.max(0, (peak - waveform[i]) / amplitude));
+      const model = Math.min(1, Math.max(0, 1 - Math.exp(-(times[i] - times[peakIndex]) / tau)));
+      obsCdf.push([times[i] - times[peakIndex], observed]);
+      expCdf.push([times[i] - times[peakIndex], model]);
+      if (Number.isFinite(observed) && Number.isFinite(model)) maxDiff = Math.max(maxDiff, Math.abs(observed - model));
+    }}
+    expKs = maxDiff;
+  }}
+  const residualSummary = oasisResidualSummary(roi, threshold);
+  const residuals = residualSummary ? residualSummary.eventResiduals.filter(Number.isFinite).sort((a, b) => a - b) : [];
+  const residualMean = diagnosticMean(residuals);
+  const residualSd = diagnosticSd(residuals, residualMean);
+  const residualCdf = [];
+  const gaussianCdf = [];
+  let gaussianKs = NaN;
+  if (residuals.length >= 4 && Number.isFinite(residualSd) && residualSd > 0) {{
+    let maxDiff = 0;
+    for (let i = 0; i < residuals.length; i++) {{
+      const empirical = residuals.length === 1 ? 1 : i / (residuals.length - 1);
+      const model = normalCdf(residuals[i], residualMean, residualSd);
+      residualCdf.push([residuals[i], empirical]);
+      gaussianCdf.push([residuals[i], model]);
+      if (Number.isFinite(model)) maxDiff = Math.max(maxDiff, Math.abs(empirical - model));
+    }}
+    gaussianKs = maxDiff;
+  }}
+  const diagnostics = {{events, waveform, times, expModel, expCdf, obsCdf, residuals, gaussianCdf, residualCdf, expKs, gaussianKs, tau}};
+  oasisDiagnosticsCache.set(key, diagnostics);
+  return diagnostics;
 }}
-function drawSelectedTraceAndOasis() {{ drawTrace(); }}
+function drawLineSeries(ctx, series, xOf, yOf, color, lineWidth = 1.5) {{
+  ctx.strokeStyle = color;
+  ctx.lineWidth = Math.max(lineWidth, lineWidth * (window.devicePixelRatio || 1));
+  ctx.beginPath();
+  let first = true;
+  for (const point of series) {{
+    const x = Array.isArray(point) ? point[0] : point.x;
+    const y = Array.isArray(point) ? point[1] : point.y;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    if (first) {{ ctx.moveTo(xOf(x), yOf(y)); first = false; }} else ctx.lineTo(xOf(x), yOf(y));
+  }}
+  ctx.stroke();
+}}
+function drawOasisDiagnostics() {{
+  const summary = document.getElementById("oasisDiagnosticsSummary");
+  const transientCanvas = document.getElementById("oasisTransientCanvas");
+  const cdfCanvas = document.getElementById("oasisCdfCanvas");
+  fit(transientCanvas); fit(cdfCanvas);
+  const transientCtx = transientCanvas.getContext("2d");
+  const cdfCtx = cdfCanvas.getContext("2d");
+  for (const [canvas, ctx] of [[transientCanvas, transientCtx], [cdfCanvas, cdfCtx]]) {{
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  }}
+  if (!data.oasisAvailable || !dff || !oasisSpikes) {{
+    summary.textContent = "OASIS inferred spikes and dF/F must be loaded to show selected ROI diagnostics.";
+    return;
+  }}
+  const diagnostics = selectedOasisDiagnostics(selected, oasisEventThreshold);
+  if (!diagnostics || !diagnostics.events.length) {{
+    summary.textContent = `No inferred spikes pass amplitude threshold ${{fmt(oasisEventThreshold)}} for this ROI.`;
+    return;
+  }}
+  summary.textContent = `${{diagnostics.events.length}} inferred spikes at threshold ${{fmt(oasisEventThreshold)}} | exponential KS ${{fmt(diagnostics.expKs)}} | Gaussian residual KS ${{fmt(diagnostics.gaussianKs)}}`;
+
+  let w = transientCanvas.width, h = transientCanvas.height, l = 48, r = 12, t = 22, b = 36, pw = w - l - r, ph = h - t - b;
+  const finiteWave = diagnostics.waveform.filter(Number.isFinite);
+  const finiteModel = diagnostics.expModel.filter(Number.isFinite);
+  let xMin = diagnostics.times[0], xMax = diagnostics.times[diagnostics.times.length - 1];
+  let yMin = Math.min(...finiteWave, ...finiteModel), yMax = Math.max(...finiteWave, ...finiteModel);
+  if (!Number.isFinite(yMin) || !Number.isFinite(yMax) || yMax <= yMin) {{ yMin = -1; yMax = 1; }}
+  const pad = (yMax - yMin) * 0.12 || 1; yMin -= pad; yMax += pad;
+  const xOf = x => l + (x - xMin) / (xMax - xMin) * pw;
+  const yOf = y => t + (1 - (y - yMin) / (yMax - yMin)) * ph;
+  drawAxes(transientCtx, w, h, l, t, pw, ph, "time from inferred spike (s)", "dF/F");
+  transientCtx.fillStyle = "#475467"; transientCtx.textAlign = "left"; transientCtx.textBaseline = "top"; transientCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+  transientCtx.fillText("Average transient vs exponential decay model", l + 4, 5);
+  drawLineSeries(transientCtx, diagnostics.times.map((time, i) => [time, diagnostics.waveform[i]]), xOf, yOf, "#1d4ed8", 1.6);
+  drawLineSeries(transientCtx, diagnostics.times.map((time, i) => [time, diagnostics.expModel[i]]), xOf, yOf, "#dc2626", 1.4);
+  transientCtx.fillStyle = "#1d4ed8"; transientCtx.fillText("avg transient", l + 8, t + 8);
+  transientCtx.fillStyle = "#dc2626"; transientCtx.fillText(`exp tau=${{fmt(diagnostics.tau)}}s`, l + 8, t + 24);
+
+  w = cdfCanvas.width; h = cdfCanvas.height; l = 48; r = 12; t = 22; b = 36; pw = w - l - r; ph = h - t - b;
+  cdfCtx.fillStyle = "#475467"; cdfCtx.textAlign = "left"; cdfCtx.textBaseline = "top"; cdfCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+  cdfCtx.fillText("KS CDF diagnostics", l + 4, 5);
+  const split = l + pw / 2;
+  const gap = 28;
+  const panelW = (pw - gap) / 2;
+  function drawCdfPanel(seriesA, seriesB, xLabel, title, xLo, xHi, left, colors) {{
+    const xScale = x => left + (x - xLo) / (xHi - xLo) * panelW;
+    const yScale = y => t + (1 - y) * ph;
+    cdfCtx.strokeStyle = "#d0d5dd"; cdfCtx.lineWidth = 1;
+    cdfCtx.beginPath(); cdfCtx.moveTo(left, t); cdfCtx.lineTo(left, t + ph); cdfCtx.lineTo(left + panelW, t + ph); cdfCtx.stroke();
+    cdfCtx.fillStyle = "#475467"; cdfCtx.textAlign = "center"; cdfCtx.fillText(title, left + panelW / 2, t + 4);
+    cdfCtx.fillText(xLabel, left + panelW / 2, h - 12);
+    drawLineSeries(cdfCtx, seriesA, xScale, yScale, colors[0], 1.4);
+    drawLineSeries(cdfCtx, seriesB, xScale, yScale, colors[1], 1.4);
+  }}
+  if (diagnostics.obsCdf.length && diagnostics.expCdf.length) {{
+    const expXMax = Math.max(...diagnostics.expCdf.map(point => point[0]));
+    drawCdfPanel(diagnostics.obsCdf, diagnostics.expCdf, "sec after peak", "exponential decay", 0, expXMax || 1, l, ["#1d4ed8", "#dc2626"]);
+  }}
+  if (diagnostics.residualCdf.length && diagnostics.gaussianCdf.length) {{
+    const xs = diagnostics.residuals;
+    let lo = xs[0], hi = xs[xs.length - 1];
+    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = -1; hi = 1; }}
+    drawCdfPanel(diagnostics.residualCdf, diagnostics.gaussianCdf, "residual dF/F", "Gaussian residuals", lo, hi, split + gap / 2, ["#059669", "#7c3aed"]);
+  }}
+}}
+function drawSelectedTraceAndOasis() {{ drawTrace(); drawOasisDiagnostics(); }}
 function draw() {{ drawSelectedTraceAndOasis(); drawStack(); drawMotionDrift(); drawMotionDistribution(); }}
 function reset() {{ x0=0; x1=data.nFrames-1; y0=0; y1=Math.min(19, visibleRois.length-1); document.getElementById("yStart").value=0; document.getElementById("yEnd").value=y1; syncTimeInputs(); draw(); }}
 function showAllVisibleTraces() {{
