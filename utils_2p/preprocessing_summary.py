@@ -314,23 +314,30 @@ def _event_window_residuals(trace: np.ndarray, spikes: np.ndarray, threshold: fl
     event_frames = np.flatnonzero(np.isfinite(spikes) & (spikes > threshold))
     if event_frames.size == 0:
         return np.array([], dtype=np.float32)
-    marked = np.zeros(trace.shape[0], dtype=bool)
+    trace = np.asarray(trace, dtype=np.float64)
+    n_frames = trace.shape[0]
+    marked = np.zeros(n_frames, dtype=bool)
     for frame in event_frames:
         start = max(0, int(frame) - 3)
-        stop = min(trace.shape[0], int(frame) + 4)
+        stop = min(n_frames, int(frame) + 4)
         marked[start:stop] = True
     frames = np.flatnonzero(marked)
-    residuals: list[float] = []
+    if frames.size == 0:
+        return np.array([], dtype=np.float32)
     radius = 8
-    for frame in frames:
-        start = max(0, int(frame) - radius)
-        stop = min(trace.shape[0], int(frame) + radius + 1)
-        window = trace[start:stop]
-        finite = window[np.isfinite(window)]
-        value = trace[frame]
-        if finite.size and np.isfinite(value):
-            residuals.append(float(value - np.mean(finite)))
-    return np.asarray(residuals, dtype=np.float32)
+    valid = np.isfinite(trace)
+    filled = np.where(valid, trace, 0.0)
+    padded_sum = np.concatenate(([0.0], np.cumsum(filled, dtype=np.float64)))
+    padded_count = np.concatenate(([0], np.cumsum(valid.astype(np.int64))))
+    starts = np.maximum(0, frames - radius)
+    stops = np.minimum(n_frames, frames + radius + 1)
+    sums = padded_sum[stops] - padded_sum[starts]
+    counts = padded_count[stops] - padded_count[starts]
+    keep = (counts > 0) & valid[frames]
+    if not np.any(keep):
+        return np.array([], dtype=np.float32)
+    residuals = trace[frames[keep]] - sums[keep] / counts[keep]
+    return residuals.astype(np.float32, copy=False)
 
 
 def _gaussian_ks_distance(values: np.ndarray) -> float:
@@ -907,7 +914,7 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .roi-hit {{ fill: rgba(255,255,255,0); stroke: none; cursor: pointer; pointer-events: all; }}
 .roi {{ fill: none; stroke: rgba(255,255,255,.86); stroke-width: .7; vector-effect: non-scaling-stroke; pointer-events: none; }}
 .roi-hit:hover + .roi {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
-.roi.selected {{ fill: none; stroke: #ffffff; stroke-width: 2.8; }}
+.roi.selected {{ fill: none; stroke: #00e5ff; stroke-width: 3.2; }}
 .controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 5px; align-items: center; margin-top: 6px; }}
 .label-controls {{ display: flex; flex-direction: column; gap: 4px; align-items: stretch; }}
 .label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }}
@@ -1303,7 +1310,9 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         </div>
         <div class="trace-loader" id="traceLoader" style="display:none;">
           <input id="dffFile" type="file" accept=".npy">
+          <input id="oasisFile" type="file" accept=".npy">
           <button id="loadDffFile">Load dF/F file</button>
+          <button id="loadOasisFile" type="button">Load OASIS spikes file</button>
         </div>
         <div class="note" id="traceLoadNote"></div>
         <canvas id="traceCanvas"></canvas>
@@ -1516,32 +1525,65 @@ function selectedOasisDefaultThreshold() {{
   const value = dffMetric(selected, "oasis_optimal_threshold");
   return Number.isFinite(Number(value)) ? Number(value) : Number(data.oasisEventThreshold ?? 0.05);
 }}
-function setDffFromArrayBuffer(arrayBuffer) {{
+function setDffFromArrayBuffer(arrayBuffer, silent = false) {{
   const parsed = parseNpy(arrayBuffer);
   dff = parsed.array;
   if (parsed.shape.length >= 2) {{
     data.nRois = parsed.shape[0];
     data.nFrames = parsed.shape[1];
   }}
-  document.getElementById("traceLoadNote").textContent = `Loaded dF/F file with ${{data.nRois}} ROIs x ${{data.nFrames}} frames.`;
   oasisResidualCache.clear();
   oasisDiagnosticsCache.clear();
+  if (!silent) {{
+    document.getElementById("traceLoadNote").textContent = `Loaded dF/F file with ${{data.nRois}} ROIs x ${{data.nFrames}} frames.`;
+  }} else {{
+    updateSidecarLoadNote();
+  }}
   draw();
+}}
+function updateSidecarLoadNote() {{
+  const note = document.getElementById("traceLoadNote");
+  const parts = [];
+  if (data.dffStorageMode === "file") {{
+    parts.push(dff ? `dF/F loaded (${{data.dffSidecarName}})` : `dF/F not loaded (${{data.dffSidecarName || "sidecar .npy"}})`);
+  }}
+  if (data.oasisAvailable && data.oasisStorageMode === "file") {{
+    parts.push(oasisSpikes ? `OASIS loaded (${{data.oasisSidecarName}})` : `OASIS not loaded (${{data.oasisSidecarName || "sidecar .npy"}})`);
+  }}
+  if (parts.length) {{
+    note.textContent = `${{parts.join("; ")}}. If auto-loading is blocked, use the buttons above to select the matching .npy file(s).`;
+  }}
+}}
+async function loadSidecarByRelativeName(sidecarName, setter, label) {{
+  if (!sidecarName) return false;
+  try {{
+    const response = await fetch(sidecarName);
+    if (!response.ok) throw new Error(`HTTP ${{response.status}}`);
+    const arrayBuffer = await response.arrayBuffer();
+    setter(arrayBuffer, true);
+    return true;
+  }} catch (error) {{
+    console.warn(`Could not auto-load ${{label}} sidecar ${{sidecarName}}:`, error);
+    updateSidecarLoadNote();
+    return false;
+  }}
 }}
 if (data.dffStorageMode === "embedded" && data.dff) {{
   dff = b64f32(data.dff);
-}} else {{
+}}
+if (data.dffStorageMode === "file" || (data.oasisAvailable && data.oasisStorageMode === "file")) {{
   const loader = document.getElementById("traceLoader");
   const note = document.getElementById("traceLoadNote");
   loader.style.display = "";
-  note.textContent = `This session was too large to fully embed (estimated ${{(data.estimatedEmbeddedDffBytes / (1024 * 1024)).toFixed(1)}} MB). Load ${{data.dffSidecarName || "the sidecar .npy file"}} to enable the trace viewer.`;
+  note.textContent = `This session uses sidecar .npy files for large arrays. Trying to load them from this folder.`;
 }}
-function setOasisFromArrayBuffer(arrayBuffer) {{
+function setOasisFromArrayBuffer(arrayBuffer, silent = false) {{
   const parsed = parseNpy(arrayBuffer);
   oasisSpikes = parsed.array;
   oasisResidualCache.clear();
   oasisDiagnosticsCache.clear();
   configureOasisThresholdControls();
+  if (!silent) updateSidecarLoadNote();
   draw();
 }}
 const labels = new Int8Array(data.nRois);
@@ -2674,12 +2716,21 @@ function selectedOasisDiagnostics(roi, threshold) {{
   }}
   const baselineTail = diagnosticMedian(waveform.slice(Math.max(0, waveform.length - Math.max(3, Math.round(data.frameRate * 0.25)))));
   const amplitude = peak - (Number.isFinite(baselineTail) ? baselineTail : 0);
-  let tau = Number(dffMetric(roi, "oasis_decay_tau_seconds"));
-  if (!Number.isFinite(tau) || tau <= 0) {{
-    tau = Number(data.oasisAttrs?.tau ?? 0.25);
+  let tau = NaN;
+  if (Number.isFinite(amplitude) && amplitude > 0) {{
+    const target = (Number.isFinite(baselineTail) ? baselineTail : 0) + amplitude / Math.E;
+    for (let i = peakIndex; i < waveform.length; i++) {{
+      const value = waveform[i];
+      if (!Number.isFinite(value)) continue;
+      if (value <= target) {{
+        tau = Math.max(0, times[i] - times[peakIndex]);
+        break;
+      }}
+    }}
   }}
   const expModel = waveform.map((_, i) => {{
     if (!Number.isFinite(amplitude) || amplitude <= 0 || i < peakIndex) return NaN;
+    if (!Number.isFinite(tau) || tau <= 0) return NaN;
     return (Number.isFinite(baselineTail) ? baselineTail : 0) + amplitude * Math.exp(-(times[i] - times[peakIndex]) / tau);
   }});
   const obsCdf = [];
@@ -2859,6 +2910,7 @@ document.getElementById("closeSortDialog").addEventListener("click", () => {{
 }});
 document.getElementById("closeSortDialogTop").addEventListener("click", () => closeDialog(sortDialog));
 const dffFileInput = document.getElementById("dffFile");
+const oasisFileInput = document.getElementById("oasisFile");
 document.getElementById("loadDffFile").addEventListener("click", () => dffFileInput.click());
 dffFileInput.addEventListener("change", () => {{
   const file = dffFileInput.files && dffFileInput.files[0];
@@ -2869,6 +2921,20 @@ dffFileInput.addEventListener("change", () => {{
       setDffFromArrayBuffer(reader.result);
     }} catch (error) {{
       document.getElementById("traceLoadNote").textContent = `Could not load dF/F file: ${{error.message}}`;
+    }}
+  }};
+  reader.readAsArrayBuffer(file);
+}});
+document.getElementById("loadOasisFile").addEventListener("click", () => oasisFileInput.click());
+oasisFileInput.addEventListener("change", () => {{
+  const file = oasisFileInput.files && oasisFileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {{
+    try {{
+      setOasisFromArrayBuffer(reader.result);
+    }} catch (error) {{
+      document.getElementById("traceLoadNote").textContent = `Could not load OASIS spikes file: ${{error.message}}`;
     }}
   }};
   reader.readAsArrayBuffer(file);
@@ -3210,6 +3276,12 @@ window.addEventListener("resize", () => {{ syncControlColumnHeight(); draw(); }}
 makeOverlays(); syncTimeInputs(); updateMetricDefaults(); updateRoiDisplaySummary(); populatePresetSelect("all_rois"); resetFilter();
 if (data.initialMorphologyFilter) writeFilter(data.initialMorphologyFilter);
 applySort(); syncControlColumnHeight(); setSelected(visibleRois[0]);
+if (data.dffStorageMode === "file" && data.dffSidecarName) {{
+  loadSidecarByRelativeName(data.dffSidecarName, setDffFromArrayBuffer, "dF/F");
+}}
+if (data.oasisAvailable && data.oasisStorageMode === "file" && data.oasisSidecarName) {{
+  loadSidecarByRelativeName(data.oasisSidecarName, setOasisFromArrayBuffer, "OASIS spikes");
+}}
 requestAnimationFrame(() => {{ syncControlColumnHeight(); draw(); }});
 </script>
 </body>
