@@ -88,6 +88,93 @@ def _load_masks_h5_image(session_dir: Path, key: str) -> np.ndarray | None:
         return np.asarray(h5[key])
 
 
+def _load_masks_h5_label_mask(
+    session_dir: Path,
+    key: str,
+    target_shape: tuple[int, int],
+    ops: dict[str, Any],
+) -> np.ndarray | None:
+    path = session_dir / "masks.h5"
+    if not path.exists():
+        return None
+    with h5py.File(path, "r") as h5:
+        if key not in h5:
+            return None
+        mask = np.asarray(h5[key])
+    if mask.shape[:2] == target_shape:
+        return mask
+    xrange = ops.get("xrange")
+    yrange = ops.get("yrange")
+    if xrange is None or yrange is None:
+        return None
+    x1, x2 = map(int, xrange)
+    y1, y2 = map(int, yrange)
+    if mask.shape[:2] != (y2 - y1, x2 - x1):
+        return None
+    expanded = np.zeros(target_shape, dtype=mask.dtype)
+    expanded[y1:y2, x1:x2] = mask
+    return expanded
+
+
+def _coerce_cell_type_label_values(labels: np.ndarray, source: str) -> list[int | None]:
+    labels = np.asarray(labels, dtype=np.float64).reshape(-1)
+    finite = labels[np.isfinite(labels)]
+    if not np.isin(finite, [-1, 0, 1]).all():
+        raise ValueError(f"Skipped {source}: values must be -1, 0, 1, or NaN.")
+    return [None if not np.isfinite(value) else int(value) for value in labels]
+
+
+def _load_cell_type_labels(
+    session_dir: Path,
+    n_rois: int,
+    suite2p_stat: np.ndarray,
+) -> tuple[list[int | None], str]:
+    """Load optional excitatory/inhibitory labels indexed by original Suite2p ROI."""
+    candidates = [
+        session_dir / "suite2p" / "plane0" / "roi_cell_type_labels.npy",
+        session_dir / "roi_cell_type_labels.npy",
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        labels = np.asarray(np.load(path, allow_pickle=False), dtype=np.float64).reshape(-1)
+        if labels.shape != (n_rois,):
+            return [None] * n_rois, f"Skipped {path.name}: expected {n_rois} labels, found {labels.size}."
+        try:
+            return _coerce_cell_type_label_values(labels, path.name), str(path)
+        except ValueError as exc:
+            return [None] * n_rois, str(exc)
+
+    path = session_dir / "masks.h5"
+    if not path.exists():
+        return [None] * n_rois, "No cell-type labels loaded; masks.h5 or roi_cell_type_labels.npy was not found."
+    with h5py.File(path, "r") as h5:
+        if "labels" not in h5:
+            return [None] * n_rois, "No cell-type labels loaded; masks.h5 does not contain a labels dataset."
+        labels = np.asarray(h5["labels"], dtype=np.float64).reshape(-1)
+    if labels.shape != (n_rois,):
+        qc_stat_path = session_dir / "qc_results" / "stat.npy"
+        if not qc_stat_path.exists():
+            return [None] * n_rois, f"Skipped masks.h5 labels: expected {n_rois} labels, found {labels.size}."
+        qc_stat = np.load(qc_stat_path, allow_pickle=True)
+        if labels.shape != (len(qc_stat),):
+            return [None] * n_rois, (
+                f"Skipped masks.h5 labels: expected {n_rois} original Suite2p labels "
+                f"or {len(qc_stat)} QC labels, found {labels.size}."
+            )
+        try:
+            mapped_indices = map_qc_to_suite2p_rois(qc_stat, suite2p_stat)
+            mapped = np.full(n_rois, np.nan, dtype=np.float64)
+            mapped[mapped_indices] = labels
+            return _coerce_cell_type_label_values(mapped, "masks.h5 labels"), "masks.h5:labels mapped from qc_results/stat.npy"
+        except ValueError as exc:
+            return [None] * n_rois, f"Skipped masks.h5 labels: {exc}"
+    try:
+        return _coerce_cell_type_label_values(labels, "masks.h5 labels"), "masks.h5:labels"
+    except ValueError as exc:
+        return [None] * n_rois, str(exc)
+
+
 def _load_dff(session_dir: Path) -> np.ndarray:
     for path in [session_dir / "dff.h5", session_dir / "qc_results" / "dff.h5"]:
         if path.exists():
@@ -585,6 +672,25 @@ def _roi_table(stat: np.ndarray, mask: np.ndarray, n_rois: int) -> list[dict[str
     return rois
 
 
+def _label_mask_roi_table(mask: np.ndarray | None) -> list[dict[str, float | int | str]]:
+    if mask is None:
+        return []
+    rois: list[dict[str, float | int | str]] = []
+    for idx, label_id in enumerate(np.unique(mask)):
+        if label_id <= 0:
+            continue
+        ypix, xpix = np.where(mask == label_id)
+        rois.append(
+            {
+                "roi": idx,
+                "label": int(label_id),
+                "path": _roi_outline_path(xpix, ypix),
+                "npix": int(xpix.size),
+            }
+        )
+    return rois
+
+
 def _float32_b64(array: np.ndarray) -> str:
     return base64.b64encode(np.ascontiguousarray(array.astype("<f4", copy=False)).tobytes()).decode("ascii")
 
@@ -798,12 +904,15 @@ def _write_html(
     session_name: str,
     mean_green: np.ndarray,
     mean_red: np.ndarray | None,
+    cellpose_mask: np.ndarray | None,
     mask: np.ndarray,
     stat: np.ndarray,
     suite2p_indices: np.ndarray,
     iscell: np.ndarray,
     suite2p_fingerprint: str,
     morphology_metrics: list[dict[str, float | int]],
+    cell_type_labels: list[int | None],
+    cell_type_label_source: str,
     preset_exclusion_reasons: list[list[str]],
     qc_parameters: dict[str, Any] | None,
     target_structure: str,
@@ -825,6 +934,8 @@ def _write_html(
 ) -> None:
     rois = _roi_table(stat, mask, n_rois)
     red_available = mean_red is not None
+    cellpose_rois = _label_mask_roi_table(cellpose_mask)
+    cellpose_available = red_available and bool(cellpose_rois)
     image_height, image_width = np.asarray(mean_green).shape[:2]
     xoff = np.asarray(xoff, dtype=np.float32)
     yoff = np.asarray(yoff, dtype=np.float32)
@@ -840,6 +951,8 @@ def _write_html(
         "green": _channel_png_data_uri(mean_green, "green"),
         "red": _channel_png_data_uri(mean_red, "red") if red_available else None,
         "redAvailable": red_available,
+        "cellposeMaskAvailable": cellpose_available,
+        "cellposeRois": cellpose_rois,
         "mask": _mask_data_uri(mask),
         "rois": rois,
         "suite2pIndices": suite2p_indices.tolist(),
@@ -847,6 +960,8 @@ def _write_html(
         "suite2pStatFingerprint": suite2p_fingerprint,
         "iscell": _float64_b64(iscell),
         "morphology": morphology_metrics,
+        "cellTypeLabels": cell_type_labels,
+        "cellTypeLabelSource": cell_type_label_source,
         "presetExclusionReasons": preset_exclusion_reasons,
         "qcParameters": qc_parameters,
         "targetStructure": target_structure,
@@ -874,9 +989,37 @@ def _write_html(
         "oasisAttrs": oasis_attrs,
     }
     fov_grid_class = "with-red" if red_available else "single-channel"
+    oasis_diagnostics_panel = (
+        '<div class="panel oasis-diagnostics minimized">'
+        '<div class="oasis-diagnostics-header">'
+        '<div class="title">Selected ROI OASIS diagnostics</div>'
+        '<div class="oasis-diagnostics-actions">'
+        '<button id="oasisDiagnosticsInfo" class="info-button" type="button" data-info-target="oasisDiagnosticsHelp" aria-expanded="false">Read more</button>'
+        '</div>'
+        '</div>'
+        '<div id="oasisDiagnosticsHelp" class="info-box" hidden>'
+        '<p><strong>Average transient:</strong> dF/F windows around inferred OASIS spikes are baseline-subtracted and averaged for the selected ROI.</p>'
+        '<p><strong>Exponential model:</strong> a simple decay curve is drawn from the average transient peak using the empirical e-fold time, where the average transient falls to 1/e of its peak amplitude.</p>'
+        '<p><strong>Gaussian residual KS:</strong> event-window residuals are compared with a fitted Gaussian CDF; lower KS distance means the residuals are closer to Gaussian.</p>'
+        '<p><strong>Amplitude threshold:</strong> only OASIS inferred spike amplitudes above the selected threshold contribute to the average transient.</p>'
+        '</div>'
+        '<div class="oasis-diagnostics-body">'
+        '<div class="note" id="oasisDiagnosticsSummary">OASIS inferred spikes not loaded for this session.</div>'
+        '<canvas id="oasisTransientCanvas"></canvas>'
+        '<canvas id="oasisGaussianCanvas"></canvas>'
+        '</div>'
+        '</div>'
+        if oasis_spikes is not None
+        else ""
+    )
     red_panel = (
-        '<div class="panel"><div class="title">Red anatomical mean</div>'
-        '<div class="imagewrap"><img id="red"><svg class="overlay" preserveAspectRatio="xMidYMid meet">'
+        '<div class="panel"><div class="panel-title-row"><div class="title">Red anatomical mean</div>'
+        '<label class="overlay-mode-control">Overlay '
+        '<select id="redOverlayMode">'
+        '<option value="functional" selected>Functional Suite2p ROIs</option>'
+        '<option value="cellpose">Cellpose anatomical ROIs</option>'
+        '</select></label></div>'
+        '<div class="imagewrap"><img id="red"><svg class="overlay red-overlay" preserveAspectRatio="xMidYMid meet">'
         '</svg></div></div>'
         if red_available
         else ""
@@ -899,12 +1042,16 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .review-main.menu-collapsed {{ grid-template-columns: minmax(0, 1fr) 38px; }}
 .viewer-column {{ display: flex; flex-direction: column; gap: 6px; }}
 .fov-row {{ display: grid; grid-template-columns: 1fr; gap: 6px; align-items: start; }}
-.fov-review {{ display: grid; grid-template-columns: minmax(260px, 480px) minmax(280px, 1fr); gap: 6px; align-items: start; justify-items: start; }}
-.fov-review > .grid {{ width: min(100%, 480px); }}
+.fov-review {{ display: grid; grid-template-columns: minmax(420px, 720px) minmax(300px, 1fr); gap: 8px; align-items: start; justify-items: start; }}
+.fov-review.oasis-collapsed {{ grid-template-columns: minmax(520px, 900px); }}
+.fov-review > .grid {{ width: min(100%, 720px); }}
+.fov-review.oasis-collapsed > .grid {{ width: min(100%, 860px); }}
 .grid.with-red {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
 .grid.single-channel {{ grid-template-columns: minmax(0, 1fr); }}
 .panel {{ background: #fff; border: 1px solid #d0d5dd; border-radius: 7px; padding: 7px; box-sizing: border-box; }}
 .title {{ font-size: 13px; font-weight: 700; margin-bottom: 4px; }}
+.panel-title-row {{ min-height: 28px; display: flex; gap: 8px; align-items: start; justify-content: space-between; margin-bottom: 4px; }}
+.panel-title-row .title {{ margin-bottom: 0; }}
 .imagewrap {{ position: relative; width: 100%; aspect-ratio: 1/1; background: #111; overflow: hidden; }}
 .imagewrap img, .imagewrap svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
 .imagewrap img {{ object-fit: contain; image-rendering: pixelated; }}
@@ -915,6 +1062,9 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .roi {{ fill: none; stroke: rgba(255,255,255,.86); stroke-width: .7; vector-effect: non-scaling-stroke; pointer-events: none; }}
 .roi-hit:hover + .roi {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
 .roi.selected {{ fill: none; stroke: #00e5ff; stroke-width: 3.2; }}
+.cellpose-roi {{ fill: none; stroke: #fbbf24; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }}
+.overlay-mode-control {{ display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: #475467; }}
+.overlay-mode-control select {{ width: auto; min-width: 190px; padding: 3px 6px; }}
 .controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 5px; align-items: center; margin-top: 6px; }}
 .label-controls {{ display: flex; flex-direction: column; gap: 4px; align-items: stretch; }}
 .label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }}
@@ -999,11 +1149,14 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 #traceCanvas {{ height: 220px; cursor: grab; }}
 #traceCanvas.dragging {{ cursor: grabbing; }}
 #motionDriftCanvas {{ height: 470px; }}
-#motionDistributionCanvas {{ height: 286px; }}
+#motionDistributionCanvas {{ height: 390px; }}
 .oasis-diagnostics {{ width: 100%; max-width: 520px; }}
+.oasis-diagnostics-header {{ display: flex; gap: 8px; align-items: center; justify-content: space-between; }}
+.oasis-diagnostics-actions {{ display: flex; gap: 6px; align-items: center; }}
+.oasis-diagnostics.minimized {{ display: none; }}
 .oasis-diagnostics .note {{ margin-bottom: 6px; }}
-#oasisTransientCanvas {{ height: 178px; }}
-#oasisCdfCanvas {{ height: 178px; margin-top: 6px; }}
+#oasisTransientCanvas {{ height: 220px; }}
+#oasisGaussianCanvas {{ height: 190px; margin-top: 6px; }}
 .oasis-panel {{ margin-top: 10px; }}
 .oasis-toggle {{ display: flex; gap: 6px; align-items: center; font-weight: 700; }}
 .oasis-toggle input {{ width: auto; }}
@@ -1273,17 +1426,12 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
   <div class="review-main">
     <div class="viewer-column">
       <div class="fov-row">
-        <div class="fov-review">
+        <div class="fov-review oasis-collapsed">
           <div class="grid {fov_grid_class}">
-            <div class="panel"><div class="title">Green functional mean</div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
+            <div class="panel"><div class="panel-title-row"><div class="title">Green functional mean</div></div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
             {red_panel}
           </div>
-          <div class="panel oasis-diagnostics">
-            <div class="title">Selected ROI OASIS diagnostics</div>
-            <div class="note" id="oasisDiagnosticsSummary">OASIS inferred spikes not loaded for this session.</div>
-            <canvas id="oasisTransientCanvas"></canvas>
-            <canvas id="oasisCdfCanvas"></canvas>
-          </div>
+          {oasis_diagnostics_panel}
         </div>
       </div>
       <div class="panel">
@@ -1297,6 +1445,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
               <input id="oasisThreshold" type="number" min="0" step="0.001" value="0.05">
             </div>
             <button id="resetOasisThreshold" type="button">Reset to ROI default</button>
+            <button id="toggleOasisDiagnostics" type="button">Show diagnostics</button>
             <button class="info-button" type="button" data-info-target="oasisThresholdInfo" aria-expanded="false">Read more</button>
           </div>
         </div>
@@ -1353,6 +1502,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
               <summary id="roiDetailsSummary">Selected ROI Details</summary>
               <div id="readout"></div>
             </details>
+            <div class="note" id="cellTypeLabelStatus"></div>
             <div class="button-row">
               <button id="markGood" class="good">Good (G)</button>
               <button id="markBad" class="bad">Bad (B)</button>
@@ -1585,6 +1735,14 @@ function setOasisFromArrayBuffer(arrayBuffer, silent = false) {{
   configureOasisThresholdControls();
   if (!silent) updateSidecarLoadNote();
   draw();
+}}
+function updateCellTypeLabelStatus() {{
+  const status = document.getElementById("cellTypeLabelStatus");
+  if (!status) return;
+  const loaded = Array.isArray(data.cellTypeLabels) && data.cellTypeLabels.some(value => value === -1 || value === 0 || value === 1);
+  status.textContent = loaded
+    ? `Cell-type labels loaded from ${{data.cellTypeLabelSource}}. Codes: -1 excitatory/non-red, 0 unsure, 1 inhibitory/red.`
+    : data.cellTypeLabelSource;
 }}
 const labels = new Int8Array(data.nRois);
 for (let roi = 0; roi < data.nRois; roi++) {{
@@ -1955,10 +2113,11 @@ function setSelected(roi) {{
   const snr9550 = dffMetric(selected, "snr_95_50", "event_snr");
   const postdocSnr = dffMetric(selected, "andrea_postdoc_snr");
   const suite2pRoi = data.suite2pIndices[selected];
+  const cellType = cellTypeLabelName(data.cellTypeLabels?.[selected]);
   if (data.oasisAvailable) setOasisThreshold(selectedOasisDefaultThreshold(), false);
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s | OASIS inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
+  document.getElementById("readout").textContent = `cell type ${{cellType}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s | OASIS inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -2012,6 +2171,8 @@ function updateVisibleRois(resetRange = false) {{
     const roi = Number(path.dataset.roi);
     path.style.display = (filterPass[roi] && roiMatchesDisplayMode(roi)) ? "" : "none";
   }});
+  const redOverlayMode = document.getElementById("redOverlayMode");
+  if (redOverlayMode) setRedOverlayMode(redOverlayMode.value);
   if (!visibleRois.length) draw();
   else if (!visibleRois.includes(selected)) setSelected(visibleRois[0]);
   else draw();
@@ -2031,6 +2192,12 @@ function labelName(label) {{
   if (label === 0) return "bad";
   if (label === 2) return "unsure";
   return "not labeled";
+}}
+function cellTypeLabelName(label) {{
+  if (label === 1) return "inhibitory/red";
+  if (label === -1) return "excitatory/non-red";
+  if (label === 0) return "unsure";
+  return "not loaded";
 }}
 function fmt(value) {{
   if (value === null || value === undefined) return "nan";
@@ -2230,17 +2397,45 @@ function moveVisible(direction) {{
   const nextIndex = (origin + direction + visibleRois.length) % visibleRois.length;
   setSelected(visibleRois[nextIndex]);
 }}
+function appendFunctionalRois(svg) {{
+  data.rois.forEach(r => {{
+    const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    hitPath.setAttribute("d", r.hitPath || r.path);
+    hitPath.dataset.roi = r.roi; hitPath.classList.add("roi-hit", "functional-overlay-item"); hitPath.addEventListener("click", () => setSelected(r.roi)); svg.appendChild(hitPath);
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", r.path);
+    path.dataset.roi = r.roi; path.classList.add("roi", "functional-overlay-item"); svg.appendChild(path);
+  }});
+}}
+function appendCellposeRois(svg) {{
+  (data.cellposeRois || []).forEach(r => {{
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", r.path);
+    path.dataset.cellposeRoi = r.label;
+    path.classList.add("cellpose-roi", "cellpose-overlay-item");
+    path.style.display = "none";
+    svg.appendChild(path);
+  }});
+}}
+function setRedOverlayMode(mode) {{
+  const redOverlay = document.querySelector(".red-overlay");
+  if (!redOverlay) return;
+  const showCellpose = mode === "cellpose" && data.cellposeMaskAvailable;
+  redOverlay.querySelectorAll(".functional-overlay-item").forEach(path => {{ path.style.display = showCellpose ? "none" : ""; }});
+  redOverlay.querySelectorAll(".cellpose-overlay-item").forEach(path => {{ path.style.display = showCellpose ? "" : "none"; }});
+}}
 function makeOverlays() {{
   document.querySelectorAll(".overlay").forEach(svg => {{
-    data.rois.forEach(r => {{
-      const hitPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      hitPath.setAttribute("d", r.hitPath || r.path);
-      hitPath.dataset.roi = r.roi; hitPath.classList.add("roi-hit"); hitPath.addEventListener("click", () => setSelected(r.roi)); svg.appendChild(hitPath);
-      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-      path.setAttribute("d", r.path);
-      path.dataset.roi = r.roi; path.classList.add("roi"); svg.appendChild(path);
-    }});
+    appendFunctionalRois(svg);
+    if (svg.classList.contains("red-overlay")) appendCellposeRois(svg);
   }});
+  const redOverlayMode = document.getElementById("redOverlayMode");
+  if (redOverlayMode) {{
+    redOverlayMode.disabled = !data.cellposeMaskAvailable;
+    redOverlayMode.title = data.cellposeMaskAvailable ? "" : "Cellpose anatomical masks were not available in the generated HTML.";
+    redOverlayMode.addEventListener("change", event => setRedOverlayMode(event.target.value));
+    setRedOverlayMode(redOverlayMode.value);
+  }}
 }}
 const fovZoom = {{ scale: 1, x: 0, y: 0, dragging: false, lastX: 0, lastY: 0 }};
 function applyFovTransform() {{
@@ -2312,6 +2507,43 @@ function timeLabel(seconds, majorStep) {{
   if (majorStep < 1) return `${{Math.round(seconds * 1000)}} ms`;
   if (seconds < 60) return `${{seconds.toFixed(majorStep < 2 ? 1 : 0)}} s`;
   return `${{(seconds / 60).toFixed(1)}} min`;
+}}
+function numericTickStep(span, target = 5) {{
+  if (!Number.isFinite(span) || span <= 0) return 1;
+  const raw = span / Math.max(1, target);
+  const pow = Math.pow(10, Math.floor(Math.log10(raw)));
+  const scaled = raw / pow;
+  const mult = scaled <= 1 ? 1 : scaled <= 2 ? 2 : scaled <= 5 ? 5 : 10;
+  return mult * pow;
+}}
+function numericLabel(value, step) {{
+  if (!Number.isFinite(value)) return "";
+  const decimals = Math.max(0, Math.min(4, Math.ceil(-Math.log10(Math.abs(step || 1))) + 1));
+  return Math.abs(value) >= 1000 ? value.toExponential(1) : value.toFixed(decimals);
+}}
+function drawNumericTicks(ctx, l, t, pw, ph, xMin, xMax, yMin, yMax, xTicks = 5, yTicks = 4) {{
+  ctx.save();
+  ctx.strokeStyle = "#e5e7eb";
+  ctx.fillStyle = "#475467";
+  ctx.font = `${{10 * (window.devicePixelRatio || 1)}}px Arial`;
+  ctx.lineWidth = 1;
+  ctx.textBaseline = "top";
+  ctx.textAlign = "center";
+  const xStep = numericTickStep(xMax - xMin, xTicks);
+  for (let value = Math.ceil(xMin / xStep) * xStep; value <= xMax + xStep * 0.5; value += xStep) {{
+    const x = l + (value - xMin) / (xMax - xMin) * pw;
+    ctx.beginPath(); ctx.moveTo(x, t); ctx.lineTo(x, t + ph); ctx.stroke();
+    ctx.fillText(numericLabel(value, xStep), x, t + ph + 8);
+  }}
+  const yStep = numericTickStep(yMax - yMin, yTicks);
+  ctx.textAlign = "right";
+  ctx.textBaseline = "middle";
+  for (let value = Math.ceil(yMin / yStep) * yStep; value <= yMax + yStep * 0.5; value += yStep) {{
+    const y = t + (1 - (value - yMin) / (yMax - yMin)) * ph;
+    ctx.beginPath(); ctx.moveTo(l, y); ctx.lineTo(l + pw, y); ctx.stroke();
+    ctx.fillText(numericLabel(value, yStep), l - 8, y);
+  }}
+  ctx.restore();
 }}
 function drawTimeGrid(ctx, l, t, pw, ph) {{
   const startSec = x0 / data.frameRate, endSec = x1 / data.frameRate, spanSec = Math.max(1e-9, endSec - startSec);
@@ -2523,17 +2755,30 @@ function drawMotionDrift() {{
         if (first) {{ ctx.moveTo(x, y); first = false; }} else ctx.lineTo(x, y);
       }}
     }} else {{
+      const meanPoints = [];
       for (let px = 0; px < pixelCount; px++) {{
         const f0 = Math.max(xs, Math.floor(xs + px * framesPerPixel));
         const f1 = Math.min(xe, Math.floor(xs + (px + 1) * framesPerPixel));
-        let minV = Infinity, maxV = -Infinity;
+        let minV = Infinity, maxV = -Infinity, sumV = 0, nV = 0;
         for (let f = f0; f <= f1; f++) {{
           const value = values[f];
-          if (Number.isFinite(value)) {{ minV = Math.min(minV, value); maxV = Math.max(maxV, value); }}
+          if (Number.isFinite(value)) {{ minV = Math.min(minV, value); maxV = Math.max(maxV, value); sumV += value; nV++; }}
         }}
         if (!Number.isFinite(minV)) continue;
         const x = l + px;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.18;
+        ctx.beginPath();
         ctx.moveTo(x, yOf(minV)); ctx.lineTo(x, yOf(maxV));
+        ctx.stroke();
+        ctx.restore();
+        meanPoints.push([x, yOf(sumV / nV)]);
+      }}
+      ctx.beginPath();
+      for (let i = 0; i < meanPoints.length; i++) {{
+        const [x, y] = meanPoints[i];
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }}
     }}
     ctx.stroke();
@@ -2553,10 +2798,9 @@ function drawMotionDistribution() {{
   const canvas = document.getElementById("motionDistributionCanvas");
   fit(canvas);
   const ctx = canvas.getContext("2d");
-  const w = canvas.width, h = canvas.height, l = 62, r = 18, t = 18, b = 42, pw = w - l - r, ph = h - t - b;
+  const w = canvas.width, h = canvas.height, l = 74, r = 18, t = 30, b = 74, pw = w - l - r, ph = h - t - b;
   ctx.clearRect(0, 0, w, h);
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, w, h);
-  drawAxes(ctx, w, h, l, t, pw, ph, "shift (px)", "cumulative fraction");
   const xValues = motionFiniteValues(motionX);
   const yValues = motionFiniteValues(motionY);
   if (!xValues.length || !yValues.length) {{
@@ -2564,43 +2808,114 @@ function drawMotionDistribution() {{
     ctx.fillText("Motion offsets not available for this session.", l + pw / 2, t + ph / 2);
     return;
   }}
-  const all = xValues.concat(yValues).sort((a, b) => a - b);
-  let lo = all[Math.floor(all.length * 0.005)], hi = all[Math.floor(all.length * 0.995)];
-  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = all[0]; hi = all[all.length - 1]; }}
-  if (hi <= lo) hi = lo + 1;
-  const xOf = value => l + (value - lo) / (hi - lo) * pw;
-  const yOf = value => t + (1 - value) * ph;
-  function drawCdf(values, color, label) {{
-    const sorted = values.slice().filter(value => Number.isFinite(value) && value >= lo && value <= hi).sort((a, b) => a - b);
-    if (!sorted.length) return;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1.4, 1.4 * (window.devicePixelRatio || 1));
+  const gap = 46 * (window.devicePixelRatio || 1);
+  const panelW = (pw - 2 * gap) / 3;
+  const absXValues = xValues.map(Math.abs);
+  const absYValues = yValues.map(Math.abs);
+  function drawPanelAxes(left, width, xLabel, yLabel) {{
+    ctx.strokeStyle = "#d0d5dd";
+    ctx.lineWidth = 1;
     ctx.beginPath();
-    for (let i = 0; i < sorted.length; i++) {{
-      const fraction = sorted.length === 1 ? 1 : i / (sorted.length - 1);
-      const x = xOf(sorted[i]), y = yOf(fraction);
-      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-    }}
+    ctx.moveTo(left, t);
+    ctx.lineTo(left, t + ph);
+    ctx.lineTo(left + width, t + ph);
     ctx.stroke();
-    ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.fillText(label, l + 8, t + (label === "x shift" ? 26 : 48));
+    ctx.fillStyle = "#475467";
+    ctx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "top";
+    ctx.fillText(xLabel, left + width / 2, h - 26);
+    ctx.save();
+    ctx.translate(left - 48, t + ph / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.fillText(yLabel, 0, 0);
+    ctx.restore();
   }}
-  ctx.fillStyle = "#475467"; ctx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
-  ctx.textAlign = "center"; ctx.textBaseline = "top";
-  ctx.fillText("CDF across frames", l + pw / 2, t + 8);
-  ctx.save();
-  ctx.beginPath(); ctx.rect(l, t, pw, ph); ctx.clip();
-  drawCdf(xValues, "#2563eb", "x shift");
-  drawCdf(yValues, "#dc2626", "y shift");
-  ctx.restore();
-  ctx.fillStyle = "#475467"; ctx.font = `${{10 * (window.devicePixelRatio || 1)}}px Arial`;
-  ctx.textAlign = "left"; ctx.fillText(fmt(lo), l, h - 18);
-  ctx.textAlign = "right"; ctx.fillText(fmt(hi), l + pw, h - 18);
-  ctx.textAlign = "right"; ctx.textBaseline = "middle";
-  for (let i = 0; i <= 4; i++) {{
-    const value = i / 4;
-    ctx.fillText(value.toFixed(2), l - 8, yOf(value));
+  function panelLimits(valuesA, valuesB, absolute = false) {{
+    const all = valuesA.concat(valuesB).filter(Number.isFinite).sort((a, b) => a - b);
+    if (!all.length) return absolute ? [0, 1] : [-1, 1];
+    let lo = absolute ? 0 : all[0];
+    let hi = all[all.length - 1];
+    if (!Number.isFinite(lo) || !Number.isFinite(hi)) return absolute ? [0, 1] : [-1, 1];
+    if (hi <= lo) hi = lo + 1;
+    const pad = Math.max((hi - lo) * 0.08, 0.5);
+    if (absolute) {{
+      hi += pad;
+    }} else {{
+      lo -= pad;
+      hi += pad;
+    }}
+    return [lo, hi];
   }}
+  function histogram(values, lo, hi, bins) {{
+    const counts = new Array(bins).fill(0);
+    const step = (hi - lo) / bins;
+    for (const value of values) {{
+      if (!Number.isFinite(value) || value < lo || value > hi) continue;
+      const index = Math.min(bins - 1, Math.max(0, Math.floor((value - lo) / step)));
+      counts[index] += 1;
+    }}
+    const total = counts.reduce((sum, count) => sum + count, 0);
+    return counts.map(count => total ? count / total : 0);
+  }}
+  function drawHistogramPanel(left, width, title, valuesA, valuesB, labelA, labelB) {{
+    const [lo, hi] = panelLimits(valuesA, valuesB, false);
+    const bins = 64;
+    const histA = histogram(valuesA, lo, hi, bins);
+    const histB = histogram(valuesB, lo, hi, bins);
+    const yMax = Math.max(...histA, ...histB, 1e-9) * 1.12;
+    const xOf = value => left + (value - lo) / (hi - lo) * width;
+    const yOf = value => t + (1 - value / yMax) * ph;
+    drawPanelAxes(left, width, "shift (px)", "fraction / bin");
+    drawNumericTicks(ctx, left, t, width, ph, lo, hi, 0, yMax, 7, 4);
+    ctx.fillStyle = "#475467"; ctx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText(title, left + width / 2, 5);
+    function drawBars(hist, color, label, yLabelOffset, offsetFraction) {{
+      const binWidth = width / bins;
+      ctx.fillStyle = color;
+      ctx.globalAlpha = 0.34;
+      for (let i = 0; i < hist.length; i++) {{
+        const x0b = xOf(lo + i / bins * (hi - lo));
+        const y = yOf(hist[i]);
+        ctx.fillRect(x0b + offsetFraction * binWidth, y, binWidth * 0.48, t + ph - y);
+      }}
+      ctx.globalAlpha = 1;
+      ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(label, left + 8, t + yLabelOffset);
+    }}
+    drawBars(histA, "#2563eb", labelA, 24, 0.02);
+    drawBars(histB, "#dc2626", labelB, 42, 0.50);
+  }}
+  function drawCdfPanel(left, width, title, valuesA, valuesB, labelA, labelB, absolute = false) {{
+    const [lo, hi] = panelLimits(valuesA, valuesB, absolute);
+    const xOf = value => left + (value - lo) / (hi - lo) * width;
+    const yOf = value => t + (1 - value) * ph;
+    drawPanelAxes(left, width, "shift (px)", "cumulative fraction");
+    drawNumericTicks(ctx, left, t, width, ph, lo, hi, 0, 1, 7, 4);
+    ctx.fillStyle = "#475467"; ctx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    ctx.fillText(title, left + width / 2, 5);
+    function drawCdf(values, color, label, yLabelOffset) {{
+      const sorted = values.slice().filter(value => Number.isFinite(value) && value >= lo && value <= hi).sort((a, b) => a - b);
+      if (!sorted.length) return;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = Math.max(1.4, 1.4 * (window.devicePixelRatio || 1));
+      ctx.beginPath();
+      for (let i = 0; i < sorted.length; i++) {{
+        const fraction = sorted.length === 1 ? 1 : i / (sorted.length - 1);
+        const x = xOf(sorted[i]), y = yOf(fraction);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }}
+      ctx.stroke();
+      ctx.fillStyle = color; ctx.textAlign = "left"; ctx.textBaseline = "top";
+      ctx.fillText(label, left + 8, t + yLabelOffset);
+    }}
+    drawCdf(valuesA, "#2563eb", labelA, 24);
+    drawCdf(valuesB, "#dc2626", labelB, 42);
+  }}
+  drawHistogramPanel(l, panelW, "Offset distribution", xValues, yValues, "x shift", "y shift");
+  drawCdfPanel(l + panelW + gap, panelW, "Signed shift CDF", xValues, yValues, "x shift", "y shift", false);
+  drawCdfPanel(l + 2 * (panelW + gap), panelW, "Absolute shift CDF", absXValues, absYValues, "|x shift|", "|y shift|", true);
 }}
 function gaussianPdf(x, mean, sd) {{
   if (!Number.isFinite(sd) || sd <= 0) return 0;
@@ -2785,14 +3100,15 @@ function drawLineSeries(ctx, series, xOf, yOf, color, lineWidth = 1.5) {{
 function drawOasisDiagnostics() {{
   const summary = document.getElementById("oasisDiagnosticsSummary");
   const transientCanvas = document.getElementById("oasisTransientCanvas");
-  const cdfCanvas = document.getElementById("oasisCdfCanvas");
-  fit(transientCanvas); fit(cdfCanvas);
+  const gaussianCanvas = document.getElementById("oasisGaussianCanvas");
+  if (!summary || !transientCanvas || !gaussianCanvas) return;
+  fit(transientCanvas); fit(gaussianCanvas);
   const transientCtx = transientCanvas.getContext("2d");
-  const cdfCtx = cdfCanvas.getContext("2d");
-  for (const [canvas, ctx] of [[transientCanvas, transientCtx], [cdfCanvas, cdfCtx]]) {{
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  }}
+  const gaussianCtx = gaussianCanvas.getContext("2d");
+  transientCtx.clearRect(0, 0, transientCanvas.width, transientCanvas.height);
+  transientCtx.fillStyle = "#fff"; transientCtx.fillRect(0, 0, transientCanvas.width, transientCanvas.height);
+  gaussianCtx.clearRect(0, 0, gaussianCanvas.width, gaussianCanvas.height);
+  gaussianCtx.fillStyle = "#fff"; gaussianCtx.fillRect(0, 0, gaussianCanvas.width, gaussianCanvas.height);
   if (!data.oasisAvailable || !dff || !oasisSpikes) {{
     summary.textContent = "OASIS inferred spikes and dF/F must be loaded to show selected ROI diagnostics.";
     return;
@@ -2802,9 +3118,9 @@ function drawOasisDiagnostics() {{
     summary.textContent = `No inferred spikes pass amplitude threshold ${{fmt(oasisEventThreshold)}} for this ROI.`;
     return;
   }}
-  summary.textContent = `${{diagnostics.events.length}} inferred spikes at threshold ${{fmt(oasisEventThreshold)}} | exponential KS ${{fmt(diagnostics.expKs)}} | Gaussian residual KS ${{fmt(diagnostics.gaussianKs)}}`;
+  summary.textContent = `${{diagnostics.events.length}} inferred spikes at amplitude threshold ${{fmt(oasisEventThreshold)}} | empirical e-fold tau ${{fmt(diagnostics.tau)}} s | Gaussian residual KS ${{fmt(diagnostics.gaussianKs)}}`;
 
-  let w = transientCanvas.width, h = transientCanvas.height, l = 48, r = 12, t = 22, b = 36, pw = w - l - r, ph = h - t - b;
+  let w = transientCanvas.width, h = transientCanvas.height, l = 58, r = 14, t = 28, b = 48, pw = w - l - r, ph = h - t - b;
   const finiteWave = diagnostics.waveform.filter(Number.isFinite);
   const finiteModel = diagnostics.expModel.filter(Number.isFinite);
   let xMin = diagnostics.times[0], xMax = diagnostics.times[diagnostics.times.length - 1];
@@ -2814,6 +3130,7 @@ function drawOasisDiagnostics() {{
   const xOf = x => l + (x - xMin) / (xMax - xMin) * pw;
   const yOf = y => t + (1 - (y - yMin) / (yMax - yMin)) * ph;
   drawAxes(transientCtx, w, h, l, t, pw, ph, "time from inferred spike (s)", "dF/F");
+  drawNumericTicks(transientCtx, l, t, pw, ph, xMin, xMax, yMin, yMax, 6, 5);
   transientCtx.fillStyle = "#475467"; transientCtx.textAlign = "left"; transientCtx.textBaseline = "top"; transientCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
   transientCtx.fillText("Average transient vs exponential decay model", l + 4, 5);
   drawLineSeries(transientCtx, diagnostics.times.map((time, i) => [time, diagnostics.waveform[i]]), xOf, yOf, "#1d4ed8", 1.6);
@@ -2821,31 +3138,26 @@ function drawOasisDiagnostics() {{
   transientCtx.fillStyle = "#1d4ed8"; transientCtx.fillText("avg transient", l + 8, t + 8);
   transientCtx.fillStyle = "#dc2626"; transientCtx.fillText(`exp tau=${{fmt(diagnostics.tau)}}s`, l + 8, t + 24);
 
-  w = cdfCanvas.width; h = cdfCanvas.height; l = 48; r = 12; t = 22; b = 36; pw = w - l - r; ph = h - t - b;
-  cdfCtx.fillStyle = "#475467"; cdfCtx.textAlign = "left"; cdfCtx.textBaseline = "top"; cdfCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
-  cdfCtx.fillText("KS CDF diagnostics", l + 4, 5);
-  const split = l + pw / 2;
-  const gap = 28;
-  const panelW = (pw - gap) / 2;
-  function drawCdfPanel(seriesA, seriesB, xLabel, title, xLo, xHi, left, colors) {{
-    const xScale = x => left + (x - xLo) / (xHi - xLo) * panelW;
-    const yScale = y => t + (1 - y) * ph;
-    cdfCtx.strokeStyle = "#d0d5dd"; cdfCtx.lineWidth = 1;
-    cdfCtx.beginPath(); cdfCtx.moveTo(left, t); cdfCtx.lineTo(left, t + ph); cdfCtx.lineTo(left + panelW, t + ph); cdfCtx.stroke();
-    cdfCtx.fillStyle = "#475467"; cdfCtx.textAlign = "center"; cdfCtx.fillText(title, left + panelW / 2, t + 4);
-    cdfCtx.fillText(xLabel, left + panelW / 2, h - 12);
-    drawLineSeries(cdfCtx, seriesA, xScale, yScale, colors[0], 1.4);
-    drawLineSeries(cdfCtx, seriesB, xScale, yScale, colors[1], 1.4);
-  }}
-  if (diagnostics.obsCdf.length && diagnostics.expCdf.length) {{
-    const expXMax = Math.max(...diagnostics.expCdf.map(point => point[0]));
-    drawCdfPanel(diagnostics.obsCdf, diagnostics.expCdf, "sec after peak", "exponential decay", 0, expXMax || 1, l, ["#1d4ed8", "#dc2626"]);
-  }}
+  w = gaussianCanvas.width; h = gaussianCanvas.height; l = 58; r = 14; t = 28; b = 48; pw = w - l - r; ph = h - t - b;
+  gaussianCtx.fillStyle = "#475467"; gaussianCtx.textAlign = "left"; gaussianCtx.textBaseline = "top"; gaussianCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
+  gaussianCtx.fillText("Event-window residual CDF vs fitted Gaussian", l + 4, 5);
   if (diagnostics.residualCdf.length && diagnostics.gaussianCdf.length) {{
     const xs = diagnostics.residuals;
     let lo = xs[0], hi = xs[xs.length - 1];
     if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = -1; hi = 1; }}
-    drawCdfPanel(diagnostics.residualCdf, diagnostics.gaussianCdf, "residual dF/F", "Gaussian residuals", lo, hi, split + gap / 2, ["#059669", "#7c3aed"]);
+    const pad = Math.max((hi - lo) * 0.08, 0.01);
+    lo -= pad; hi += pad;
+    const xOfResidual = x => l + (x - lo) / (hi - lo) * pw;
+    const yOfCdf = y => t + (1 - y) * ph;
+    drawAxes(gaussianCtx, w, h, l, t, pw, ph, "residual dF/F", "cumulative fraction");
+    drawNumericTicks(gaussianCtx, l, t, pw, ph, lo, hi, 0, 1, 6, 4);
+    drawLineSeries(gaussianCtx, diagnostics.residualCdf, xOfResidual, yOfCdf, "#059669", 1.4);
+    drawLineSeries(gaussianCtx, diagnostics.gaussianCdf, xOfResidual, yOfCdf, "#7c3aed", 1.4);
+    gaussianCtx.fillStyle = "#059669"; gaussianCtx.fillText("residuals", l + 8, t + 8);
+    gaussianCtx.fillStyle = "#7c3aed"; gaussianCtx.fillText(`Gaussian fit, KS=${{fmt(diagnostics.gaussianKs)}}`, l + 8, t + 24);
+  }} else {{
+    gaussianCtx.fillStyle = "#475467"; gaussianCtx.textAlign = "center"; gaussianCtx.textBaseline = "middle";
+    gaussianCtx.fillText("Not enough residual samples for Gaussian KS CDF.", l + pw / 2, t + ph / 2);
   }}
 }}
 function drawSelectedTraceAndOasis() {{ drawTrace(); drawOasisDiagnostics(); }}
@@ -2967,6 +3279,7 @@ function metricSpreadsheetRows() {{
     const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
     const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
     const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
+    const cellTypeCode = data.cellTypeLabels?.[roi] ?? null;
     const reasons = morphologyReasons(metrics, dffMetrics, filter);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
@@ -2974,6 +3287,8 @@ function metricSpreadsheetRows() {{
     return {{
       suite2p: data.suite2pIndices[roi],
       label: labelName(labels[roi]),
+      cellTypeLabel: cellTypeLabelName(cellTypeCode),
+      cellTypeCode,
       footprint: metrics.footprint,
       skew: metrics.skew,
       aspect: metrics.aspect,
@@ -3007,9 +3322,9 @@ function metricSpreadsheetRows() {{
   }});
 }}
 function metricSpreadsheetCsv(rowsData = metricSpreadsheetRows()) {{
-  const csvHeader = ["suite2p_index","label","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","oasis_event_snr","oasis_rise_tau_seconds","oasis_decay_tau_seconds","oasis_event_residual_ks","reason"];
+  const csvHeader = ["suite2p_index","manual_label","cell_type_label","cell_type_code","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","andrea_postdoc_snr","autocorr_efold_time_seconds","oasis_event_snr","oasis_rise_tau_seconds","oasis_decay_tau_seconds","oasis_event_residual_ks","reason"];
   const csvRows = rowsData.map(row => [
-    row.suite2p, row.label, fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
+    row.suite2p, row.label, row.cellTypeLabel, row.cellTypeCode ?? "", fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
     row.connectivity, fmt(row.roiArea), fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.autocorrEfold),
     fmt(row.oasisEventSnr), fmt(row.oasisRiseTau), fmt(row.oasisDecayTau), fmt(row.oasisResidualKs), row.reason,
   ].map(csvEscape).join(","));
@@ -3027,6 +3342,8 @@ function openMetricSpreadsheet() {{
   const rows = rowsData.map(row => `<tr>${{
     td(row.suite2p) +
     labelTd(row.label) +
+    td(row.cellTypeLabel) +
+    td(row.cellTypeCode ?? "") +
     td(fmt(row.footprint), row.fail.footprint) +
     td(fmt(row.skew), row.fail.skew) +
     td(fmt(row.aspect), row.fail.aspect) +
@@ -3044,7 +3361,7 @@ function openMetricSpreadsheet() {{
   }}</tr>`).join("");
   const csv = metricSpreadsheetCsv(rowsData);
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>label</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>andrea_postdoc_snr</th><th>autocorr_efold_time_seconds</th><th>oasis_event_snr</th><th>oasis_rise_tau_seconds</th><th>oasis_decay_tau_seconds</th><th>oasis_event_residual_ks</th><th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:nth-child(3),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><p>cell_type_label_source: ${{data.cellTypeLabelSource || "not loaded"}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>manual_label</th><th>cell_type_label</th><th>cell_type_code</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>andrea_postdoc_snr</th><th>autocorr_efold_time_seconds</th><th>oasis_event_snr</th><th>oasis_rise_tau_seconds</th><th>oasis_decay_tau_seconds</th><th>oasis_event_residual_ks</th><th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }}
 function saveMetricSpreadsheet() {{
@@ -3231,6 +3548,17 @@ document.getElementById("toggleSideMenu").addEventListener("click", () => {{
   button.setAttribute("aria-expanded", String(!collapsed));
   requestAnimationFrame(draw);
 }});
+const oasisDiagnosticsPanel = document.querySelector(".oasis-diagnostics");
+const toggleOasisDiagnostics = document.getElementById("toggleOasisDiagnostics");
+if (oasisDiagnosticsPanel && toggleOasisDiagnostics) {{
+  toggleOasisDiagnostics.addEventListener("click", () => {{
+    const shouldShow = oasisDiagnosticsPanel.classList.contains("minimized");
+    oasisDiagnosticsPanel.classList.toggle("minimized", !shouldShow);
+    document.querySelector(".fov-review").classList.toggle("oasis-collapsed", !shouldShow);
+    toggleOasisDiagnostics.textContent = shouldShow ? "Hide diagnostics" : "Show diagnostics";
+    requestAnimationFrame(draw);
+  }});
+}}
 ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax"].forEach(id => {{
   document.getElementById(id).addEventListener("change", evaluateFilter);
   document.getElementById(id).addEventListener("input", drawMetricHistograms);
@@ -3272,8 +3600,17 @@ document.getElementById("traceCanvas").addEventListener("mousedown", e => {{ dra
 window.addEventListener("mousemove", e => {{ if (!dragging) return; const rect=document.getElementById("traceCanvas").getBoundingClientRect(), shift=-(e.clientX-sx)/rect.width*(start1-start0); setFrameWindow(start0+shift, start1+shift); }});
 window.addEventListener("mouseup", () => {{ dragging=false; document.getElementById("traceCanvas").classList.remove("dragging"); }});
 document.getElementById("traceCanvas").addEventListener("dblclick", reset);
+let motionDragging=false, motionSx=0, motionStart0=0, motionStart1=0;
+document.getElementById("motionDriftCanvas").addEventListener("wheel", e => {{
+  e.preventDefault(); const rect=e.target.getBoundingClientRect(), xf=(e.clientX-rect.left)/rect.width, c=x0+xf*(x1-x0), s=(e.deltaY<0?.78:1.28)*(x1-x0);
+  setFrameWindow(Math.max(0,c-xf*s), Math.min(data.nFrames-1, Math.max(0,c-xf*s)+s));
+}}, {{passive:false}});
+document.getElementById("motionDriftCanvas").addEventListener("mousedown", e => {{ motionDragging=true; motionSx=e.clientX; motionStart0=x0; motionStart1=x1; e.target.classList.add("dragging"); }});
+window.addEventListener("mousemove", e => {{ if (!motionDragging) return; const rect=document.getElementById("motionDriftCanvas").getBoundingClientRect(), shift=-(e.clientX-motionSx)/rect.width*(motionStart1-motionStart0); setFrameWindow(motionStart0+shift, motionStart1+shift); }});
+window.addEventListener("mouseup", () => {{ motionDragging=false; document.getElementById("motionDriftCanvas").classList.remove("dragging"); }});
+document.getElementById("motionDriftCanvas").addEventListener("dblclick", reset);
 window.addEventListener("resize", () => {{ syncControlColumnHeight(); draw(); }});
-makeOverlays(); syncTimeInputs(); updateMetricDefaults(); updateRoiDisplaySummary(); populatePresetSelect("all_rois"); resetFilter();
+makeOverlays(); syncTimeInputs(); updateMetricDefaults(); updateCellTypeLabelStatus(); updateRoiDisplaySummary(); populatePresetSelect("all_rois"); resetFilter();
 if (data.initialMorphologyFilter) writeFilter(data.initialMorphologyFilter);
 applySort(); syncControlColumnHeight(); setSelected(visibleRois[0]);
 if (data.dffStorageMode === "file" && data.dffSidecarName) {{
@@ -3311,22 +3648,41 @@ def create_preprocessing_summary(
     mean_green = _load_masks_h5_image(session_dir, "mean_func")
     if mean_green is None:
         mean_green = np.asarray(ops.get("meanImg"))
+    elif "meanImg" in ops and np.asarray(mean_green).shape[:2] != np.asarray(ops.get("meanImg")).shape[:2]:
+        mean_green = np.asarray(ops.get("meanImg"))
     max_green = _load_masks_h5_image(session_dir, "max_func")
     if max_green is None:
         max_green = np.asarray(ops.get("max_proj", ops.get("maxImg", mean_green)))
+    elif np.asarray(max_green).shape[:2] != np.asarray(mean_green).shape[:2]:
+        max_green = np.asarray(ops.get("max_proj", ops.get("maxImg", mean_green)))
+        if np.asarray(max_green).shape[:2] != np.asarray(mean_green).shape[:2]:
+            max_green = mean_green
     mean_red = _load_masks_h5_image(session_dir, "mean_anat")
     red_available = mean_red is not None
-    if mean_red is None and ops.get("nchannels", 1) != 1 and "meanImg_chan2" in ops:
+    if (
+        (mean_red is None or np.asarray(mean_red).shape[:2] != np.asarray(mean_green).shape[:2])
+        and ops.get("nchannels", 1) != 1
+        and "meanImg_chan2" in ops
+    ):
         mean_red = np.asarray(ops.get("meanImg_chan2"))
         red_available = True
     max_red = _load_masks_h5_image(session_dir, "max_anat")
     if max_red is None and red_available:
         max_red = np.asarray(ops.get("meanImg_chan2_corrected", mean_red))
+    elif max_red is not None and red_available and np.asarray(max_red).shape[:2] != np.asarray(mean_green).shape[:2]:
+        max_red = np.asarray(ops.get("meanImg_chan2_corrected", mean_red))
+        if np.asarray(max_red).shape[:2] != np.asarray(mean_green).shape[:2]:
+            max_red = mean_red
     if not red_available:
         mean_red = None
         max_red = None
     if mean_green is None:
         raise KeyError("Could not find green functional mean image in masks.h5 or ops.npy")
+    cellpose_mask = (
+        _load_masks_h5_label_mask(session_dir, "masks_anat", np.asarray(mean_green).shape[:2], ops)
+        if red_available
+        else None
+    )
 
     frame_rate = float(ops.get("fs", 30.0))
     dff_label = "raw dF/F from Suite2p F.npy/Fneu.npy"
@@ -3375,6 +3731,7 @@ def create_preprocessing_summary(
         iscell[:, :] = 1.0
     suite2p_fingerprint = suite2p_stat_fingerprint(stat)
     morphology_metrics = roi_morphology_metrics(stat)
+    cell_type_labels, cell_type_label_source = _load_cell_type_labels(session_dir, n_rois, stat)
     target_structure = target_structure or _target_structure(pipeline_parameters, qc_parameters)
     preset_exclusion_reasons = (
         morphology_exclusion_reasons(morphology_metrics, qc_parameters)
@@ -3403,12 +3760,15 @@ def create_preprocessing_summary(
         session_name=session_dir.name,
         mean_green=mean_green,
         mean_red=mean_red,
+        cellpose_mask=cellpose_mask,
         mask=mask,
         stat=stat,
         suite2p_indices=suite2p_indices,
         iscell=iscell,
         suite2p_fingerprint=suite2p_fingerprint,
         morphology_metrics=morphology_metrics,
+        cell_type_labels=cell_type_labels,
+        cell_type_label_source=cell_type_label_source,
         preset_exclusion_reasons=preset_exclusion_reasons,
         qc_parameters=qc_parameters,
         target_structure=target_structure,

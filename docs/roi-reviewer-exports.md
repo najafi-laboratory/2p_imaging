@@ -166,6 +166,43 @@ The number of rows must match the original Suite2p ROI count, so
 The reviewer initializes every Suite2p ROI as not labeled, so values are `NaN`
 unless the reviewer labels ROIs manually or applies labels from a filter.
 
+### Optional cell-type labels
+
+For two-channel sessions with excitatory/inhibitory labels, the reviewer can
+also load a separate cell-type label array. These labels are metadata for each
+ROI and do not replace the manual good/bad/unsure review labels.
+
+The accepted formats are:
+
+```text
+/path/to/session/masks.h5
+└── labels
+```
+
+or:
+
+```text
+/path/to/session/suite2p/plane0/roi_cell_type_labels.npy
+```
+
+The array must have one value per original Suite2p ROI. Values are:
+
+| Value | Meaning |
+| --- | --- |
+| `-1` | excitatory / non-red |
+| `0` | unsure |
+| `1` | inhibitory / red |
+| `NaN` | not loaded / unavailable |
+
+When the labels are present and correctly shaped, the reviewer includes them in
+the selected ROI details and in the ROI metric spreadsheet as
+`cell_type_label` and `cell_type_code`.
+
+Older `masks.h5["labels"]` files may have one row per morphology/QC-filtered
+ROI instead of one row per original Suite2p ROI. When `qc_results/stat.npy` is
+available, the summary generator maps those labels back to the original Suite2p
+ROI indices before embedding them in the reviewer.
+
 Place the reviewed file beside the original Suite2p files:
 
 ```text
