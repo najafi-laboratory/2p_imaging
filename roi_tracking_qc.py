@@ -43,7 +43,14 @@ import scipy.sparse as sp
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
 from matplotlib.ticker import MaxNLocator
-from scipy.ndimage import binary_dilation, gaussian_filter, uniform_filter
+from scipy.ndimage import (
+    binary_closing,
+    binary_dilation,
+    binary_fill_holes,
+    gaussian_filter,
+    label,
+    uniform_filter,
+)
 
 # ---------------------------------------------------------------------------
 # helpers
@@ -95,8 +102,9 @@ def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
       2. For every tissue pixel (y, x) in the aligned frame, use the aligner's
          remapping index — remapping_idx[y, x] = [src_col, src_row] — to look
          up the exact corresponding raw pixel and mark it True on the canvas.
-      3. A single dilation pass fills the ~1-pixel gaps that arise from rounding
-         the floating-point source coordinates to integer pixel positions.
+      3. Consolidate into one solid region (close gaps, fill interior holes,
+         keep the largest connected component) so the contour is a single clean
+         perimeter rather than a scatter of speckle and inner-hole outlines.
 
     Parameters
     ----------
@@ -125,7 +133,7 @@ def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
         r0 = (H_raw - H_aln) // 2
         c0 = (W_raw - W_aln) // 2
         canvas[r0 : r0 + H_aln, c0 : c0 + W_aln] = mask_aln
-        return canvas
+        return _consolidate_mask(canvas)
 
     remap = np.asarray(remapping_idx, dtype=float)
     tissue_yx = np.argwhere(mask_aln)  # (N, 2): [row, col] in aligned
@@ -137,7 +145,26 @@ def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
     valid = (raw_col >= 0) & (raw_col < W_raw) & (raw_row >= 0) & (raw_row < H_raw)
     canvas[raw_row[valid], raw_col[valid]] = True
 
-    return binary_dilation(canvas, iterations=1)
+    return _consolidate_mask(canvas)
+
+
+def _consolidate_mask(mask) -> np.ndarray:
+    """Reduce a speckled boolean mask to a single solid region so its contour is
+    one clean perimeter.
+
+    Bridges the ~1px rounding gaps, closes small notches, fills interior holes,
+    then keeps only the largest connected component (drops stray outside specks).
+    """
+    m = binary_dilation(mask, iterations=1)
+    m = binary_closing(m, iterations=2)
+    m = binary_fill_holes(m)
+    assert m is not None  # only None when an output array is passed
+    lbl, num = label(m)  # type: ignore[misc]
+    if num > 1:
+        sizes = np.bincount(lbl.ravel())
+        sizes[0] = 0  # ignore background
+        m = lbl == sizes.argmax()
+    return m
 
 
 def _session_roi_index(labels_bySession, session, ucid):
@@ -176,8 +203,7 @@ def _draw(
         where the zoomed row sits.
     zoom_box_centroids : list of (row, col) or None
         Centres for each yellow box.  When None, a single box is drawn at
-        `centroid`.  Pass a per-session list to draw one box per session
-        (used on the superimposed raw-FOV panel).
+        `centroid`.  Pass a per-session list to draw one box per session.
     aligned_mask : (H_raw, W_raw) bool array or None
         When supplied, draw a cyan contour showing the valid tissue boundary of
         the raw FOV (True = tissue, False = uniform fill / background).
@@ -194,7 +220,7 @@ def _draw(
         fp_s = gaussian_filter(fp.astype(float), sigma=1.5)
         if fp_s.max() > 0:
             ax.contour(fp_s, levels=[fp_s.max() * 0.5], colors=[color], linewidths=1.1)
-    else:
+    elif not present:
         ax.text(
             0.5,
             0.04,
@@ -365,21 +391,16 @@ def build_ucid_figure(
 
     # ── column 0: superimposed ───────────────────────────────────────────────
     if use_raw:
-        # Superimposed raw: one yellow box per session at each session's raw centroid
-        valid_raw_centroids = [
-            c for c in centroids_raw_per_session if c is not None
-        ] or None
+        # Superimposed raw: background only — no ROI contour or crop boxes
         _draw(
             axes[0, 0],
             super_raw,
-            fp_con_raw,
+            None,
             centroid_raw,
             None,
             roi_color,
-            fp_con_raw.max() > 0,
-            "Superimposed",
-            zoom_box_hw=crop_halfwidth,
-            zoom_box_centroids=valid_raw_centroids,
+            True,
+            "superimposed - raw",
         )
 
     _draw(
@@ -390,7 +411,7 @@ def build_ucid_figure(
         None,
         roi_color,
         fp_con.max() > 0,
-        None if use_raw else "Superimposed",
+        "superimposed - aligned",
         zoom_box_hw=crop_halfwidth,
     )
 
@@ -402,7 +423,7 @@ def build_ucid_figure(
         crop_halfwidth,
         roi_color,
         fp_con.max() > 0,
-        None,
+        "superimposed - zoom",
     )
 
     # ── columns 1..n: per session ────────────────────────────────────────────
@@ -428,7 +449,7 @@ def build_ucid_figure(
                 None,
                 roi_color,
                 present[s],
-                col_title,
+                f"{col_title} - raw",
                 zoom_box_hw=crop_halfwidth if present[s] else None,
                 aligned_mask=aligned_masks[s],
             )
@@ -440,7 +461,7 @@ def build_ucid_figure(
             None,
             roi_color,
             present[s],
-            col_title if not use_raw else None,
+            f"{col_title} - aligned",
             zoom_box_hw=crop_halfwidth if present[s] else None,
         )
         _draw(
@@ -451,7 +472,7 @@ def build_ucid_figure(
             crop_halfwidth,
             roi_color,
             present[s],
-            None,
+            f"{col_title} - zoom",
         )
 
     # ── row labels (left-column y-axes) ──────────────────────────────────────
