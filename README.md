@@ -13,6 +13,7 @@ This module tracks the same neurons across imaging sessions. It takes the Suite2
 | `interactive_tracking.ipynb` | The pipeline itself. Step-by-step, parameter-tunable, with a visualization after nearly every step. This is what you run. |
 | `pipeline.py` | `filter_sessions_by_overlap()` — screens sessions for co-registerability before the real run, so poorly-overlapping sessions never enter the pipeline. |
 | `roi_tracking_qc.py` | Per-UCID cross-session QC figures, exportable as a multipage PDF or a self-contained HTML viewer with a UCID picker. |
+| `results_table.py` | Flattens the nested label lists and quality-metric arrays into two pandas tables: one row per tracked ROI, and a UCID × session match matrix. |
 
 ## Why the session-overlap filter exists
 
@@ -110,6 +111,74 @@ Four artifacts land in `dir_save`, named from `name_save`:
 
 The split matters for QC: **`results_all` + `run_data` together are sufficient to rebuild every QC figure in a fresh kernel**, without re-running the pipeline. `run_data` carries the FOV images and the non-rigid remapping indices; `results_all` carries the labels and footprints.
 
+## Tabular results: `results_table.py`
+
+The saved artifacts store labels as nested per-session lists and quality metrics as separate arrays with their own indexing conventions. Neither is convenient for joining tracking output to dF/F traces. This module flattens them.
+
+### Long table — one row per tracked ROI
+
+```python
+import results_table as rt
+
+roi_table = rt.build_roi_table(
+    _results_all['clusters']['labels_bySession'],
+    quality_metrics=_results_all['clusters']['quality_metrics'],
+    paths_stat=_results_all['input_data']['paths_stat'],
+    stim_types=stim_types,
+    rois_aligned=_results_all['ROIs']['ROIs_aligned'],
+    H=H, W=W,
+)
+```
+
+| column | meaning |
+| --- | --- |
+| `ucid` | cluster ID, stable across sessions |
+| `session_idx` | 0-based index in *filtered* (post-overlap-screen) session order |
+| `session_name`, `date` | e.g. `SA11_20250811`, `20250811` — derived from `paths_stat` |
+| `stim_type` | `VG` / `ST` / `unknown`, when passed in |
+| `roi_idx` | **index into that session's `stat.npy`** — the join key for dF/F |
+| `roi_idx_global` | index into the session-concatenated ROI vector, which is how `sample_silhouette` and `sample_probabilities` are indexed |
+| `n_sessions_present` | distinct sessions this UCID appears in |
+| `n_rois_in_cluster` | total ROIs in the cluster; greater than `n_sessions_present` means one session contributed two ROIs to the same cluster, which is worth inspecting |
+| `cs_sil` | cluster silhouette (constant within a UCID) |
+| `sample_sil` | per-ROI silhouette |
+| `sample_prob` | per-ROI HDBSCAN membership probability; NaN on sequential-Hungarian runs, which don't produce it |
+| `centroid_y`, `centroid_x` | intensity-weighted centroid of the **aligned** footprint |
+
+ROIs with UCID −1 (unclustered) are dropped by default; pass `include_unclustered=True` to keep them for accounting.
+
+The aligned centroids double as a cheap correctness check: a well-tracked UCID should have nearly the same aligned centroid in every session. On the SA11_LG 3-session run, within-UCID centroid standard deviation averages 2–4 px. Clusters far above that are worth opening in the HTML viewer.
+
+### Wide match matrix — one row per UCID
+
+```python
+match_matrix = rt.build_match_matrix(roi_table)
+```
+
+```
+ucid   cs_sil  n_rois_in_cluster  n_sessions_present  SA11_20250811  SA11_20250812  SA11_20250813
+0    0.762147                  3                   3            8.0           31.0           22.0
+1    0.254051                  2                   2           14.0            NaN           50.0
+2   -0.014512                  2                   2           18.0           27.0            NaN
+```
+
+Cells hold the Suite2p ROI index for that neuron in that session, NaN where it wasn't detected. This is the table to join dF/F against: row = neuron, column = session, value = which ROI to pull. Columns are restored to acquisition order (`pivot_table` sorts alphabetically). If a session contributed two ROIs to one cluster, the cell becomes a comma-separated string rather than silently dropping one.
+
+### Export
+
+```python
+rt.export_tables(roi_table, str(Path(dir_save) / name_save))
+# -> {name}.roi_table.csv, {name}.match_matrix.csv
+```
+
+These are distinct from the pre-existing `*.matched_neurons_*.csv` and `*.quality_metrics_summary.csv` in the results folder, which are aggregate counts and metric distributions with no per-ROI rows.
+
+### The cs_sil off-by-one
+
+`quality_metrics['cluster_silhouette']` is aligned with `quality_metrics['cluster_labels_unique']`, and **that label array starts at −1**. So `cluster_silhouette[u]` is the score for cluster `u − 1`, not for UCID `u`, and position 0 holds the unclustered pseudo-cluster's score (near −1.0, so UCID 0 spuriously sorts to the front of a worst-first list).
+
+`rt.cs_sil_by_ucid(quality_metrics)` returns a properly UCID-indexed array (NaN where unavailable). `roi_tracking_qc` now accepts either that array *or* the whole `quality_metrics` dict, and re-indexes internally — **pass the dict**. The notebook does. Earlier QC exports were built with the raw array and are shifted by one; regenerate them if you relied on the displayed `cs_sil` values or on the worst-first ordering.
+
 ## QC: `roi_tracking_qc.py`
 
 Cluster-level metrics tell you the distribution is healthy; they don't tell you whether UCID 417 is actually the same neuron in all eight sessions. This module builds one figure per UCID so you can decide that by eye.
@@ -143,12 +212,14 @@ A good UCID has its red contour landing on the same cell body in every session, 
 ```python
 import roi_tracking_qc as qc
 
-order = qc.order_ucids_by_quality(labels_bySession, cs_sil, ascending=True)  # worst-first
+# Pass the quality_metrics dict, not cluster_silhouette — see the off-by-one note above.
+qm = _results_all['clusters']['quality_metrics']
+order = qc.order_ucids_by_quality(labels_bySession, qm, ascending=True)  # worst-first
 
 qc.export_html(
     "out_tracking.html", order[:200],
     fovs_aligned, rois_aligned, labels_bySession, H, W,
-    cs_sil=cs_sil, crop_halfwidth=40,
+    cs_sil=qm, crop_halfwidth=40,
     fovs_raw=fovs_raw, rois_raw=rois_raw,
     remapping_idxs=remapping_idxs,
     mouse_name=mouse_name, session_names=session_names,
@@ -157,7 +228,7 @@ qc.export_html(
 
 - `export_html(path, ...)` — one self-contained HTML file: a dropdown, prev/next buttons, and every figure pre-rendered and base64-embedded. No server, no dependencies; hand the file to anyone. Because every PNG is inlined, there is a `max_ucids=400` safety cap — pass a worst-first slice rather than all clusters.
 - `export_pdf(path, ...)` — one multipage PDF, one UCID per page. No cap, but no navigation either.
-- `order_ucids_by_quality(labels_bySession, cs_sil, ascending=True)` — worst-first by silhouette score, so the first pages of the export are the clusters most likely to be wrong. Unclustered ROIs (label −1) are dropped by default; UCIDs with no score sort last.
+- `order_ucids_by_quality(labels_bySession, quality_metrics, ascending=True)` — worst-first by silhouette score, so the first pages of the export are the clusters most likely to be wrong. Unclustered ROIs (label −1) are dropped by default; UCIDs with no score sort last.
 
 Both exporters share `build_ucid_figure()`, so PDF and HTML pages are identical apart from DPI (110 vs. 90).
 
@@ -187,3 +258,5 @@ It needs `paths_save`, `dir_save`, `name_save`, `dir_allOuterFolders`, and `get_
 - `EXCLUDE_DIRS` exists because QC output folders contain `stat.npy` copies. Adding a new output subfolder that contains Suite2p-shaped files means adding it here too.
 - `um_per_pixel` is currently `1.0`, i.e. distances in the aligner's micrometer parameters are really pixels. Set it correctly if you want `radius_in`/`radius_out` to mean physical distance.
 - Silhouette-based ordering is only as meaningful as the mixing fit. If the pairwise-distance plot was not bimodal, `cs_sil` ranking is not a reliable guide to which clusters to inspect — page through the PDF instead.
+- `cluster_silhouette` is indexed by position in `cluster_labels_unique`, which starts at −1 — never index it by UCID directly. Use `rt.cs_sil_by_ucid()`, or pass the whole `quality_metrics` dict to the QC functions.
+- `roi_idx` in the tables is the index into that session's `stat.npy` — i.e. *all* Suite2p ROIs. The dF/F pipeline selects a subset and records its own mapping in `cell_indices`, so joining tracking to dF/F means matching `roi_table.roi_idx` against `dff.h5:/cell_indices`, not against dF/F row order.

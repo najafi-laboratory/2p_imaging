@@ -147,8 +147,18 @@ def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
     if len(tissue_yx) == 0:
         return canvas
 
-    raw_col = np.round(remap[tissue_yx[:, 0], tissue_yx[:, 1], 0]).astype(int)
-    raw_row = np.round(remap[tissue_yx[:, 0], tissue_yx[:, 1], 1]).astype(int)
+    col_f = remap[tissue_yx[:, 0], tissue_yx[:, 1], 0]
+    row_f = remap[tissue_yx[:, 0], tissue_yx[:, 1], 1]
+
+    # Drop non-finite entries before casting.  The warp leaves NaN wherever an
+    # output pixel has no source pixel, and float->int casting of NaN is
+    # undefined: numpy yields 0 here, which passes the bounds check below and
+    # would paint spurious tissue along row 0 / column 0.
+    finite = np.isfinite(col_f) & np.isfinite(row_f)
+    col_f, row_f = col_f[finite], row_f[finite]
+
+    raw_col = np.round(col_f).astype(int)
+    raw_row = np.round(row_f).astype(int)
     valid = (raw_col >= 0) & (raw_col < W_raw) & (raw_row >= 0) & (raw_row < H_raw)
     canvas[raw_row[valid], raw_col[valid]] = True
 
@@ -516,16 +526,36 @@ def build_ucid_figure(
 # --- ordering ---
 
 
+def _normalize_cs_sil(cs_sil):
+    """Return a UCID-indexed cs_sil array, or None.
+
+    Accepts either an array already indexed by UCID, or the whole
+    ``quality_metrics`` dict.  Passing the dict is preferred: ROICaT's
+    ``cluster_silhouette`` is aligned with ``cluster_labels_unique``, which
+    starts at -1, so indexing the raw array by UCID is off by one.
+    """
+    if cs_sil is None:
+        return None
+    if isinstance(cs_sil, dict):
+        from results_table import cs_sil_by_ucid  # lazy: keeps pandas out of import
+
+        return cs_sil_by_ucid(cs_sil)
+    return np.asarray(cs_sil)
+
+
 def order_ucids_by_quality(
     labels_bySession, cs_sil=None, ascending=True, drop_unclustered=True
 ):
-    """Return UCIDs ordered by cs_sil (worst-first by default)."""
+    """Return UCIDs ordered by cs_sil (worst-first by default).
+
+    ``cs_sil`` may be a UCID-indexed array or the ``quality_metrics`` dict.
+    """
     all_u = np.unique(np.concatenate([np.asarray(x) for x in labels_bySession]))
     if drop_unclustered:
         all_u = all_u[all_u >= 0]
+    cs_sil = _normalize_cs_sil(cs_sil)
     if cs_sil is None:
         return list(all_u)
-    cs_sil = np.asarray(cs_sil)
     keyed = [(u, cs_sil[u] if 0 <= u < len(cs_sil) else np.nan) for u in all_u]
     # Sort by score in the requested direction; UCID stays an ascending tie-break.
     score_sign = 1 if ascending else -1
@@ -555,7 +585,7 @@ def export_pdf(
     **fig_kwargs,
 ):
     """Write one multipage PDF, one UCID per page."""
-    cs_sil = np.asarray(cs_sil) if cs_sil is not None else None
+    cs_sil = _normalize_cs_sil(cs_sil)
     with PdfPages(path) as pdf:
         for u in ucids:
             score = _score_for(cs_sil, u)
@@ -664,7 +694,7 @@ def export_html(
             f"huge.  Pass a worst-first subset, e.g. "
             f"order_ucids_by_quality(...)[:{max_ucids}]."
         )
-    cs_sil = np.asarray(cs_sil) if cs_sil is not None else None
+    cs_sil = _normalize_cs_sil(cs_sil)
     records = []
     for u in ucids:
         score = _score_for(cs_sil, u)
