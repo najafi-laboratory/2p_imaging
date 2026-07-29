@@ -57,7 +57,9 @@ def filter_sessions_by_overlap(
         Indices into the original path lists of the retained sessions.
     """
     n = len(paths_stat)
-    umpp = [um_per_pixel] * n if not isinstance(um_per_pixel, list) else list(um_per_pixel)
+    umpp = (
+        [um_per_pixel] * n if not isinstance(um_per_pixel, list) else list(um_per_pixel)
+    )
 
     # ── 1. Load all sessions ──────────────────────────────────────────────────
     data_all = roicat.data_importing.Data_suite2p(
@@ -114,9 +116,7 @@ def filter_sessions_by_overlap(
     aligned = (aligned | aligned.T).astype(bool)  # symmetrise
 
     _, group_ids = connected_components(aligned, directed=False)
-    keep = sorted(
-        np.where(group_ids == np.argmax(np.bincount(group_ids)))[0].tolist()
-    )
+    keep = sorted(np.where(group_ids == np.argmax(np.bincount(group_ids)))[0].tolist())
     dropped = [i for i in range(n) if i not in keep]
 
     print(f"Session filter: {len(keep)}/{n} sessions kept")
