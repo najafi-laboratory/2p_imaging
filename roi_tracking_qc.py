@@ -34,11 +34,12 @@ import io
 import json
 
 import matplotlib
-import numpy as np
 
-matplotlib.use("Agg")
+matplotlib.use("Agg")  # headless backend; must be set before pyplot is imported
+
 import matplotlib.axes as maxes
 import matplotlib.pyplot as plt
+import numpy as np
 import scipy.sparse as sp
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.patches import Rectangle
@@ -52,9 +53,7 @@ from scipy.ndimage import (
     uniform_filter,
 )
 
-# ---------------------------------------------------------------------------
-# helpers
-# ---------------------------------------------------------------------------
+# --- helpers ---
 
 
 def _footprint_image(rois_aligned, session, roi_idx, H, W):
@@ -93,8 +92,7 @@ def _norm(img, p=(1, 99)):
 
 
 def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
-    """Return a (H_raw, W_raw) bool mask showing the aligned tissue region in
-    raw-image coordinates.
+    """Map the aligned tissue region into raw-image coordinates.
 
     Strategy:
       1. Detect tissue in the aligned image via local variance (robust to the
@@ -108,12 +106,21 @@ def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
 
     Parameters
     ----------
-    fov_aln : (H, W) array  — one session's aligned FOV image
-    fov_raw : (H, W) array  — corresponding raw (unregistered) FOV image
-    remapping_idx : (H, W, 2) float array
-        aligner.remappingIdx_nonrigid[session]: for output pixel (y, x),
+    fov_aln : (H, W) array
+        One session's aligned FOV image.
+    fov_raw : (H, W) array
+        The corresponding raw (unregistered) FOV image.
+    remapping_idx : (H, W, 2) float array or None
+        aligner.remappingIdx_nonrigid[session]: for output pixel (y, x), the
         raw source coordinates are (remapping_idx[y, x, 0],  ← col / x
-                                    remapping_idx[y, x, 1])  ← row / y
+                                    remapping_idx[y, x, 1])  ← row / y.
+        When None, the aligned mask is centred in the raw canvas instead.
+    window : int
+        Side length of the local-variance window used for tissue detection.
+
+    Returns
+    -------
+    (H_raw, W_raw) bool array — True where aligned tissue lands in raw coords.
     """
     aln = np.asarray(fov_aln, dtype=float)
     H_aln, W_aln = aln.shape[:2]
@@ -149,11 +156,11 @@ def _aligned_mask_in_raw_coords(fov_aln, fov_raw, remapping_idx=None, window=7):
 
 
 def _consolidate_mask(mask) -> np.ndarray:
-    """Reduce a speckled boolean mask to a single solid region so its contour is
-    one clean perimeter.
+    """Reduce a speckled boolean mask to a single solid region.
 
     Bridges the ~1px rounding gaps, closes small notches, fills interior holes,
-    then keeps only the largest connected component (drops stray outside specks).
+    then keeps only the largest connected component (drops stray outside
+    specks), so the resulting contour is one clean perimeter.
     """
     m = binary_dilation(mask, iterations=1)
     m = binary_closing(m, iterations=2)
@@ -181,7 +188,7 @@ def _draw(
     crop_hw,
     color,
     present,
-    label,
+    title,
     zoom_box_hw=None,
     zoom_box_centroids=None,
     aligned_mask=None,
@@ -197,7 +204,7 @@ def _draw(
         None → show full image; int → zoom axes to ±crop_hw around centroid.
     color : matplotlib colour for the ROI contour / n/d marker
     present : bool — whether this session detected the ROI
-    label : str | None — panel title (shown above the axes)
+    title : str | None — panel title (shown above the axes)
     zoom_box_hw : int | None
         If set, draw thin dashed yellow rectangles of ±zoom_box_hw to indicate
         where the zoomed row sits.
@@ -268,13 +275,11 @@ def _draw(
     ax.yaxis.set_major_locator(MaxNLocator(4, integer=True))
     ax.tick_params(labelsize=6)
 
-    if label:
-        ax.set_title(label, fontsize=8)
+    if title:
+        ax.set_title(title, fontsize=8)
 
 
-# ---------------------------------------------------------------------------
-# core figure builder
-# ---------------------------------------------------------------------------
+# --- core figure builder ---
 
 
 def build_ucid_figure(
@@ -324,7 +329,7 @@ def build_ucid_figure(
     r_aligned = 1 if use_raw else 0
     r_zoom = 2 if use_raw else 1
 
-    # ── normalise backgrounds ────────────────────────────────────────────────
+    # --- normalise backgrounds ---
     bg_aln = [_norm(fovs_aligned[s]) for s in range(n)]
     stk_aln = np.stack(bg_aln, 0)
     super_aln = _norm(stk_aln.max(0) if superimpose == "max" else stk_aln.mean(0))
@@ -338,7 +343,7 @@ def build_ucid_figure(
         stk_raw = np.stack(bg_raw, 0)
         super_raw = _norm(stk_raw.max(0) if superimpose == "max" else stk_raw.mean(0))
 
-    # ── per-session footprints + consensus ──────────────────────────────────
+    # --- per-session footprints + consensus ---
     idxs = [_session_roi_index(labels_bySession, s, ucid) for s in range(n)]
     fps = [_footprint_image(rois_aligned, s, idxs[s], H, W) for s in range(n)]
     present = [i is not None for i in idxs]
@@ -361,10 +366,10 @@ def build_ucid_figure(
         ]
 
     # Pre-alignment footprints and per-session centroids for the raw FOV row
-    fps_raw: list = []
-    fp_con_raw: np.ndarray = fp_con
+    fps_raw: list[np.ndarray | None] = []
     centroid_raw = centroid
-    centroids_raw_per_session: list = []  # one (r,c) per session, or None if absent
+    # one (row, col) per session, or None where the session has no detection
+    centroids_raw_per_session: list[tuple[float, float] | None] = []
     if use_raw and rois_raw is not None:
         fps_raw = [_footprint_image(rois_raw, s, idxs[s], H, W) for s in range(n)]
         present_fps_raw = [f for f, p in zip(fps_raw, present) if p and f is not None]
@@ -379,7 +384,7 @@ def build_ucid_figure(
             for s in range(n)
         ]
 
-    # ── figure layout ────────────────────────────────────────────────────────
+    # --- figure layout ---
     fig, axes = plt.subplots(
         n_rows,
         n + 1,
@@ -389,7 +394,7 @@ def build_ucid_figure(
     if n == 0:
         axes = np.array(axes).reshape(n_rows, 1)
 
-    # ── column 0: superimposed ───────────────────────────────────────────────
+    # --- column 0: superimposed ---
     if use_raw:
         # Superimposed raw: background only — no ROI contour or crop boxes
         _draw(
@@ -426,13 +431,14 @@ def build_ucid_figure(
         "superimposed - zoom",
     )
 
-    # ── columns 1..n: per session ────────────────────────────────────────────
+    # --- columns 1..n: per session ---
     for s in range(n):
         col_title = session_names[s]
         if use_raw:
             fp_raw_s = fps_raw[s] if fps_raw else fps[s]
-            # Use this session's own raw centroid so the box tracks the pre-alignment position;
-            # fall back to the consensus raw centroid for absent sessions (n/d marker placement).
+            # Use this session's own raw centroid so the box tracks the
+            # pre-alignment position; fall back to the consensus raw centroid
+            # for absent sessions (n/d marker placement).
             cen_raw_s = (
                 centroids_raw_per_session[s]
                 if (
@@ -475,7 +481,7 @@ def build_ucid_figure(
             f"{col_title} - zoom",
         )
 
-    # ── row labels (left-column y-axes) ──────────────────────────────────────
+    # --- row labels (left-column y-axes) ---
     # axes[row, col] is typed as ndarray by stubs; cast to Axes for attribute access
     def _ax(row: int, col: int) -> maxes.Axes:
         return axes[row, col]  # type: ignore[return-value]
@@ -485,7 +491,7 @@ def build_ucid_figure(
     _ax(r_aligned, 0).set_ylabel("aligned FOV", fontsize=9, labelpad=4)
     _ax(r_zoom, 0).set_ylabel("zoom", fontsize=9, labelpad=4)
 
-    # ── x / y pixel labels on every panel ────────────────────────────────────
+    # --- x / y pixel labels on every panel ---
     for row in range(n_rows):
         for col in range(n + 1):
             ax = _ax(row, col)
@@ -494,7 +500,7 @@ def build_ucid_figure(
                 # col 0 already carries the row label as its ylabel
                 ax.set_ylabel("y (px)", fontsize=7, labelpad=1)
 
-    # ── suptitle ─────────────────────────────────────────────────────────────
+    # --- suptitle ---
     k = sum(present)
     parts = []
     if mouse_name:
@@ -507,9 +513,7 @@ def build_ucid_figure(
     return fig
 
 
-# ---------------------------------------------------------------------------
-# ordering
-# ---------------------------------------------------------------------------
+# --- ordering ---
 
 
 def order_ucids_by_quality(
@@ -529,9 +533,7 @@ def order_ucids_by_quality(
     return [u for u, _ in keyed]
 
 
-# ---------------------------------------------------------------------------
-# exporters
-# ---------------------------------------------------------------------------
+# --- exporters ---
 
 
 def _score_for(cs_sil, u):
@@ -573,51 +575,69 @@ def export_pdf(
 
 
 def _fig_to_b64(fig):
+    """Render a figure to a base64-encoded PNG string and close it."""
     buf = io.BytesIO()
     fig.savefig(buf, format="png", bbox_inches="tight")
     plt.close(fig)
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-_HTML = """<!doctype html><html><head><meta charset="utf-8">
+_HTML = """<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
 <title>ROICaT cross-session QC</title>
 <style>
- body{font-family:system-ui,sans-serif;margin:24px;color:#1a1a1a}
- .bar{display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap}
- select,button{font-size:15px;padding:5px 9px}
- #meta{color:#555;font-size:14px}
- img{max-width:100%;border:1px solid #ddd;border-radius:6px}
-</style></head><body>
+  body { font-family: system-ui, sans-serif; margin: 24px; color: #1a1a1a; }
+  .bar {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 14px;
+    flex-wrap: wrap;
+  }
+  select, button { font-size: 15px; padding: 5px 9px; }
+  #meta { color: #555; font-size: 14px; }
+  img { max-width: 100%; border: 1px solid #ddd; border-radius: 6px; }
+</style>
+</head>
+<body>
 <div class="bar">
- <strong>UCID</strong>
- <select id="pick"></select>
- <button id="prev">&larr; prev</button>
- <button id="next">next &rarr;</button>
- <span id="meta"></span>
+  <strong>UCID</strong>
+  <select id="pick"></select>
+  <button id="prev">&larr; prev</button>
+  <button id="next">next &rarr;</button>
+  <span id="meta"></span>
 </div>
 <img id="fig" alt="ROI figure">
 <script>
 const DATA = {data_json};
 const pick = document.getElementById('pick');
-const fig  = document.getElementById('fig');
+const fig = document.getElementById('fig');
 const meta = document.getElementById('meta');
-DATA.forEach((d,i)=>{
-  const o=document.createElement('option');
-  o.value=i;
-  o.text='UCID '+d.ucid+(d.score!=null?'  (cs_sil '+d.score.toFixed(3)+')':'');
+
+DATA.forEach((d, i) => {
+  const o = document.createElement('option');
+  o.value = i;
+  o.text = 'UCID ' + d.ucid +
+    (d.score != null ? '  (cs_sil ' + d.score.toFixed(3) + ')' : '');
   pick.appendChild(o);
 });
-function show(i){
-  i=Math.max(0,Math.min(DATA.length-1,i));
-  pick.value=i;
-  fig.src='data:image/png;base64,'+DATA[i].png;
-  meta.textContent=(i+1)+' / '+DATA.length;
+
+function show(i) {
+  i = Math.max(0, Math.min(DATA.length - 1, i));
+  pick.value = i;
+  fig.src = 'data:image/png;base64,' + DATA[i].png;
+  meta.textContent = (i + 1) + ' / ' + DATA.length;
 }
-pick.onchange=()=>show(+pick.value);
-document.getElementById('prev').onclick=()=>show(+pick.value-1);
-document.getElementById('next').onclick=()=>show(+pick.value+1);
+
+pick.onchange = () => show(+pick.value);
+document.getElementById('prev').onclick = () => show(+pick.value - 1);
+document.getElementById('next').onclick = () => show(+pick.value + 1);
 show(0);
-</script></body></html>"""
+</script>
+</body>
+</html>"""
 
 
 def export_html(
@@ -664,7 +684,3 @@ def export_html(
     with open(path, "w") as f:
         f.write(html)
     print(f"wrote {len(records)} UCIDs -> {path}")
-
-
-if __name__ == "__main__":
-    pass
