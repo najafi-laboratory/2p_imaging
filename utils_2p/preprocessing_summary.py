@@ -8,6 +8,7 @@ import base64
 import io
 import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,96 @@ HTML_NAME_TEMPLATE = "{session_name}_interactive_fov_roi_dff.html"
 EMBEDDED_DFF_BYTE_LIMIT = 80 * 1024 * 1024
 EMBEDDED_DFF_BASE64_EXPANSION = 4 / 3
 EMBEDDED_DFF_HTML_OVERHEAD = 2 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class SummaryInputLayout:
+    name: str
+    stat_path: Path
+    fluo_path: Path
+    neuropil_path: Path
+    iscell_path: Path
+    spikes_paths: tuple[Path, ...]
+
+    @property
+    def dff_label(self) -> str:
+        if self.name == "suite2p":
+            return "raw dF/F from Suite2p F.npy/Fneu.npy"
+        return f"raw dF/F from {self.name} fluo.npy/neuropil.npy"
+
+
+def _path_status(path: Path) -> str:
+    return str(path) if path.exists() else f"{path} (missing)"
+
+
+def _layout_complete(layout: SummaryInputLayout) -> bool:
+    return layout.stat_path.exists() and layout.fluo_path.exists() and layout.neuropil_path.exists()
+
+
+def _suite2p_layout(session_dir: Path) -> SummaryInputLayout:
+    plane_dir = session_dir / "suite2p" / "plane0"
+    return SummaryInputLayout(
+        name="suite2p",
+        stat_path=plane_dir / "stat.npy",
+        fluo_path=plane_dir / "F.npy",
+        neuropil_path=plane_dir / "Fneu.npy",
+        iscell_path=plane_dir / "iscell.npy",
+        spikes_paths=(session_dir / "spikes.h5", session_dir / "qc_results" / "spikes.h5"),
+    )
+
+
+def _qc_results_layout(session_dir: Path, dirname: str) -> SummaryInputLayout:
+    qc_dir = session_dir / dirname
+    return SummaryInputLayout(
+        name=dirname,
+        stat_path=qc_dir / "stat.npy",
+        fluo_path=qc_dir / "fluo.npy",
+        neuropil_path=qc_dir / "neuropil.npy",
+        iscell_path=qc_dir / "iscell.npy",
+        spikes_paths=(qc_dir / "spikes.h5", session_dir / "spikes.h5"),
+    )
+
+
+def _resolve_summary_input_layout(session_dir: Path, requested: str = "auto") -> SummaryInputLayout:
+    layouts = {
+        "suite2p": _suite2p_layout(session_dir),
+        "qc_results": _qc_results_layout(session_dir, "qc_results"),
+        "manual_qc_results": _qc_results_layout(session_dir, "manual_qc_results"),
+    }
+    if requested != "auto":
+        layout = layouts[requested]
+        if not _layout_complete(layout):
+            raise FileNotFoundError(
+                f"Requested input layout '{requested}' is incomplete. Required files:\n"
+                f"  stat: {_path_status(layout.stat_path)}\n"
+                f"  fluorescence: {_path_status(layout.fluo_path)}\n"
+                f"  neuropil: {_path_status(layout.neuropil_path)}"
+            )
+        return layout
+
+    for name in ("qc_results", "manual_qc_results", "suite2p"):
+        layout = layouts[name]
+        if _layout_complete(layout):
+            return layout
+    searched = "\n".join(
+        f"{name}: stat={layout.stat_path}, fluorescence={layout.fluo_path}, neuropil={layout.neuropil_path}"
+        for name, layout in layouts.items()
+    )
+    raise FileNotFoundError(f"Could not detect a complete summary input layout. Checked:\n{searched}")
+
+
+def _log_summary_input_layout(layout: SummaryInputLayout, requested: str) -> None:
+    mode = "auto-detected" if requested == "auto" else "explicit"
+    print(f"Using {mode} preprocessing summary input layout: {layout.name}")
+    print(f"  stat: {layout.stat_path}")
+    print(f"  fluorescence: {layout.fluo_path}")
+    print(f"  neuropil: {layout.neuropil_path}")
+    print(f"  iscell: {_path_status(layout.iscell_path)}")
+    existing_spikes = [path for path in layout.spikes_paths if path.exists()]
+    if existing_spikes:
+        print(f"  inferred spikes: {existing_spikes[0]}")
+    else:
+        print("  inferred spikes: not found")
 
 
 def _estimate_embedded_dff_bytes(n_rois: int, n_frames: int) -> int:
@@ -185,8 +276,14 @@ def _load_dff(session_dir: Path) -> np.ndarray:
     raise FileNotFoundError(f"Could not find dff.h5 in {session_dir} or {session_dir / 'qc_results'}")
 
 
-def _load_oasis_spikes(session_dir: Path, n_rois: int, n_frames: int) -> tuple[np.ndarray | None, dict[str, Any]]:
-    for path in (session_dir / "spikes.h5", session_dir / "qc_results" / "spikes.h5"):
+def _load_oasis_spikes(
+    session_dir: Path,
+    n_rois: int,
+    n_frames: int,
+    input_layout: SummaryInputLayout | None = None,
+) -> tuple[np.ndarray | None, dict[str, Any]]:
+    paths = input_layout.spikes_paths if input_layout is not None else (session_dir / "spikes.h5", session_dir / "qc_results" / "spikes.h5")
+    for path in paths:
         if not path.exists():
             continue
         with h5py.File(path, "r") as h5:
@@ -322,10 +419,10 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
     return presets
 
 
-def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any]) -> np.ndarray:
-    plane_dir = session_dir / "suite2p" / "plane0"
-    fluo = np.load(plane_dir / "F.npy", allow_pickle=False).astype(np.float32, copy=False)
-    neuropil = np.load(plane_dir / "Fneu.npy", allow_pickle=False).astype(np.float32, copy=False)
+def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any], input_layout: SummaryInputLayout | None = None) -> np.ndarray:
+    layout = input_layout or _suite2p_layout(session_dir)
+    fluo = np.load(layout.fluo_path, allow_pickle=False).astype(np.float32, copy=False)
+    neuropil = np.load(layout.neuropil_path, allow_pickle=False).astype(np.float32, copy=False)
     signal = fluo - float(ops.get("neucoeff", 0.7)) * neuropil
     baseline = gaussian_filter(signal, [0.0, 600.0])
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -334,10 +431,13 @@ def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any]) -> np.ndarray:
     return dff.astype(np.float32, copy=False)
 
 
-def _load_suite2p_fluorescence(session_dir: Path) -> tuple[np.ndarray, np.ndarray]:
-    plane_dir = session_dir / "suite2p" / "plane0"
-    fluo = np.load(plane_dir / "F.npy", allow_pickle=False, mmap_mode="r")
-    neuropil = np.load(plane_dir / "Fneu.npy", allow_pickle=False, mmap_mode="r")
+def _load_suite2p_fluorescence(
+    session_dir: Path,
+    input_layout: SummaryInputLayout | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
+    layout = input_layout or _suite2p_layout(session_dir)
+    fluo = np.load(layout.fluo_path, allow_pickle=False, mmap_mode="r")
+    neuropil = np.load(layout.neuropil_path, allow_pickle=False, mmap_mode="r")
     return fluo, neuropil
 
 
@@ -356,6 +456,7 @@ def _dff_metrics_to_jsonable(dff_metrics: list[dict[str, float | int | np.floati
 def _build_dff_and_metrics(
     session_dir: Path,
     ops: dict[str, Any],
+    input_layout: SummaryInputLayout,
     n_rois: int,
     n_frames: int,
     frame_rate: float,
@@ -365,14 +466,14 @@ def _build_dff_and_metrics(
     chunk_size: int = 64,
 ) -> tuple[np.ndarray | None, list[dict[str, float | None]]]:
     if storage_mode == "embedded":
-        dff = _load_suite2p_dff(session_dir, ops)
+        dff = _load_suite2p_dff(session_dir, ops, input_layout)
         dff = dff[:n_rois, :n_frames]
         return dff, _dff_metrics_to_jsonable(list(dff_qc_metrics(dff, frame_rate=frame_rate)))
 
     if sidecar_path is None:
         raise ValueError("sidecar_path is required when storage_mode is file")
 
-    fluo, neuropil = _load_suite2p_fluorescence(session_dir)
+    fluo, neuropil = _load_suite2p_fluorescence(session_dir, input_layout)
     coeff = float(ops.get("neucoeff", 0.7))
     writer = np.lib.format.open_memmap(sidecar_path, mode="w+", dtype=np.float32, shape=(n_rois, n_frames))
     metrics: list[dict[str, float | None]] = []
@@ -1153,7 +1254,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 #traceCanvas.dragging {{ cursor: grabbing; }}
 #motionDriftCanvas {{ height: 470px; }}
 #motionDistributionCanvas {{ height: 390px; }}
-.oasis-diagnostics {{ width: 100%; max-width: 520px; }}
+.oasis-diagnostics {{ width: 100%; max-width: 600px; }}
 .oasis-diagnostics-header {{ display: flex; gap: 8px; align-items: center; justify-content: space-between; }}
 .oasis-diagnostics-actions {{ display: flex; gap: 6px; align-items: center; }}
 .oasis-diagnostics.minimized {{ display: none; }}
@@ -2629,10 +2730,12 @@ function setupFovZoom() {{
   }});
 }}
 setupFovZoom();
-function drawAxes(ctx, w, h, l, t, pw, ph, xLabel, yLabel) {{
+function drawAxes(ctx, w, h, l, t, pw, ph, xLabel, yLabel, options = {{}}) {{
   ctx.strokeStyle = "#d0d5dd"; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(l,t); ctx.lineTo(l,t+ph); ctx.lineTo(l+pw,t+ph); ctx.stroke();
-  ctx.fillStyle = "#475467"; ctx.font = `${{12 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText(xLabel, l + pw / 2, h - 8);
-  ctx.save(); ctx.translate(14, t + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(yLabel, 0, 0); ctx.restore();
+  const xLabelY = options.xLabelY ?? h - 8;
+  const yLabelX = options.yLabelX ?? 14;
+  ctx.fillStyle = "#475467"; ctx.font = `${{12 * (window.devicePixelRatio || 1)}}px Arial`; ctx.textAlign = "center"; ctx.fillText(xLabel, l + pw / 2, xLabelY);
+  ctx.save(); ctx.translate(yLabelX, t + ph / 2); ctx.rotate(-Math.PI / 2); ctx.fillText(yLabel, 0, 0); ctx.restore();
 }}
 function tickStep(seconds) {{
   const options = [0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600];
@@ -3256,7 +3359,7 @@ function drawOasisDiagnostics() {{
   }}
   summary.textContent = `${{diagnostics.events.length}} inferred spikes at amplitude threshold ${{fmt(oasisEventThreshold)}} | empirical e-fold tau ${{fmt(diagnostics.tau)}} s | Gaussian residual KS ${{fmt(diagnostics.gaussianKs)}}`;
 
-  let w = transientCanvas.width, h = transientCanvas.height, l = 58, r = 14, t = 28, b = 48, pw = w - l - r, ph = h - t - b;
+  let w = transientCanvas.width, h = transientCanvas.height, l = 64, r = 14, t = 34, b = 50, pw = w - l - r, ph = h - t - b;
   const finiteWave = diagnostics.waveform.filter(Number.isFinite);
   const finiteModel = diagnostics.expModel.filter(Number.isFinite);
   let xMin = diagnostics.times[0], xMax = diagnostics.times[diagnostics.times.length - 1];
@@ -3265,16 +3368,16 @@ function drawOasisDiagnostics() {{
   const pad = (yMax - yMin) * 0.12 || 1; yMin -= pad; yMax += pad;
   const xOf = x => l + (x - xMin) / (xMax - xMin) * pw;
   const yOf = y => t + (1 - (y - yMin) / (yMax - yMin)) * ph;
-  drawAxes(transientCtx, w, h, l, t, pw, ph, "time from inferred spike (s)", "dF/F");
+  drawAxes(transientCtx, w, h, l, t, pw, ph, "time from inferred spike (s)", "dF/F", {{ xLabelY: h - 6, yLabelX: 12 }});
   drawNumericTicks(transientCtx, l, t, pw, ph, xMin, xMax, yMin, yMax, 6, 5);
   transientCtx.fillStyle = "#475467"; transientCtx.textAlign = "left"; transientCtx.textBaseline = "top"; transientCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
   transientCtx.fillText("Average transient vs exponential decay model", l + 4, 5);
   drawLineSeries(transientCtx, diagnostics.times.map((time, i) => [time, diagnostics.waveform[i]]), xOf, yOf, "#1d4ed8", 1.6);
   drawLineSeries(transientCtx, diagnostics.times.map((time, i) => [time, diagnostics.expModel[i]]), xOf, yOf, "#dc2626", 1.4);
-  transientCtx.fillStyle = "#1d4ed8"; transientCtx.fillText("avg transient", l + 8, t + 8);
-  transientCtx.fillStyle = "#dc2626"; transientCtx.fillText(`exp tau=${{fmt(diagnostics.tau)}}s`, l + 8, t + 24);
+  transientCtx.fillStyle = "#1d4ed8"; transientCtx.fillText("avg transient", l + 12, t - 18);
+  transientCtx.fillStyle = "#dc2626"; transientCtx.fillText(`exp tau=${{fmt(diagnostics.tau)}}s`, l + 12, t - 4);
 
-  w = gaussianCanvas.width; h = gaussianCanvas.height; l = 58; r = 14; t = 28; b = 48; pw = w - l - r; ph = h - t - b;
+  w = gaussianCanvas.width; h = gaussianCanvas.height; l = 82; r = 18; t = 30; b = 56; pw = w - l - r; ph = h - t - b;
   gaussianCtx.fillStyle = "#475467"; gaussianCtx.textAlign = "left"; gaussianCtx.textBaseline = "top"; gaussianCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
   gaussianCtx.fillText("Event-window residual CDF vs fitted Gaussian", l + 4, 5);
   if (diagnostics.residualCdf.length && diagnostics.gaussianCdf.length) {{
@@ -3285,12 +3388,12 @@ function drawOasisDiagnostics() {{
     lo -= pad; hi += pad;
     const xOfResidual = x => l + (x - lo) / (hi - lo) * pw;
     const yOfCdf = y => t + (1 - y) * ph;
-    drawAxes(gaussianCtx, w, h, l, t, pw, ph, "residual dF/F", "cumulative fraction");
+    drawAxes(gaussianCtx, w, h, l, t, pw, ph, "residual dF/F", "cumulative fraction", {{ xLabelY: h - 18, yLabelX: 16 }});
     drawNumericTicks(gaussianCtx, l, t, pw, ph, lo, hi, 0, 1, 6, 4);
     drawLineSeries(gaussianCtx, diagnostics.residualCdf, xOfResidual, yOfCdf, "#059669", 1.4);
     drawLineSeries(gaussianCtx, diagnostics.gaussianCdf, xOfResidual, yOfCdf, "#7c3aed", 1.4);
-    gaussianCtx.fillStyle = "#059669"; gaussianCtx.fillText("residuals", l + 8, t + 8);
-    gaussianCtx.fillStyle = "#7c3aed"; gaussianCtx.fillText(`Gaussian fit, KS=${{fmt(diagnostics.gaussianKs)}}`, l + 8, t + 24);
+    gaussianCtx.fillStyle = "#059669"; gaussianCtx.fillText("residuals", l + 28, t + 8);
+    gaussianCtx.fillStyle = "#7c3aed"; gaussianCtx.fillText(`Gaussian fit, KS=${{fmt(diagnostics.gaussianKs)}}`, l + 28, t + 24);
   }} else {{
     gaussianCtx.fillStyle = "#475467"; gaussianCtx.textAlign = "center"; gaussianCtx.textBaseline = "middle";
     gaussianCtx.fillText("Not enough residual samples for Gaussian KS CDF.", l + pw / 2, t + ph / 2);
@@ -3796,13 +3899,15 @@ def create_preprocessing_summary(
     pdf_name: str | None = None,
     html_name: str | None = None,
     target_structure: str | None = None,
+    input_layout: str = "auto",
 ) -> tuple[Path, Path]:
     session_dir = Path(session_data_path).expanduser().resolve()
     out_dir = Path(output_dir).expanduser().resolve() if output_dir else session_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     ops = _load_ops(session_dir)
-    suite2p_dir = session_dir / "suite2p" / "plane0"
-    suite2p_stat = np.load(suite2p_dir / "stat.npy", allow_pickle=True)
+    resolved_layout = _resolve_summary_input_layout(session_dir, input_layout)
+    _log_summary_input_layout(resolved_layout, input_layout)
+    suite2p_stat = np.load(resolved_layout.stat_path, allow_pickle=True)
     qc_parameters = _load_qc_parameters(session_dir)
     pipeline_parameters = _load_pipeline_parameters(session_dir)
     xoff, yoff = _load_offsets(session_dir, ops)
@@ -3847,8 +3952,8 @@ def create_preprocessing_summary(
     )
 
     frame_rate = float(ops.get("fs", 30.0))
-    dff_label = "raw dF/F from Suite2p F.npy/Fneu.npy"
-    fluo_probe = np.load(suite2p_dir / "F.npy", allow_pickle=False, mmap_mode="r")
+    dff_label = resolved_layout.dff_label
+    fluo_probe = np.load(resolved_layout.fluo_path, allow_pickle=False, mmap_mode="r")
     n_rois = min(int(fluo_probe.shape[0]), len(suite2p_stat))
     n_frames = int(fluo_probe.shape[1])
     stat = suite2p_stat[:n_rois]
@@ -3863,6 +3968,7 @@ def create_preprocessing_summary(
     dff, dff_metrics = _build_dff_and_metrics(
         session_dir,
         ops,
+        resolved_layout,
         n_rois,
         n_frames,
         frame_rate,
@@ -3870,7 +3976,7 @@ def create_preprocessing_summary(
         dff_sidecar_path,
     )
     dff_metrics = _add_roi_area_metrics(dff_metrics, stat)
-    oasis_spikes, oasis_attrs = _load_oasis_spikes(session_dir, n_rois, n_frames)
+    oasis_spikes, oasis_attrs = _load_oasis_spikes(session_dir, n_rois, n_frames, resolved_layout)
     oasis_storage_mode = "none"
     oasis_sidecar_name = None
     if oasis_spikes is not None:
@@ -3887,7 +3993,7 @@ def create_preprocessing_summary(
             oasis_sidecar_name = f"{session_dir.name}_oasis_spikes.npy"
             np.save(out_dir / oasis_sidecar_name, oasis_spikes)
     mask = _stat_to_mask(stat, np.asarray(mean_green).shape[:2])
-    iscell_path = suite2p_dir / "iscell.npy"
+    iscell_path = resolved_layout.iscell_path
     iscell = load_iscell(iscell_path, n_rois)
     if not iscell_path.exists():
         iscell[:, :] = 1.0
@@ -3964,6 +4070,18 @@ def main() -> None:
     parser.add_argument("--pdf-name", default=None)
     parser.add_argument("--html-name", default=None)
     parser.add_argument(
+        "--input-layout",
+        choices=["auto", "suite2p", "qc_results", "manual_qc_results"],
+        default="auto",
+        help=(
+            "Input file layout for ROI/stat/trace arrays. 'suite2p' uses "
+            "suite2p/plane0/stat.npy, F.npy, Fneu.npy, and iscell.npy. "
+            "'qc_results' and 'manual_qc_results' map stat.npy, fluo.npy, "
+            "neuropil.npy, and optional iscell.npy from those filtered-output "
+            "directories. Default: auto-detect filtered layouts before Suite2p."
+        ),
+    )
+    parser.add_argument(
         "--target-structure",
         choices=["all_rois", *sorted(QC_PRESETS)],
         default=None,
@@ -3976,6 +4094,7 @@ def main() -> None:
         pdf_name=args.pdf_name,
         html_name=args.html_name,
         target_structure=args.target_structure,
+        input_layout=args.input_layout,
     )
     print(f"Saved preprocessing PDF: {pdf_path}")
     print(f"Saved interactive HTML: {html_path}")
