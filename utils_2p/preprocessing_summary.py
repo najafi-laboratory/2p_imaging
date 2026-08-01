@@ -1116,11 +1116,11 @@ def _write_html(
         else ""
     )
     red_panel = (
-        '<div class="panel"><div class="panel-title-row"><div class="title">Red anatomical mean</div>'
-        '<label class="overlay-mode-control">Overlay '
+        '<div class="panel"><div class="panel-title-row"><div class="title">Anatomical mean</div>'
+        '<label class="overlay-mode-control">Overlay'
         '<select id="redOverlayMode">'
-        '<option value="functional" selected>Functional Suite2p ROIs</option>'
-        '<option value="cellpose">Cellpose anatomical ROIs</option>'
+        '<option value="functional" selected>Suite2p ROIs</option>'
+        '<option value="cellpose">Cellpose ROIs</option>'
         '</select></label></div>'
         '<div class="imagewrap"><img id="red"><svg class="overlay red-overlay" preserveAspectRatio="xMidYMid meet">'
         '</svg></div></div>'
@@ -1153,7 +1153,7 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .grid.single-channel {{ grid-template-columns: minmax(0, 1fr); }}
 .panel {{ background: #fff; border: 1px solid #d0d5dd; border-radius: 7px; padding: 7px; box-sizing: border-box; }}
 .title {{ font-size: 13px; font-weight: 700; margin-bottom: 4px; }}
-.panel-title-row {{ min-height: 28px; display: flex; gap: 8px; align-items: start; justify-content: space-between; margin-bottom: 4px; }}
+.panel-title-row {{ height: 28px; display: flex; gap: 6px; align-items: center; justify-content: space-between; margin-bottom: 4px; overflow: hidden; }}
 .panel-title-row .title {{ margin-bottom: 0; }}
 .imagewrap {{ position: relative; width: 100%; aspect-ratio: 1/1; background: #111; overflow: hidden; }}
 .imagewrap img, .imagewrap svg {{ position: absolute; inset: 0; width: 100%; height: 100%; }}
@@ -1166,8 +1166,8 @@ h1 {{ margin: 0; font-size: 21px; letter-spacing: 0; }}
 .roi-hit:hover + .roi {{ fill: none; stroke: #06b6d4; stroke-width: 1.6; }}
 .roi.selected {{ fill: none; stroke: #00e5ff; stroke-width: 3.2; }}
 .cellpose-roi {{ fill: none; stroke: #fbbf24; stroke-width: 1.4; vector-effect: non-scaling-stroke; pointer-events: none; }}
-.overlay-mode-control {{ display: flex; gap: 6px; align-items: center; margin: 0; font-size: 13px; color: #475467; }}
-.overlay-mode-control select {{ width: auto; min-width: 190px; padding: 3px 6px; }}
+.overlay-mode-control {{ display: flex; flex: 0 0 auto; gap: 4px; align-items: center; margin: 0; font-size: 11px; color: #475467; white-space: nowrap; }}
+.overlay-mode-control select {{ width: auto; max-width: 128px; min-width: 104px; padding: 2px 4px; font-size: 11px; }}
 .controls {{ display: grid; grid-template-columns: 1fr repeat(5, auto); gap: 5px; align-items: center; margin-top: 6px; }}
 .label-controls {{ display: flex; flex-direction: column; gap: 4px; align-items: stretch; }}
 .label-controls .button-row {{ display: grid; grid-template-columns: 1fr 1fr; gap: 4px; }}
@@ -1547,7 +1547,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <div class="fov-row">
         <div class="fov-review oasis-collapsed">
           <div class="grid {fov_grid_class}">
-            <div class="panel"><div class="panel-title-row"><div class="title">Green functional mean</div></div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
+            <div class="panel"><div class="panel-title-row"><div class="title">Functional mean</div></div><div class="imagewrap"><img id="green"><svg class="overlay" preserveAspectRatio="xMidYMid meet"></svg></div></div>
             {red_panel}
           </div>
           {oasis_diagnostics_panel}
