@@ -10,122 +10,165 @@ dF/F trace. It also provides filtering and sorting utilities of ROIs based on me
 
 ![Full reviewer layout](assets/roi-labeler-full-layout.png)
 
-The reviewer layout consists of the following components from top to bottom:
+The reviewer is organized as a single interactive workspace that combines
+image-based ROI inspection, trace review, filtering, labeling, and export. The
+top of the layout contains the **FOV image** with Suite2p ROI outlines overlaid;
+when anatomical imaging is available, a **red-channel panel** is shown beside
+the green functional image. The currently selected ROI is highlighted in cyan so
+it can be matched across the image, selected trace, and stacked trace panels.
 
-- FOV image with Suite2p ROI outlines overlaid. When anatomical imaging is available, a red-channel panel is shown to the right.
-- Selected ROI highlighted in cyan.
-- Right-side menu with Filter, Sort, Labeler, and Export sections.
-- Single-ROI dF/F trace and stacked ROI trace panels with zoom and pan capabilities.
-- Inferred spikes panel with a threshold slider and a summary of the event count and fit-distance metrics for the selected threshold.
-- Motion correction drift and pixel-wise shift distribution panels.
-
-For detailed descriptions of each component, see the following sections.
+The right-side menu contains the major reviewer controls: **Filter**, **Sort**,
+**Labeler**, and **Export**. Below the image area, the reviewer shows the
+single-ROI dF/F trace, the stacked trace panel, the inferred-spike overlay and
+diagnostic controls when those data are available, and motion-correction plots.
+The following sections describe each component in more detail.
 
 ### 2. FOV ROI selection
 
 ![FOV ROI selection](assets/roi-labeler-fov-selection.png)
 
-The FOV ROI selection panel shows the green functional mean image and the optional red-channel panel when anatomical mean image is present. Clickable ROI outlines on the green functional mean image are the masks detected by Suite2p. The selected ROI outline is visually emphasized with cyan. 
+The **FOV ROI selection** panel shows the green functional mean image and, when
+available, an optional red-channel anatomical panel. Clickable outlines on the
+green functional image correspond to the ROI masks detected by Suite2p. The
+selected ROI outline is emphasized in cyan, providing a spatial reference for
+the trace and metric information elsewhere in the reviewer.
 
-When filters are applied, ROI masks that do not pass the filter are removed from the FOV ROI selection panel, but can be viewed by removing filters or clicking the show all ROIs button. 
+When filters are applied, ROI masks that do not pass the active filter are
+removed from the FOV panel. They can be viewed again by clearing filters or
+using the control to show all ROIs. This makes the FOV panel a direct visual
+representation of the current filtered ROI population.
 
-Scroll/drag interactions support zooming and panning around dense ROI fields. When anatomical masks are present from a cellpose run in a masks.h5, they can be viewed on the anatomical mean image via the "Overlay" dropdown. They cannot be selected as of the time of writing since the viewer currently supports only one mask and dF/F trace file.
- 
+Scroll and drag interactions support **zooming** and **panning** around dense ROI
+fields. When anatomical masks are present from a Cellpose run in `masks.h5`,
+they can be viewed on the anatomical mean image with the **Overlay** dropdown.
+Those anatomical masks are displayed for spatial comparison but are not
+selectable in the current reviewer, which supports one selected mask and dF/F
+trace file at a time.
+
 
 ### 3. Manual label controls
 
 ![Manual label controls](assets/roi-labeler-manual-labels.png)
 
-The manual label reviewer has the following controls:
+The **manual label controls** assign the current ROI to one of four reviewer
+states: **Good**, **Bad**, **Unsure**, or **Not labeled**. The button
+corresponding to the current ROI's label is filled with color, and the keyboard
+shortcuts `G`, `B`, `U`, and `N` provide faster entry for repeated review.
 
-- Good, Bad, Unsure, and Not labeled buttons for labeling the currently selected ROI (label of current ROI has corresponding button filled in with color).
-- Keyboard shortcuts: `G`, `B`, `U`, and `N` correspond to these buttons.
-- Counts of each label are of all ROIs, not just those currently passing filters. Filtered ROIs are automatically labeled "Bad" and not visible or selectable in this menu but are included in the "Bad" label count here.
-- Previous/Next navigation buttons and left/right arrow key navigation move to the next/previous ROI in the current sort order. Only ROIs that have passed all filters are included.
-- The default sort order is the ascending Suite2p ROI index (or row if a different input file is used), and the default label of all ROIs that pass filters is "Not labeled". 
-- Selected ROI index is the unique ID for an ROI in a session and persists across different sort applications. Position of a given ROI in current sort order is given beneath this.
-- Selected ROI Details can be expanded to display morphology, dF/F, and spike inference summary metrics.
--"Label all as ..." allows for bulk labeling of multiple ROIs with a given label at once.
+The label counts summarize all ROIs in the session, not only the ROIs currently
+passing filters. When filters are applied, failing ROIs are automatically
+labeled **Bad** and are not visible or selectable in the filtered view, but they
+are still included in the Bad count. Reviewers can still manually revise labels
+after filters have been applied.
+
+The **Previous** and **Next** controls, along with the left and right arrow
+keys, move through ROIs in the current sort order. Only ROIs that pass the
+active filters are included in this navigation set. The default ordering is the
+ascending Suite2p ROI index, or row order when a non-Suite2p input layout is
+used, and the default label for passing ROIs is **Not labeled**. The **Selected
+ROI index** identifies the ROI within the session and persists across sorting
+operations, while the displayed position indicates where that ROI falls in the
+current sort order. **Selected ROI Details** can be expanded to show morphology,
+dF/F, and inferred-spike summary metrics, and **Label all as ...** supports bulk
+labeling of multiple visible ROIs.
 
 ### 4. Show ROIs by label
 
 ![Show ROIs by label](assets/roi-labeler-show-rois.png)
 
-- Toggle visibility for Good, Bad, Unsure, and Not labeled ROIs.
-- Display filters affect the reviewer view without changing saved labels.
-- Navigation moves through the currently visible ROI set.
-- Note that while ROIs excluded by filters are automatically labeled "Bad", they will not be visible even if "Bad" is selected since the labeler and FOV will only allow ROIs that pass current filters to be visible or selected.
+The **Show ROIs** controls toggle visibility for **Good**, **Bad**, **Unsure**,
+and **Not labeled** ROIs. These display controls change what appears in the
+reviewer and which ROIs are included in navigation, but they do not change saved
+manual labels.
+
+This visibility setting operates after the active QC filters. ROIs excluded by
+the filter are automatically labeled **Bad**, but they are not visible or
+selectable simply because Bad ROIs are enabled in the Show ROIs menu. To view
+filtered-out ROIs, the relevant QC filter must be removed or reset.
 
 ### 5. ROI QC filters
 
 ![ROI QC filters](assets/roi-labeler-qc-filters.png)
 
-- Purpose of the ROI QC Filters menu
-      - The filter menu previews which ROIs pass the active QC thresholds. Default is no filters are applied, so all ROIs pass.
-      - Changing threshold fields updates the pass/fail count and visible ROI set, but does not change manual labels until Apply Filters is clicked (bottom right).
-      - Empty threshold fields are treated as unused filters.
+The **ROI QC Filters** menu previews which ROIs pass the active QC thresholds.
+By default, no thresholds are active and all ROIs pass. Editing a threshold
+field immediately updates the pass/fail count and the visible ROI set, but it
+does not change manual labels until **Apply Filters** is clicked. Empty
+threshold fields are treated as unused filters.
 
-  - Target structure presets
-      - The Target structure dropdown loads built-in QC threshold presets such as all ROIs, soma, dendrite, or other user-defined presets when those are
-        available in the generated HTML or imported.
-      - Restore selected QC thresholds reloads the currently selected preset and discards unsaved edits in the threshold fields.
-      - Custom saved threshold sets also appear in this dropdown with a saved label.
+The **Target structure** dropdown loads built-in QC threshold presets, such as
+all ROIs, soma, dendrite, or other presets that are embedded in the generated
+HTML or imported by the reviewer. **Restore selected QC thresholds** reloads
+the currently selected preset and discards unsaved edits in the threshold
+fields. Custom saved threshold sets also appear in this dropdown under their
+saved names.
 
-  - Morphology metrics section
-      - This section contains ROI shape and mask-quality filters.
-      - It is intended for excluding ROIs with implausible shapes, fragmented masks, unusually small/large footprints, or morphology values outside the chosen
-        target-structure preset.
-      - The Read more controls reveal where the morphology values come from and how the reviewer interprets them.
-      - Distribution controls reveal per-metric histograms so threshold choices can be checked against the full ROI population.
+The filter menu is organized into three main metric categories. **Morphology
+metrics** describe ROI shape and mask quality, and are intended to identify
+implausible shapes, fragmented masks, unusually small or large footprints, or
+morphology values outside the chosen target-structure preset. **Fluorescence
+trace metrics** are computed from each ROI's dF/F trace and are intended to
+identify weak trace structure, trace-quality values outside the expected range,
+or fluorescence dynamics that do not fit the target ROI class. **Inferred spike
+metrics** are computed from OASIS-style inferred-spike outputs when available
+and describe whether inferred events have reasonable amplitude, timing, and
+residual structure relative to the dF/F trace. If inferred-spike outputs are not
+available for a session, those controls may be disabled or marked as
+unavailable.
 
-  - Fluorescence trace metrics section
-      - This section contains filters computed from each ROI's dF/F trace.
-      - It is intended for excluding ROIs with weak trace structure, trace-quality metrics outside the expected range, or fluorescence dynamics that do not fit
-        the target ROI class.
-      - The Read more controls explain how the trace summaries are computed and how to interpret them at a category level.
-      - Suggested thresholds are derived from the ROIs embedded in the current reviewer HTML, so they are session-specific starting points rather than fixed lab
-        rules.
+The **Read more** controls document where each metric category comes from and
+how the reviewer interprets the values. **Distribution** controls reveal
+per-metric histograms so threshold choices can be compared with the full ROI
+population. Suggested thresholds are derived from the ROIs embedded in the
+current reviewer HTML, making them session-specific starting points rather than
+fixed lab rules.
 
-  - Inferred spike metrics section
-      - This section contains filters computed from OASIS inferred-spike outputs when those data are available.
-      - It is intended for checking whether inferred events have reasonable amplitude, timing, and residual structure relative to the dF/F trace.
-      - If OASIS outputs are not available for a session, these controls may be disabled or marked as unavailable.
-      - Read more controls describe the viewer-side interpretation of inferred spikes and related diagnostics without requiring the reviewer to inspect each
-        metric individually.
+Filtering is conjunctive: each ROI must pass every active threshold to pass the
+current QC filter. **Min** fields require the ROI metric to be greater than or
+equal to the entered value, and **Max** fields require the ROI metric to be less
+than or equal to the entered value. ROIs with missing or non-finite values fail
+active thresholds that depend on those values. The menu reports the number of
+original Suite2p ROIs that pass the active filter.
 
-  - How filtering works
-      - Each ROI must pass every active threshold to pass the current QC filter.
-      - Min fields require the ROI metric to be greater than or equal to the value.
-      - Max fields require the ROI metric to be less than or equal to the value.
-      - ROIs with missing/non-finite values fail active thresholds that depend on those values.
-      - The menu reports the number of original Suite2p ROIs that pass the active filter.
-
-  - Apply Filters
-      - Apply Filters converts the current pass/fail filter result into labels.
-      - Passing ROIs are set to Not labeled.
-      - Failing ROIs are set to Bad.
-      - This is intentionally separate from threshold editing, so reviewers can preview filters before changing labels.
-
-  - Relationship to manual labels
-      - Filtering controls visibility and optional bulk label assignment, but manual labels remain separately editable.
-      - After applying filters, reviewers can still manually change individual ROIs to Good, Bad, Unsure, or Not labeled.
-      - Exported label files preserve the final manual label state, not just the filter result.
+The **Apply Filters** button converts the current pass/fail result into manual
+labels. Passing ROIs are set to **Not labeled**, while failing ROIs are set to
+**Bad**. This action is intentionally separate from threshold editing so
+reviewers can preview filters before changing labels. After filters are applied,
+manual labels remain separately editable, and reviewers can still change
+individual ROIs to Good, Bad, Unsure, or Not labeled. Exported label files
+preserve the final manual label state, not just the filter result.
 
 #### 5.1. Metric distributions and suggested thresholds
 
 ![Metric distributions](assets/roi-labeler-metric-distributions.png)
 
-- Distribution histograms are available per metric, for fields without suggested thresholds the mean is marked, for those with thresholds (usually based on percentiles, check "Suggest thresholds info" button for more info).
-- Vertical threshold markers update when min/max fields are edited.
-- Suggested threshold values are computed from the distribution across all ROIs.
-- Read more panels in filter menu document metric sources and suggested-threshold semantics.
+**Distribution histograms** are available for individual metrics in the filter
+menu. For fields without suggested thresholds, the plot marks the mean value.
+For fields with suggested thresholds, the marked values are usually derived from
+percentiles or related distribution summaries; the **Suggest thresholds info**
+and **Read more** panels describe the metric source and the suggested-threshold
+semantics.
+
+The vertical threshold markers update as min and max fields are edited, making
+the histogram a direct preview of how a threshold relates to the full ROI
+population. Suggested thresholds are computed from the ROIs embedded in the
+current reviewer HTML, so they should be treated as session-specific guidance
+rather than fixed exclusion rules.
 
 #### 5.2. Saving and reusing QC thresholds
 
-- Save new QC thresholds adds a named filter to the current browser session.
-- Save QC thresholds into HTML downloads a reviewer copy of the whole .html labeler with any saved thresholds from the current session. Use this if you will return to the session to continue labeling but need to close the browser or tab, as ROI labels, QC thresholds, and other states in the browsers .html do not automatically edit the source file on disk.
-- Export QC thresholds JSON is available from the Save Labels dialog on the main menu.
-- Import QC thresholds JSON loads filter settings in the following format:
+**Save new QC thresholds** adds the active threshold settings as a named filter
+within the current browser session. **Save QC thresholds into HTML** downloads a
+reviewer copy of the full HTML labeler with any saved threshold sets from the
+current session embedded in the file. This is the appropriate option when a
+reviewer needs to close the browser but later return to the same labeling state,
+because ROI labels, QC thresholds, and other HTML session state do not
+automatically modify the source file on disk.
+
+**Export QC thresholds JSON** is available from the **Save Labels** dialog on
+the main menu, and **Import QC thresholds JSON** loads filter settings in the
+same format. This provides a lightweight way to reuse threshold sets across
+sessions or include them in documentation and provenance records.
 
 Example JSON matching the current built-in soma preset. In the code this preset is stored internally as `neuron` for historical compatibility, but the reviewer displays it as soma. It uses only morphology thresholds; fluorescence trace and inferred spike thresholds are intentionally omitted.
 
@@ -152,11 +195,16 @@ Fields omitted from the `filter` object are treated as unused thresholds.
 
 ![Sort ROIs](assets/roi-labeler-sort-rois.png)
 
-- Sort by original ROI index (from Suite2p or row order) or by metrics from the same categories used in
-  the ROI QC filters: morphology, fluorescence trace, and inferred spike metrics.
-- When multiple metrics are checked, each is normalized to a 0-1 range and then combined with equal weight into one sort score across all ROIs.
-- Sort order supports lowest-first and highest-first for the final metric or combined score.
-- Sorting updates the selected ROI order and stacked trace order.
+The **Sort ROIs** dialog orders ROIs by original Suite2p index, row order, or
+metrics from the same categories used in the ROI QC filters: morphology,
+fluorescence trace, and inferred-spike metrics. Sorting updates both the
+selected ROI navigation order and the stacked trace order, making it useful for
+reviewing ROIs with similar metric values together.
+
+When multiple metrics are checked, each metric is normalized to a 0-1 range and
+combined with equal weight into a single score across all ROIs. The sort order
+can be set to lowest-first or highest-first for the final metric or combined
+score.
 
 When selecting multiple metrics, choose metrics whose direction has the same practical meaning. For example, a lower inferred-spike residual Gaussian-fit distance is generally better, so ascending order usually makes sense for that metric. A higher SNR is generally better, so descending order usually makes sense for SNR. Combining those two directly can be counterproductive because the current sorter does not automatically flip metric directions before combining them. Support may be added later for automatically coherent combinations of metrics with opposite preferred directions, but the current reviewer leaves that choice to the user.
 
@@ -165,12 +213,19 @@ When selecting multiple metrics, choose metrics whose direction has the same pra
 
 ![Selected ROI trace](assets/roi-labeler-selected-trace.png)
 
+The **selected ROI dF/F trace** shows the fluorescence trace for the currently
+selected ROI over the active time window. Wheel and drag interactions zoom or
+pan through time, and double-clicking resets the view. This time window is
+shared with other trace-linked panels, allowing the reviewer to inspect the same
+period across the selected trace, stacked traces, and motion plots.
 
-- Selected ROI dF/F trace follows the current time window.
-- Wheel or drag zooms/pans time; double-click resets.
-- Inferred spikes can be toggled on/off.
-- Amplitude threshold slider/number input changes which inferred spikes are displayed.
-- Reset to ROI default restores the precomputed ROI-specific threshold where the noise around events most resembles Gaussian noise. Click the "Show inferred spike fit metrics" button and section 8 for information on this.
+When inferred-spike data are available, **inferred spikes** can be toggled on or
+off over the dF/F trace. The amplitude threshold slider and number input control
+which inferred-spike amplitudes are displayed. **Reset to ROI default** restores
+the precomputed ROI-specific threshold where the event-window residuals most
+closely resemble Gaussian noise. The **Show inferred spike fit metrics** button
+and section 8 provide more detail on how that threshold and its diagnostics are
+interpreted.
 
 #### 7.1. dF/F and inferred-spike input format
 
@@ -310,23 +365,19 @@ The default is the candidate threshold with the smallest finite residual
 Gaussian-fit distance. This makes the default a data-driven display/QC
 threshold, not a claim that the chosen events are all true spikes.
 
-Current assumptions and limitations:
-
-- Inferred-spike input values are nonnegative event amplitudes from OASIS or a
-  compatible upstream method, with larger values representing stronger inferred
-  spike-like activity.
-- Event-triggered dF/F responses are assumed to be meaningfully alignable across
-  events for the same ROI, so averaging them produces an interpretable transient
-  shape.
-- The decay summary assumes the average event response has a positive peak and
-  approximately monotonic decay after that peak. Strongly multiphasic,
-  overlapping, saturated, or motion-contaminated events can make tau values
-  misleading.
-- The Gaussian residual metric assumes that, after local event structure is
-  removed, residual deviations around events should look roughly Gaussian. 
-- KS distance depends on the number and distribution of residual samples.
-  Sessions or ROIs with very few usable events may have missing or unstable
-  diagnostics.
+The current diagnostics make several practical assumptions. Inferred-spike
+inputs are treated as nonnegative event amplitudes from OASIS or a compatible
+upstream method, with larger values representing stronger inferred spike-like
+activity. Event-triggered dF/F responses are assumed to be meaningfully
+alignable across events for the same ROI, so averaging them produces an
+interpretable transient shape. The decay summary assumes that the average event
+response has a positive peak and approximately monotonic decay after that peak;
+strongly multiphasic, overlapping, saturated, or motion-contaminated events can
+therefore make tau values misleading. The Gaussian residual metric assumes that,
+after local event structure is removed, residual deviations around events should
+look roughly Gaussian. KS distance also depends on the number and distribution
+of residual samples, so sessions or ROIs with very few usable events may have
+missing or unstable diagnostics.
 
 ### 9. Stacked dF/F traces
 
@@ -383,16 +434,15 @@ trace and stacked dF/F traces, so zooming or panning the trace time axis also
 updates the visible motion-correction time range.
 
 The **motion distribution plot** summarizes the full-session motion offsets,
-not just the current zoomed time range. It contains three side-by-side panels:
-
-- **Offset distribution** shows the fraction of frames in each signed x/y shift
-  bin. This is useful for seeing whether motion is tightly centered near zero or
-  spread broadly across many pixel shifts.
-- **Signed shift CDF** shows the cumulative fraction of x/y shifts less than or
-  equal to each signed shift value. This makes directional bias easier to see.
-- **Absolute shift CDF** shows the cumulative fraction of absolute x/y shifts.
-  This is useful for estimating what fraction of frames stayed within a given
-  registration magnitude regardless of direction.
+not just the current zoomed time range. It contains three side-by-side panels.
+The **Offset distribution** shows the fraction of frames in each signed x/y
+shift bin, which helps reveal whether motion is tightly centered near zero or
+spread broadly across many pixel shifts. The **Signed shift CDF** shows the
+cumulative fraction of x/y shifts less than or equal to each signed shift value,
+making directional bias easier to see. The **Absolute shift CDF** shows the
+cumulative fraction of absolute x/y shifts and is useful for estimating what
+fraction of frames stayed within a given registration magnitude regardless of
+direction.
 
 The controls are shared with the trace viewer. Use the mouse wheel on the drift
 plot to zoom the active time window, drag horizontally to pan through time, and
@@ -440,29 +490,27 @@ for the session.
 
 ![Bulk labeling](assets/roi-labeler-bulk-labeling.png)
 
-Capture the Label all visible ROIs as ... dialog.
+The **Label all visible ROIs as ...** dialog applies one manual label to the
+currently visible ROI set. Available bulk labels are **Good**, **Bad**,
+**Unsure**, and **Not labeled**. Because the action only affects visible ROIs,
+it is most useful after applying QC filters, changing the Show ROIs visibility
+settings, or sorting and restricting the displayed ROI range.
 
-Key features to call out:
-
-- Bulk labels only the ROIs currently visible in the reviewer.
-- Available labels are Good, Bad, Unsure, and Not labeled.
-- Useful after applying QC filters or hiding specific label classes.
+Bulk labeling is intended as a review accelerator rather than a replacement for
+manual inspection. After applying a bulk label, individual ROIs can still be
+revisited and assigned a different label.
 
 ### 12. Export and save options
 
 ![Export and save options](assets/roi-labeler-export-save.png)
 
-Capture the Export section and Save Labels dialog.
-
-Key features to call out:
-
-- Save current state into HTML preserves labels and custom filters in a
-  self-contained reviewer copy.
-- Export metric spreadsheet CSV writes one row per ROI with labels, metrics,
-  filter failures, and exclusion reasons.
-- Export labels NPY writes `roi_manual_labels.npy`.
-- Export QC thresholds JSON saves the active metric thresholds for reuse or
-  documentation.
+The **Export** section and **Save Labels** dialog provide the main ways to
+preserve reviewer state and move results into downstream analysis. **Save
+current state into HTML** writes a self-contained reviewer copy that preserves
+current labels and custom filters. **Export metric spreadsheet CSV** writes one
+row per ROI with labels, metrics, filter failures, and exclusion reasons.
+**Export labels NPY** writes `roi_manual_labels.npy`, and **Export QC thresholds
+JSON** saves the active metric thresholds for reuse or documentation.
 
 #### 12.1. Open ROI metric spreadsheet
 
@@ -516,14 +564,12 @@ label columns as strings or categoricals.
 This spreadsheet does not by itself save manual labels back into the reviewer
 HTML or write `roi_manual_labels.npy`. It only displays and optionally exports a
 CSV snapshot of the current state. To preserve label edits after closing the
-browser, use **Save Labels**:
-
-- **Save current state into HTML** writes a reviewed HTML copy that keeps the
-  current labels and custom filters embedded in the file.
-- **Export labels NPY** writes `roi_manual_labels.npy`, the one-dimensional
-  label array used by downstream code.
-- **Export metric spreadsheet CSV** writes the spreadsheet snapshot with the
-  same current labels, metrics, filter failures, and reasons.
+browser, use **Save Labels**. **Save current state into HTML** writes a reviewed
+HTML copy that keeps the current labels and custom filters embedded in the file.
+**Export labels NPY** writes `roi_manual_labels.npy`, the one-dimensional label
+array used by downstream code. **Export metric spreadsheet CSV** writes the
+spreadsheet snapshot with the same current labels, metrics, filter failures, and
+reasons.
 
 ## Generate the labeler and summary
 
