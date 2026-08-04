@@ -65,8 +65,7 @@ def _layout_complete(layout: SummaryInputLayout) -> bool:
     return layout.stat_path.exists() and layout.fluo_path.exists() and layout.neuropil_path.exists()
 
 
-def _suite2p_layout(session_dir: Path) -> SummaryInputLayout:
-    plane_dir = session_dir / "suite2p" / "plane0"
+def _direct_suite2p_layout(plane_dir: Path, session_dir: Path) -> SummaryInputLayout:
     return SummaryInputLayout(
         name="suite2p",
         stat_path=plane_dir / "stat.npy",
@@ -77,16 +76,52 @@ def _suite2p_layout(session_dir: Path) -> SummaryInputLayout:
     )
 
 
-def _qc_results_layout(session_dir: Path, dirname: str) -> SummaryInputLayout:
-    qc_dir = session_dir / dirname
+def _direct_filtered_layout(qc_dir: Path, session_dir: Path) -> SummaryInputLayout:
     return SummaryInputLayout(
-        name=dirname,
+        name=qc_dir.name,
         stat_path=qc_dir / "stat.npy",
         fluo_path=qc_dir / "fluo.npy",
         neuropil_path=qc_dir / "neuropil.npy",
         iscell_path=qc_dir / "iscell.npy",
         spikes_paths=(qc_dir / "spikes.h5", session_dir / "spikes.h5"),
     )
+
+
+def _suite2p_layout(session_dir: Path) -> SummaryInputLayout:
+    plane_dir = session_dir / "suite2p" / "plane0"
+    return _direct_suite2p_layout(plane_dir, session_dir)
+
+
+def _qc_results_layout(session_dir: Path, dirname: str) -> SummaryInputLayout:
+    qc_dir = session_dir / dirname
+    return _direct_filtered_layout(qc_dir, session_dir)
+
+
+def _resolve_summary_session_and_layout(
+    input_path: Path, requested: str = "auto"
+) -> tuple[Path, SummaryInputLayout]:
+    """Resolve a session root and input layout from either a session or data directory."""
+
+    if input_path.name == "plane0" and input_path.parent.name == "suite2p":
+        session_dir = input_path.parents[1]
+        return session_dir, _direct_suite2p_layout(input_path, session_dir)
+    if input_path.name == "suite2p" and (input_path / "plane0").is_dir():
+        session_dir = input_path.parent
+        return session_dir, _direct_suite2p_layout(input_path / "plane0", session_dir)
+    if input_path.name in {"qc_results", "manual_qc_results"}:
+        session_dir = input_path.parent
+        return session_dir, _direct_filtered_layout(input_path, session_dir)
+    if (input_path / "stat.npy").exists() and (input_path / "F.npy").exists() and (input_path / "Fneu.npy").exists():
+        session_dir = input_path.parents[1] if input_path.name == "plane0" else input_path.parent
+        return session_dir, _direct_suite2p_layout(input_path, session_dir)
+    if (
+        (input_path / "stat.npy").exists()
+        and (input_path / "fluo.npy").exists()
+        and (input_path / "neuropil.npy").exists()
+    ):
+        return input_path.parent, _direct_filtered_layout(input_path, input_path.parent)
+    session_dir = input_path
+    return session_dir, _resolve_summary_input_layout(session_dir, requested)
 
 
 def _resolve_summary_input_layout(session_dir: Path, requested: str = "auto") -> SummaryInputLayout:
@@ -3901,11 +3936,11 @@ def create_preprocessing_summary(
     target_structure: str | None = None,
     input_layout: str = "auto",
 ) -> tuple[Path, Path]:
-    session_dir = Path(session_data_path).expanduser().resolve()
+    input_path = Path(os.path.abspath(os.path.expanduser(os.fspath(session_data_path))))
+    session_dir, resolved_layout = _resolve_summary_session_and_layout(input_path, input_layout)
     out_dir = Path(output_dir).expanduser().resolve() if output_dir else session_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     ops = _load_ops(session_dir)
-    resolved_layout = _resolve_summary_input_layout(session_dir, input_layout)
     _log_summary_input_layout(resolved_layout, input_layout)
     suite2p_stat = np.load(resolved_layout.stat_path, allow_pickle=True)
     qc_parameters = _load_qc_parameters(session_dir)
@@ -4065,8 +4100,14 @@ def run(ops: dict[str, Any], output_dir: str | os.PathLike[str] | None = None) -
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Create preprocessing QC PDF and interactive HTML outputs.")
-    parser.add_argument("session_data_path", help="Processed session directory.")
-    parser.add_argument("--output-dir", default=None, help="Output directory. Default: session_data_path.")
+    parser.add_argument(
+        "session_data_path",
+        help=(
+            "Processed session root or a concrete data directory such as "
+            "suite2p/plane0, suite2p, qc_results, or manual_qc_results."
+        ),
+    )
+    parser.add_argument("--output-dir", default=None, help="Output directory. Default: resolved session root.")
     parser.add_argument("--pdf-name", default=None)
     parser.add_argument("--html-name", default=None)
     parser.add_argument(
@@ -4078,7 +4119,9 @@ def main() -> None:
             "suite2p/plane0/stat.npy, F.npy, Fneu.npy, and iscell.npy. "
             "'qc_results' and 'manual_qc_results' map stat.npy, fluo.npy, "
             "neuropil.npy, and optional iscell.npy from those filtered-output "
-            "directories. Default: auto-detect filtered layouts before Suite2p."
+            "directories. If session_data_path already points to a concrete "
+            "layout directory, that directory is used directly. Default: "
+            "auto-detect filtered layouts before Suite2p from a session root."
         ),
     )
     parser.add_argument(
