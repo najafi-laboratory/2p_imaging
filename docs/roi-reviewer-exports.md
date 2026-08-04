@@ -619,6 +619,109 @@ Use `--input-layout suite2p`, `--input-layout qc_results`, or
 explicit. The command prints which layout it uses and the resolved paths for
 stat, fluorescence, neuropil, optional `iscell.npy`, and inferred spikes.
 
+### External ROI masks from non-Suite2p tools
+
+The reviewer does not require ROIs to be detected by Suite2p. It requires a
+consistent ROI geometry and trace representation:
+
+```text
+ROI row i -> pixels/weights in the displayed FOV coordinate frame
+ROI row i -> fluorescence trace row i
+```
+
+The summary generator can convert external ROI masks into the Suite2p-like
+`stat.npy` representation used internally by the HTML viewer. Point the summary
+command at a directory with one ROI geometry file and matching traces:
+
+```text
+/path/to/external_roi_session/
+├── roi_mask.npy                 # dense integer label image, optional
+├── spatial_components.npz       # sparse pixels x rois matrix, optional
+├── F.npy                        # raw fluorescence, shape (n_rois, n_frames)
+├── Fneu.npy                     # optional neuropil, shape (n_rois, n_frames)
+├── mean_func.npy                # optional FOV image, shape (Ly, Lx)
+└── external_roi_metadata.json   # optional, mainly for sparse matrices
+```
+
+Use exactly one of these geometry inputs:
+
+| File | Expected format |
+| --- | --- |
+| `roi_mask.npy`, `roi_masks.npy`, `label_mask.npy`, or `masks.npy` | Dense 2-D integer image. `0` is background. Positive labels are ROIs. |
+| `spatial_components.npz`, `roi_spatial_components.npz`, or `A.npz` | SciPy sparse matrix with shape `(pixels, n_rois)` or `(n_rois, pixels)`. Each column/row is a weighted ROI footprint. |
+| `stat.npy` | Already-normalized Suite2p-like object array with `ypix`, `xpix`, and optional `lam`. |
+
+For dense label masks, positive labels are converted in ascending label order.
+For example, label value `1` becomes ROI row `0`, label value `2` becomes ROI
+row `1`, and so on. The row order must match the row order in `F.npy`.
+
+For sparse matrices, supply the FOV shape if `mean_func.npy` is not present:
+
+```json
+{
+  "image_shape": [512, 512],
+  "flatten_order": "F"
+}
+```
+
+`flatten_order` controls how flattened pixel indices are mapped back to
+`(y, x)` coordinates. CaImAn-style spatial matrices commonly use Fortran order
+(`"F"`), which is the default. Use `"C"` if the matrix was flattened in normal
+NumPy row-major order.
+
+Example dense-mask input:
+
+```python
+import numpy as np
+
+roi_mask = np.zeros((512, 512), dtype=np.int32)
+roi_mask[100:110, 200:230] = 1
+roi_mask[250:270, 300:315] = 2
+
+F = np.random.rand(2, 12000).astype("float32")
+Fneu = np.zeros_like(F)
+mean_func = np.random.rand(512, 512).astype("float32")
+
+np.save("roi_mask.npy", roi_mask)
+np.save("F.npy", F)
+np.save("Fneu.npy", Fneu)
+np.save("mean_func.npy", mean_func)
+```
+
+Generate the viewer:
+
+```bash
+python -m utils_2p.preprocessing_summary \
+  /path/to/external_roi_session \
+  --input-layout external_rois
+```
+
+If `Fneu.npy` or `neuropil.npy` is omitted, the summary generator treats
+neuropil as zero. If no FOV image is supplied, it creates a blank background
+from the ROI coordinate extents. That is enough to inspect masks and traces,
+but a real `mean_func.npy` is strongly preferred because it verifies that the
+ROI coordinates are in the same frame as the imaging data.
+
+### Metrics calculated for external masks
+
+When an external mask is converted, the summary pipeline fills the same
+morphology-style fields that the reviewer uses for Suite2p ROIs:
+
+| Metric | Source for external ROIs |
+| --- | --- |
+| `roi_area_px` / `npix` | Number of pixels assigned to the ROI. |
+| `connectivity` | Number of 4-connected components in the ROI mask. |
+| `aspect_ratio` | Bounding-box elongation: longer side divided by shorter side. |
+| `compact` | Perimeter-based compactness: `perimeter² / (4π × area)`. |
+| `footprint` | Fraction of the ROI bounding box occupied by ROI pixels. |
+| `skew` | Skewness of the corresponding raw fluorescence trace row. |
+
+These fallback values make non-Suite2p ROIs sortable and filterable in the same
+viewer menus. They are compatible review metrics, not exact reproductions of
+Suite2p's internal definitions for fields such as `compact` or `footprint`.
+When a real `stat.npy` already contains Suite2p-derived values, those values
+are preserved.
+
 To make the pipeline's morphology QC target-structure presets available in the
 viewer, the session should also contain:
 

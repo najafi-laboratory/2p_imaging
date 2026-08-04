@@ -16,6 +16,7 @@ import h5py
 import matplotlib
 import numpy as np
 from PIL import Image
+from scipy import sparse
 from scipy.ndimage import gaussian_filter
 from scipy.special import ndtr
 
@@ -46,14 +47,25 @@ class SummaryInputLayout:
     name: str
     stat_path: Path
     fluo_path: Path
-    neuropil_path: Path
+    neuropil_path: Path | None
     iscell_path: Path
     spikes_paths: tuple[Path, ...]
+    roi_mask_path: Path | None = None
+    spatial_matrix_path: Path | None = None
+
+    @property
+    def input_dir(self) -> Path:
+        for path in (self.stat_path, self.fluo_path, self.roi_mask_path, self.spatial_matrix_path):
+            if path is not None:
+                return path.parent
+        return self.stat_path.parent
 
     @property
     def dff_label(self) -> str:
         if self.name == "suite2p":
             return "raw dF/F from Suite2p F.npy/Fneu.npy"
+        if self.name == "external_rois":
+            return "raw dF/F from external ROI fluorescence arrays"
         return f"raw dF/F from {self.name} fluo.npy/neuropil.npy"
 
 
@@ -61,8 +73,22 @@ def _path_status(path: Path) -> str:
     return str(path) if path.exists() else f"{path} (missing)"
 
 
+def _path_status_optional(path: Path | None) -> str:
+    if path is None:
+        return "not supplied"
+    return _path_status(path)
+
+
 def _layout_complete(layout: SummaryInputLayout) -> bool:
-    return layout.stat_path.exists() and layout.fluo_path.exists() and layout.neuropil_path.exists()
+    has_roi_geometry = layout.stat_path.exists() or (
+        layout.name == "external_rois"
+        and (
+            (layout.roi_mask_path is not None and layout.roi_mask_path.exists())
+            or (layout.spatial_matrix_path is not None and layout.spatial_matrix_path.exists())
+        )
+    )
+    has_neuropil = layout.neuropil_path is not None and layout.neuropil_path.exists()
+    return has_roi_geometry and layout.fluo_path.exists() and (layout.name == "external_rois" or has_neuropil)
 
 
 def _direct_suite2p_layout(plane_dir: Path, session_dir: Path) -> SummaryInputLayout:
@@ -84,6 +110,39 @@ def _direct_filtered_layout(qc_dir: Path, session_dir: Path) -> SummaryInputLayo
         neuropil_path=qc_dir / "neuropil.npy",
         iscell_path=qc_dir / "iscell.npy",
         spikes_paths=(qc_dir / "spikes.h5", session_dir / "spikes.h5"),
+    )
+
+
+def _first_existing(paths: list[Path]) -> Path | None:
+    for path in paths:
+        if path.exists():
+            return path
+    return None
+
+
+def _direct_external_layout(input_dir: Path, session_dir: Path) -> SummaryInputLayout:
+    return SummaryInputLayout(
+        name="external_rois",
+        stat_path=input_dir / "stat.npy",
+        fluo_path=_first_existing([input_dir / "F.npy", input_dir / "fluo.npy"]) or input_dir / "F.npy",
+        neuropil_path=_first_existing([input_dir / "Fneu.npy", input_dir / "neuropil.npy"]),
+        iscell_path=input_dir / "iscell.npy",
+        spikes_paths=(input_dir / "spikes.h5", session_dir / "spikes.h5"),
+        roi_mask_path=_first_existing(
+            [
+                input_dir / "roi_mask.npy",
+                input_dir / "roi_masks.npy",
+                input_dir / "label_mask.npy",
+                input_dir / "masks.npy",
+            ]
+        ),
+        spatial_matrix_path=_first_existing(
+            [
+                input_dir / "spatial_components.npz",
+                input_dir / "roi_spatial_components.npz",
+                input_dir / "A.npz",
+            ]
+        ),
     )
 
 
@@ -120,6 +179,9 @@ def _resolve_summary_session_and_layout(
         and (input_path / "neuropil.npy").exists()
     ):
         return input_path.parent, _direct_filtered_layout(input_path, input_path.parent)
+    external_layout = _direct_external_layout(input_path, input_path.parent)
+    if _layout_complete(external_layout):
+        return input_path, _direct_external_layout(input_path, input_path)
     session_dir = input_path
     return session_dir, _resolve_summary_input_layout(session_dir, requested)
 
@@ -129,6 +191,7 @@ def _resolve_summary_input_layout(session_dir: Path, requested: str = "auto") ->
         "suite2p": _suite2p_layout(session_dir),
         "qc_results": _qc_results_layout(session_dir, "qc_results"),
         "manual_qc_results": _qc_results_layout(session_dir, "manual_qc_results"),
+        "external_rois": _direct_external_layout(session_dir, session_dir),
     }
     if requested != "auto":
         layout = layouts[requested]
@@ -136,12 +199,14 @@ def _resolve_summary_input_layout(session_dir: Path, requested: str = "auto") ->
             raise FileNotFoundError(
                 f"Requested input layout '{requested}' is incomplete. Required files:\n"
                 f"  stat: {_path_status(layout.stat_path)}\n"
+                f"  roi mask: {_path_status_optional(layout.roi_mask_path)}\n"
+                f"  spatial matrix: {_path_status_optional(layout.spatial_matrix_path)}\n"
                 f"  fluorescence: {_path_status(layout.fluo_path)}\n"
-                f"  neuropil: {_path_status(layout.neuropil_path)}"
+                f"  neuropil: {_path_status_optional(layout.neuropil_path)}"
             )
         return layout
 
-    for name in ("qc_results", "manual_qc_results", "suite2p"):
+    for name in ("qc_results", "manual_qc_results", "suite2p", "external_rois"):
         layout = layouts[name]
         if _layout_complete(layout):
             return layout
@@ -156,8 +221,11 @@ def _log_summary_input_layout(layout: SummaryInputLayout, requested: str) -> Non
     mode = "auto-detected" if requested == "auto" else "explicit"
     print(f"Using {mode} preprocessing summary input layout: {layout.name}")
     print(f"  stat: {layout.stat_path}")
+    if layout.name == "external_rois":
+        print(f"  roi mask: {_path_status_optional(layout.roi_mask_path)}")
+        print(f"  spatial matrix: {_path_status_optional(layout.spatial_matrix_path)}")
     print(f"  fluorescence: {layout.fluo_path}")
-    print(f"  neuropil: {layout.neuropil_path}")
+    print(f"  neuropil: {_path_status_optional(layout.neuropil_path)}")
     print(f"  iscell: {_path_status(layout.iscell_path)}")
     existing_spikes = [path for path in layout.spikes_paths if path.exists()]
     if existing_spikes:
@@ -180,10 +248,13 @@ def _load_npy(paths: list[Path], allow_pickle: bool = False) -> Any:
 
 
 def _load_ops(session_dir: Path) -> dict[str, Any]:
-    ops = _load_npy(
-        [session_dir / "ops.npy", session_dir / "suite2p" / "plane0" / "ops.npy"],
-        allow_pickle=True,
-    ).item()
+    try:
+        ops = _load_npy(
+            [session_dir / "ops.npy", session_dir / "suite2p" / "plane0" / "ops.npy"],
+            allow_pickle=True,
+        ).item()
+    except FileNotFoundError:
+        ops = {}
     ops["save_path0"] = str(session_dir)
     return ops
 
@@ -212,6 +283,23 @@ def _load_masks_h5_image(session_dir: Path, key: str) -> np.ndarray | None:
         if key not in h5:
             return None
         return np.asarray(h5[key])
+
+
+def _load_layout_image(session_dir: Path, layout: SummaryInputLayout, key: str) -> np.ndarray | None:
+    image = _load_masks_h5_image(session_dir, key)
+    if image is not None:
+        return image
+    aliases = {
+        "mean_func": ("mean_func.npy", "meanImg.npy", "mean_green.npy", "functional_mean.npy"),
+        "max_func": ("max_func.npy", "max_proj.npy", "maxImg.npy", "functional_max.npy"),
+        "mean_anat": ("mean_anat.npy", "mean_red.npy", "anatomical_mean.npy"),
+        "max_anat": ("max_anat.npy", "max_red.npy", "anatomical_max.npy"),
+    }
+    for name in aliases.get(key, ()):
+        path = layout.input_dir / name
+        if path.exists():
+            return np.asarray(np.load(path, allow_pickle=False))
+    return None
 
 
 def _load_masks_h5_label_mask(
@@ -457,7 +545,10 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
 def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any], input_layout: SummaryInputLayout | None = None) -> np.ndarray:
     layout = input_layout or _suite2p_layout(session_dir)
     fluo = np.load(layout.fluo_path, allow_pickle=False).astype(np.float32, copy=False)
-    neuropil = np.load(layout.neuropil_path, allow_pickle=False).astype(np.float32, copy=False)
+    if layout.neuropil_path is not None and layout.neuropil_path.exists():
+        neuropil = np.load(layout.neuropil_path, allow_pickle=False).astype(np.float32, copy=False)
+    else:
+        neuropil = np.zeros_like(fluo, dtype=np.float32)
     signal = fluo - float(ops.get("neucoeff", 0.7)) * neuropil
     baseline = gaussian_filter(signal, [0.0, 600.0])
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -469,10 +560,14 @@ def _load_suite2p_dff(session_dir: Path, ops: dict[str, Any], input_layout: Summ
 def _load_suite2p_fluorescence(
     session_dir: Path,
     input_layout: SummaryInputLayout | None = None,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray | None]:
     layout = input_layout or _suite2p_layout(session_dir)
     fluo = np.load(layout.fluo_path, allow_pickle=False, mmap_mode="r")
-    neuropil = np.load(layout.neuropil_path, allow_pickle=False, mmap_mode="r")
+    neuropil = (
+        np.load(layout.neuropil_path, allow_pickle=False, mmap_mode="r")
+        if layout.neuropil_path is not None and layout.neuropil_path.exists()
+        else None
+    )
     return fluo, neuropil
 
 
@@ -514,7 +609,12 @@ def _build_dff_and_metrics(
     metrics: list[dict[str, float | None]] = []
     for start in range(0, n_rois, chunk_size):
         stop = min(n_rois, start + chunk_size)
-        signal = np.asarray(fluo[start:stop], dtype=np.float32) - coeff * np.asarray(neuropil[start:stop], dtype=np.float32)
+        neuropil_chunk = (
+            np.asarray(neuropil[start:stop], dtype=np.float32)
+            if neuropil is not None
+            else np.zeros_like(np.asarray(fluo[start:stop], dtype=np.float32))
+        )
+        signal = np.asarray(fluo[start:stop], dtype=np.float32) - coeff * neuropil_chunk
         baseline = gaussian_filter(signal, [0.0, 600.0])
         with np.errstate(divide="ignore", invalid="ignore"):
             dff_chunk = (signal - baseline) / baseline
@@ -692,6 +792,211 @@ def _add_oasis_residual_metrics(
         dff_metrics[roi]["oasis_rise_tau_seconds"] = float(rise_tau) if np.isfinite(rise_tau) else None
         dff_metrics[roi]["oasis_decay_tau_seconds"] = float(decay_tau) if np.isfinite(decay_tau) else None
     return dff_metrics
+
+
+def _trace_skew(trace: np.ndarray | None) -> float:
+    if trace is None:
+        return np.nan
+    values = np.asarray(trace, dtype=np.float64).ravel()
+    values = values[np.isfinite(values)]
+    if values.size < 3:
+        return np.nan
+    centered = values - float(np.mean(values))
+    sd = float(np.std(centered))
+    if not np.isfinite(sd) or sd <= 0:
+        return np.nan
+    return float(np.mean((centered / sd) ** 3))
+
+
+def _mask_geometry_metrics(ypix: np.ndarray, xpix: np.ndarray) -> dict[str, float]:
+    if xpix.size == 0 or ypix.size == 0:
+        return {"npix": 0.0, "aspect_ratio": np.nan, "compact": np.nan, "footprint": np.nan}
+    area = float(xpix.size)
+    width = float(np.max(xpix) - np.min(xpix) + 1)
+    height = float(np.max(ypix) - np.min(ypix) + 1)
+    shortest = max(1.0, min(width, height))
+    bbox_area = max(1.0, width * height)
+    pixels = {(int(y), int(x)) for y, x in zip(ypix, xpix)}
+    perimeter = 0
+    for y, x in pixels:
+        for neighbor in ((y - 1, x), (y + 1, x), (y, x - 1), (y, x + 1)):
+            if neighbor not in pixels:
+                perimeter += 1
+    compact = float((perimeter * perimeter) / (4.0 * np.pi * area)) if area > 0 else np.nan
+    return {
+        "npix": area,
+        "aspect_ratio": float(max(width, height) / shortest),
+        "compact": compact,
+        "footprint": float(area / bbox_area),
+    }
+
+
+def _suite2p_like_stat_entry(
+    ypix: np.ndarray,
+    xpix: np.ndarray,
+    lam: np.ndarray | None = None,
+    trace: np.ndarray | None = None,
+) -> dict[str, Any]:
+    ypix = np.asarray(ypix, dtype=np.int64).reshape(-1)
+    xpix = np.asarray(xpix, dtype=np.int64).reshape(-1)
+    if ypix.shape != xpix.shape:
+        raise ValueError("External ROI ypix and xpix arrays must have the same length.")
+    if lam is None:
+        lam = np.ones(ypix.shape, dtype=np.float32)
+    else:
+        lam = np.asarray(lam, dtype=np.float32).reshape(-1)
+        if lam.shape != ypix.shape:
+            raise ValueError("External ROI lam/weight array must match ypix/xpix length.")
+    order = np.lexsort((xpix, ypix))
+    ypix = ypix[order]
+    xpix = xpix[order]
+    lam = lam[order]
+    metrics = _mask_geometry_metrics(ypix, xpix)
+    med = np.array(
+        [
+            float(np.median(ypix)) if ypix.size else np.nan,
+            float(np.median(xpix)) if xpix.size else np.nan,
+        ],
+        dtype=np.float32,
+    )
+    return {
+        "ypix": ypix,
+        "xpix": xpix,
+        "lam": lam,
+        "med": med,
+        "npix": int(metrics["npix"]),
+        "aspect_ratio": metrics["aspect_ratio"],
+        "compact": metrics["compact"],
+        "footprint": metrics["footprint"],
+        "skew": _trace_skew(trace),
+        "external_roi": True,
+    }
+
+
+def label_mask_to_suite2p_stat(label_mask: np.ndarray, traces: np.ndarray | None = None) -> np.ndarray:
+    """Convert a dense integer ROI-label image into Suite2p-like stat entries.
+
+    Background must be zero. Positive integer labels are converted in ascending
+    label order, so row 0 of the returned stat array corresponds to the
+    smallest positive label in the mask.
+    """
+
+    mask = np.asarray(label_mask)
+    if mask.ndim != 2:
+        raise ValueError(f"External label mask must be 2-D, got shape {mask.shape}.")
+    stat: list[dict[str, Any]] = []
+    labels = [int(value) for value in np.unique(mask) if value > 0]
+    for row, label in enumerate(labels):
+        ypix, xpix = np.where(mask == label)
+        trace = None if traces is None or row >= traces.shape[0] else np.asarray(traces[row])
+        entry = _suite2p_like_stat_entry(ypix, xpix, trace=trace)
+        entry["source_label"] = label
+        stat.append(entry)
+    return np.asarray(stat, dtype=object)
+
+
+def _load_external_metadata(input_dir: Path) -> dict[str, Any]:
+    path = input_dir / "external_roi_metadata.json"
+    if not path.exists():
+        return {}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _load_external_image_shape(layout: SummaryInputLayout, mean_green: np.ndarray | None) -> tuple[int, int] | None:
+    if mean_green is not None:
+        return tuple(map(int, np.asarray(mean_green).shape[:2]))
+    metadata = _load_external_metadata(layout.input_dir)
+    if "image_shape" in metadata:
+        shape = tuple(map(int, metadata["image_shape"]))
+        if len(shape) == 2:
+            return shape
+    for name in ("image_shape.npy", "fov_shape.npy"):
+        path = layout.input_dir / name
+        if path.exists():
+            values = np.asarray(np.load(path, allow_pickle=False)).reshape(-1)
+            if values.size >= 2:
+                return int(values[0]), int(values[1])
+    return None
+
+
+def spatial_matrix_to_suite2p_stat(
+    spatial_components: sparse.spmatrix | np.ndarray,
+    image_shape: tuple[int, int],
+    traces: np.ndarray | None = None,
+    *,
+    order: str = "F",
+) -> np.ndarray:
+    """Convert an ROI spatial-component matrix into Suite2p-like stat entries.
+
+    The matrix is expected to be shaped ``(pixels, rois)``. CaImAn-style
+    matrices commonly use Fortran flattening order, so ``order='F'`` is the
+    default for mapping flattened pixel indices back to ``(y, x)`` coordinates.
+    """
+
+    n_pixels = int(image_shape[0]) * int(image_shape[1])
+    components = spatial_components
+    if components.shape[0] != n_pixels and components.shape[1] == n_pixels:
+        components = components.T
+    if components.shape[0] != n_pixels:
+        raise ValueError(
+            f"External spatial matrix first dimension must equal Ly*Lx={n_pixels}; "
+            f"got shape {components.shape}."
+        )
+    stat: list[dict[str, Any]] = []
+    n_rois = int(components.shape[1])
+    for row in range(n_rois):
+        column = components[:, row]
+        if sparse.issparse(column):
+            column = column.tocoo()
+            flat = np.asarray(column.row, dtype=np.int64)
+            lam = np.asarray(column.data, dtype=np.float32)
+        else:
+            values = np.asarray(column).reshape(-1)
+            flat = np.flatnonzero(values)
+            lam = values[flat].astype(np.float32, copy=False)
+        ypix, xpix = np.unravel_index(flat, image_shape, order=order)
+        trace = None if traces is None or row >= traces.shape[0] else np.asarray(traces[row])
+        stat.append(_suite2p_like_stat_entry(ypix, xpix, lam=lam, trace=trace))
+    return np.asarray(stat, dtype=object)
+
+
+def _load_layout_stat(
+    layout: SummaryInputLayout,
+    traces: np.ndarray | None = None,
+    mean_green: np.ndarray | None = None,
+) -> np.ndarray:
+    if layout.stat_path.exists():
+        return np.load(layout.stat_path, allow_pickle=True)
+    if layout.roi_mask_path is not None and layout.roi_mask_path.exists():
+        return label_mask_to_suite2p_stat(np.load(layout.roi_mask_path, allow_pickle=False), traces=traces)
+    if layout.spatial_matrix_path is not None and layout.spatial_matrix_path.exists():
+        image_shape = _load_external_image_shape(layout, mean_green)
+        if image_shape is None:
+            raise FileNotFoundError(
+                "External spatial-component matrices require a FOV shape. Supply mean_func.npy, "
+                "external_roi_metadata.json with image_shape, or image_shape.npy."
+            )
+        metadata = _load_external_metadata(layout.input_dir)
+        order = str(metadata.get("flatten_order", metadata.get("order", "F")))
+        components = sparse.load_npz(layout.spatial_matrix_path)
+        return spatial_matrix_to_suite2p_stat(components, image_shape, traces=traces, order=order)
+    raise FileNotFoundError(
+        f"Could not find ROI geometry for external layout in {layout.input_dir}. "
+        "Expected stat.npy, roi_mask.npy, label_mask.npy, masks.npy, or spatial_components.npz."
+    )
+
+
+def _stat_image_shape(stat: np.ndarray) -> tuple[int, int]:
+    max_y = 0
+    max_x = 0
+    for entry in stat:
+        ypix = np.asarray(entry.get("ypix", []), dtype=int)
+        xpix = np.asarray(entry.get("xpix", []), dtype=int)
+        if ypix.size:
+            max_y = max(max_y, int(np.max(ypix)))
+        if xpix.size:
+            max_x = max(max_x, int(np.max(xpix)))
+    return max_y + 1, max_x + 1
 
 
 def _stat_to_mask(stat: np.ndarray, image_shape: tuple[int, int]) -> np.ndarray:
@@ -3942,24 +4247,27 @@ def create_preprocessing_summary(
     out_dir.mkdir(parents=True, exist_ok=True)
     ops = _load_ops(session_dir)
     _log_summary_input_layout(resolved_layout, input_layout)
-    suite2p_stat = np.load(resolved_layout.stat_path, allow_pickle=True)
     qc_parameters = _load_qc_parameters(session_dir)
     pipeline_parameters = _load_pipeline_parameters(session_dir)
     xoff, yoff = _load_offsets(session_dir, ops)
+    fluo_probe = np.load(resolved_layout.fluo_path, allow_pickle=False, mmap_mode="r")
 
-    mean_green = _load_masks_h5_image(session_dir, "mean_func")
+    mean_green = _load_layout_image(session_dir, resolved_layout, "mean_func")
     if mean_green is None:
+        mean_green = np.asarray(ops["meanImg"]) if "meanImg" in ops else None
+    elif "meanImg" in ops and np.asarray(mean_green).shape[:2] != np.asarray(ops["meanImg"]).shape[:2]:
         mean_green = np.asarray(ops.get("meanImg"))
-    elif "meanImg" in ops and np.asarray(mean_green).shape[:2] != np.asarray(ops.get("meanImg")).shape[:2]:
-        mean_green = np.asarray(ops.get("meanImg"))
-    max_green = _load_masks_h5_image(session_dir, "max_func")
+    suite2p_stat = _load_layout_stat(resolved_layout, traces=fluo_probe, mean_green=mean_green)
+    if mean_green is None:
+        mean_green = np.zeros(_stat_image_shape(suite2p_stat), dtype=np.float32)
+    max_green = _load_layout_image(session_dir, resolved_layout, "max_func")
     if max_green is None:
         max_green = np.asarray(ops.get("max_proj", ops.get("maxImg", mean_green)))
     elif np.asarray(max_green).shape[:2] != np.asarray(mean_green).shape[:2]:
         max_green = np.asarray(ops.get("max_proj", ops.get("maxImg", mean_green)))
         if np.asarray(max_green).shape[:2] != np.asarray(mean_green).shape[:2]:
             max_green = mean_green
-    mean_red = _load_masks_h5_image(session_dir, "mean_anat")
+    mean_red = _load_layout_image(session_dir, resolved_layout, "mean_anat")
     red_available = mean_red is not None
     if (
         (mean_red is None or np.asarray(mean_red).shape[:2] != np.asarray(mean_green).shape[:2])
@@ -3968,7 +4276,7 @@ def create_preprocessing_summary(
     ):
         mean_red = np.asarray(ops.get("meanImg_chan2"))
         red_available = True
-    max_red = _load_masks_h5_image(session_dir, "max_anat")
+    max_red = _load_layout_image(session_dir, resolved_layout, "max_anat")
     if max_red is None and red_available:
         max_red = np.asarray(ops.get("meanImg_chan2_corrected", mean_red))
     elif max_red is not None and red_available and np.asarray(max_red).shape[:2] != np.asarray(mean_green).shape[:2]:
@@ -3978,8 +4286,6 @@ def create_preprocessing_summary(
     if not red_available:
         mean_red = None
         max_red = None
-    if mean_green is None:
-        raise KeyError("Could not find green functional mean image in masks.h5 or ops.npy")
     cellpose_mask = (
         _load_masks_h5_label_mask(session_dir, "masks_anat", np.asarray(mean_green).shape[:2], ops)
         if red_available
@@ -3988,7 +4294,6 @@ def create_preprocessing_summary(
 
     frame_rate = float(ops.get("fs", 30.0))
     dff_label = resolved_layout.dff_label
-    fluo_probe = np.load(resolved_layout.fluo_path, allow_pickle=False, mmap_mode="r")
     n_rois = min(int(fluo_probe.shape[0]), len(suite2p_stat))
     n_frames = int(fluo_probe.shape[1])
     stat = suite2p_stat[:n_rois]
@@ -4112,14 +4417,17 @@ def main() -> None:
     parser.add_argument("--html-name", default=None)
     parser.add_argument(
         "--input-layout",
-        choices=["auto", "suite2p", "qc_results", "manual_qc_results"],
+        choices=["auto", "suite2p", "qc_results", "manual_qc_results", "external_rois"],
         default="auto",
         help=(
             "Input file layout for ROI/stat/trace arrays. 'suite2p' uses "
             "suite2p/plane0/stat.npy, F.npy, Fneu.npy, and iscell.npy. "
             "'qc_results' and 'manual_qc_results' map stat.npy, fluo.npy, "
             "neuropil.npy, and optional iscell.npy from those filtered-output "
-            "directories. If session_data_path already points to a concrete "
+            "directories. 'external_rois' accepts stat.npy, a dense ROI label "
+            "mask, or a sparse ROI spatial-component matrix with matching "
+            "F.npy/fluo.npy traces and optional Fneu.npy/neuropil.npy. "
+            "If session_data_path already points to a concrete "
             "layout directory, that directory is used directly. Default: "
             "auto-detect filtered layouts before Suite2p from a session root."
         ),
