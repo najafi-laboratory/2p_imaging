@@ -581,7 +581,10 @@ The summary stage creates:
 ```
 
 Run the commands below from the `2p_imaging` repository root with the
-preprocessing QC environment available.
+preprocessing QC environment available. The first positional argument can be a
+processed session root or a concrete data directory, such as `suite2p/plane0`,
+`suite2p/`, `qc_results/`, `manual_qc_results/`, or a directory containing
+external ROI masks and fluorescence traces.
 
 ### Required processed-session files
 
@@ -601,9 +604,11 @@ At minimum, the processed session must contain:
 existing `iscell.npy` is used when present for provenance, but the reviewer
 opens with all Suite2p ROIs available and not labeled.
 
-The summary generator can also read filtered `qc_results`-style outputs. In
-auto-detect mode, it uses `qc_results/` first when the following files are
-present, then `manual_qc_results/`, then native `suite2p/plane0/` files:
+The summary generator can also read filtered `qc_results`-style outputs. When a
+session root is supplied in auto-detect mode, it uses `qc_results/` first when
+the following files are present, then `manual_qc_results/`, then native
+`suite2p/plane0/`, and finally an external-ROI layout if one is present at the
+session root:
 
 ```text
 /path/to/processed/session/
@@ -614,10 +619,32 @@ present, then `manual_qc_results/`, then native `suite2p/plane0/` files:
     └── iscell.npy     # optional
 ```
 
-Use `--input-layout suite2p`, `--input-layout qc_results`, or
-`--input-layout manual_qc_results` to make the expected directory structure
-explicit. The command prints which layout it uses and the resolved paths for
-stat, fluorescence, neuropil, optional `iscell.npy`, and inferred spikes.
+Use `--input-layout suite2p`, `--input-layout qc_results`,
+`--input-layout manual_qc_results`, or `--input-layout external_rois` to make
+the expected directory structure explicit. The command prints which layout it
+uses and the resolved paths for stat or ROI geometry, fluorescence, neuropil,
+optional `iscell.npy`, and inferred spikes.
+
+### Direct input directories and layout detection
+
+The generator now accepts a concrete input directory directly, which can be
+clearer than always pointing to the session root. These calls are equivalent
+when the corresponding files exist:
+
+```bash
+python -m utils_2p.preprocessing_summary /path/to/session
+python -m utils_2p.preprocessing_summary /path/to/session/suite2p
+python -m utils_2p.preprocessing_summary /path/to/session/suite2p/plane0
+python -m utils_2p.preprocessing_summary /path/to/session/qc_results
+python -m utils_2p.preprocessing_summary /path/to/session/manual_qc_results
+```
+
+When the argument already points to a concrete layout directory, that directory
+is used directly instead of searching the session root. For example,
+`/path/to/session/qc_results` is interpreted as a filtered-output layout, while
+`/path/to/session/suite2p/plane0` is interpreted as native Suite2p output. The
+default output directory is the resolved session root unless `--output-dir` is
+provided.
 
 ### External ROI masks from non-Suite2p tools
 
@@ -637,8 +664,8 @@ command at a directory with one ROI geometry file and matching traces:
 /path/to/external_roi_session/
 ├── roi_mask.npy                 # dense integer label image, optional
 ├── spatial_components.npz       # sparse pixels x rois matrix, optional
-├── F.npy                        # raw fluorescence, shape (n_rois, n_frames)
-├── Fneu.npy                     # optional neuropil, shape (n_rois, n_frames)
+├── F.npy or fluo.npy            # raw fluorescence, shape (n_rois, n_frames)
+├── Fneu.npy or neuropil.npy     # optional neuropil, shape (n_rois, n_frames)
 ├── mean_func.npy                # optional FOV image, shape (Ly, Lx)
 └── external_roi_metadata.json   # optional, mainly for sparse matrices
 ```
@@ -655,7 +682,8 @@ For dense label masks, positive labels are converted in ascending label order.
 For example, label value `1` becomes ROI row `0`, label value `2` becomes ROI
 row `1`, and so on. The row order must match the row order in `F.npy`.
 
-For sparse matrices, supply the FOV shape if `mean_func.npy` is not present:
+For sparse matrices, supply the FOV shape if no functional image file is
+present:
 
 ```json
 {
@@ -668,6 +696,15 @@ For sparse matrices, supply the FOV shape if `mean_func.npy` is not present:
 `(y, x)` coordinates. CaImAn-style spatial matrices commonly use Fortran order
 (`"F"`), which is the default. Use `"C"` if the matrix was flattened in normal
 NumPy row-major order.
+
+The functional FOV image can be supplied as `mean_func.npy`, `meanImg.npy`,
+`mean_green.npy`, or `functional_mean.npy`. Optional maximum-projection and
+anatomical images can also be supplied with names such as `max_func.npy`,
+`max_proj.npy`, `mean_anat.npy`, or `mean_red.npy`. If no FOV image is supplied
+for a dense ROI mask, the summary uses the ROI mask extents to create a blank
+background. That is enough to inspect masks and traces, but a real functional
+mean image is strongly preferred because it verifies that the ROI coordinates
+are in the same frame as the imaging data.
 
 Example dense-mask input:
 
@@ -696,11 +733,10 @@ python -m utils_2p.preprocessing_summary \
   --input-layout external_rois
 ```
 
-If `Fneu.npy` or `neuropil.npy` is omitted, the summary generator treats
-neuropil as zero. If no FOV image is supplied, it creates a blank background
-from the ROI coordinate extents. That is enough to inspect masks and traces,
-but a real `mean_func.npy` is strongly preferred because it verifies that the
-ROI coordinates are in the same frame as the imaging data.
+If the directory is already complete, `--input-layout external_rois` is optional
+because the generator can auto-detect the external-ROI layout from the concrete
+input directory. If `Fneu.npy` or `neuropil.npy` is omitted, the summary
+generator treats neuropil as zero.
 
 ### Metrics calculated for external masks
 

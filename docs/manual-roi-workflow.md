@@ -351,29 +351,48 @@ to that same environment.
 
 ### Add the ROI in the GUI
 
-1. Open the target `stat.npy`.
-2. Open the manual labelling window.
-3. Draw the custom ROI.
-4. Click `Extract ROI` once and wait for extraction to finish.
-5. Click `Save and quit`.
+In the Suite2p GUI, open the working folder with **File -> Load processed
+data**. Navigate to the session data directory that contains the target
+`suite2p/plane0/` folder, or to the temporary `manual_roi_workspace/` directory
+created above for older `qc_results/` or `manual_qc_results/` outputs. The
+directory you open should contain the Suite2p-compatible files described in
+Step 1, including `stat.npy`, `ops.npy`, trace arrays, and a valid `data.bin`
+when fluorescence extraction from new ROIs is needed.
 
-Screenshot placeholder:
-
-```text
-TODO: Add screenshot of opening the target stat.npy.
-```
-
-Screenshot placeholder:
+Common storage roots to check for hosted sessions include:
 
 ```text
-TODO: Add screenshot of drawing a manual ROI.
+# Cedar long-term storage
+/storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/
+
+# PACE project/shared storage
+/storage/project/r-fnajafi3-0/
+/storage/project/r-fnajafi3-0/shared/2P_Imaging/
+
+# PACE scratch processing outputs, if the session has not yet been copied back
+/storage/scratch1/3/<username>/2p_processing_results/
 ```
 
-Screenshot placeholder:
+![Opening the target stat.npy](assets/manual_roi_open_statnpy.png)
 
-```text
-TODO: Add screenshot of Extract ROI / Save and quit controls.
-```
+Open the manual ROI drawing menu with **File -> Manual labelling -> add ROI**.
+Suite2p opens an oval ROI that can be moved over the target region, resized,
+and rotated to cover the selected area. If the target region is irregular, draw
+multiple simpler ROIs; they can be merged later so downstream analysis uses the
+average activity across the merged ROI set. Multiple ROIs can be added before
+running extraction, and it is usually more efficient to add all planned manual
+ROIs in one pass because the extraction step can take a while to run.
+
+![Drawing a manual ROI](assets/manual_roi_drawing.png)
+
+After all planned ROIs have been added, click **Extract ROI** once and wait for
+the extraction step to finish. This can take 10-15 minutes, so be patient and
+avoid clicking additional controls or making further edits while extraction is
+running. The **Extract ROI** button switches to **extracting...** while it runs.
+When the screen looks like the following image, extraction is complete and you
+can click **Save and quit**.
+
+![Extract ROI and Save and quit controls](assets/manual_roi_extract_save_quit.png)
 
 ### Editing the original Suite2p folder
 
