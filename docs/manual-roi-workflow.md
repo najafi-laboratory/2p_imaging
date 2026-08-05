@@ -373,7 +373,7 @@ Common storage roots to check for hosted sessions include:
 /storage/scratch1/3/<username>/2p_processing_results/
 ```
 
-![Opening the target stat.npy](assets/manual_roi_open_statnpy.png)
+![Opening the target stat.npy](images/manual-roi/manual-roi-open-statnpy.png)
 
 Open the manual ROI drawing menu with **File -> Manual labelling -> add ROI**.
 Suite2p opens an oval ROI that can be moved over the target region, resized,
@@ -383,7 +383,7 @@ average activity across the merged ROI set. Multiple ROIs can be added before
 running extraction, and it is usually more efficient to add all planned manual
 ROIs in one pass because the extraction step can take a while to run.
 
-![Drawing a manual ROI](assets/manual_roi_drawing.png)
+![Drawing a manual ROI](images/manual-roi/manual-roi-drawing.png)
 
 After all planned ROIs have been added, click **Extract ROI** once and wait for
 the extraction step to finish. This can take 10-15 minutes, so be patient and
@@ -392,7 +392,7 @@ running. The **Extract ROI** button switches to **extracting...** while it runs.
 When the screen looks like the following image, extraction is complete and you
 can click **Save and quit**.
 
-![Extract ROI and Save and quit controls](assets/manual_roi_extract_save_quit.png)
+![Extract ROI and Save and quit controls](images/manual-roi/manual-roi-extract-save-quit.png)
 
 ### Editing the original Suite2p folder
 

@@ -11,10 +11,10 @@ The starting point for all our 2p imaging based analyses are anatomical and func
       </div>
       <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
         <div style="width: 48%; background: #fff; border: 1px solid #d8dee9; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12); border-radius: 8px; overflow: hidden;">
-          <img src="../assets/mc11_mean_anatomical.png" alt="Mean anatomical channel image" style="display: block; width: 100%; height: auto;" />
+          <img src="../images/workflow/mc11-mean-anatomical.png" alt="Mean anatomical channel image" style="display: block; width: 100%; height: auto;" />
         </div>
         <div style="width: 48%; background: #fff; border: 1px solid #d8dee9; box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12); border-radius: 8px; overflow: hidden;">
-          <img src="../assets/mc11_mean_functional.png" alt="Mean functional channel image" style="display: block; width: 100%; height: auto;" />
+          <img src="../images/workflow/mc11-mean-functional.png" alt="Mean functional channel image" style="display: block; width: 100%; height: auto;" />
         </div>
       </div>
     </div>
@@ -45,7 +45,7 @@ The starting point for all our 2p imaging based analyses are anatomical and func
 ## 5 Step Data Processing Workflow
 
 <div class="overview-flowchart">
-  <img src="../assets/flowchart-large.svg" alt="2p imaging workflow flowchart" />
+  <img src="../images/workflow/flowchart-large.svg" alt="2p imaging workflow flowchart" />
 </div>
 
 <p class="workflow-heading"><strong>Processing</strong></p>

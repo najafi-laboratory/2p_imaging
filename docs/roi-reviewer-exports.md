@@ -8,7 +8,7 @@ dF/F trace. It also provides filtering and sorting utilities of ROIs based on me
 
 ### 1. Full reviewer layout
 
-![Full reviewer layout](assets/roi-labeler-full-layout.png)
+![Full reviewer layout](images/roi-reviewer/roi-labeler-full-layout.png)
 
 The reviewer is organized as a single interactive workspace that combines
 image-based ROI inspection, trace review, filtering, labeling, and export. The
@@ -25,7 +25,7 @@ The following sections describe each component in more detail.
 
 ### 2. FOV ROI selection
 
-![FOV ROI selection](assets/roi-labeler-fov-selection.png)
+![FOV ROI selection](images/roi-reviewer/roi-labeler-fov-selection.png)
 
 The **FOV ROI selection** panel shows the green functional mean image and, when
 available, an optional red-channel anatomical panel. Clickable outlines on the
@@ -48,7 +48,7 @@ trace file at a time.
 
 ### 3. Manual label controls
 
-![Manual label controls](assets/roi-labeler-manual-labels.png)
+![Manual label controls](images/roi-reviewer/roi-labeler-manual-labels.png)
 
 The **manual label controls** assign the current ROI to one of four reviewer
 states: **Good**, **Bad**, **Unsure**, or **Not labeled**. The button
@@ -74,7 +74,7 @@ labeling of multiple visible ROIs.
 
 ### 4. Show ROIs by label
 
-![Show ROIs by label](assets/roi-labeler-show-rois.png)
+![Show ROIs by label](images/roi-reviewer/roi-labeler-show-rois.png)
 
 The **Show ROIs** controls toggle visibility for **Good**, **Bad**, **Unsure**,
 and **Not labeled** ROIs. These display controls change what appears in the
@@ -88,7 +88,7 @@ filtered-out ROIs, the relevant QC filter must be removed or reset.
 
 ### 5. ROI QC filters
 
-![ROI QC filters](assets/roi-labeler-qc-filters.png)
+![ROI QC filters](images/roi-reviewer/roi-labeler-qc-filters.png)
 
 The **ROI QC Filters** menu previews which ROIs pass the active QC thresholds.
 By default, no thresholds are active and all ROIs pass. Editing a threshold
@@ -140,7 +140,7 @@ preserve the final manual label state, not just the filter result.
 
 #### 5.1. Metric distributions and suggested thresholds
 
-![Metric distributions](assets/roi-labeler-metric-distributions.png)
+![Metric distributions](images/roi-reviewer/roi-labeler-metric-distributions.png)
 
 **Distribution histograms** are available for individual metrics in the filter
 menu. For fields without suggested thresholds, the plot marks the mean value.
@@ -193,7 +193,7 @@ Fields omitted from the `filter` object are treated as unused thresholds.
 
 ### 6. Sorting ROIs
 
-![Sort ROIs](assets/roi-labeler-sort-rois.png)
+![Sort ROIs](images/roi-reviewer/roi-labeler-sort-rois.png)
 
 The **Sort ROIs** dialog orders ROIs by original Suite2p index, row order, or
 metrics from the same categories used in the ROI QC filters: morphology,
@@ -211,7 +211,7 @@ When selecting multiple metrics, choose metrics whose direction has the same pra
 
 ### 7. Selected ROI dF/F and OASIS overlay
 
-![Selected ROI trace](assets/roi-labeler-selected-trace.png)
+![Selected ROI trace](images/roi-reviewer/roi-labeler-selected-trace.png)
 
 The **selected ROI dF/F trace** shows the fluorescence trace for the currently
 selected ROI over the active time window. Wheel and drag interactions zoom or
@@ -290,7 +290,7 @@ np.save("session_inferred_spikes.npy", spikes)
 
 ### 8. Inferred spike diagnostics
 
-![OASIS diagnostics](assets/roi-labeler-spike-diagnostics.png)
+![OASIS diagnostics](images/roi-reviewer/roi-labeler-spike-diagnostics.png)
 
 The inferred-spike diagnostics are viewer-side summaries of how the selected
 ROI's dF/F trace behaves around frames where the inferred-spike amplitude is
@@ -381,7 +381,7 @@ missing or unstable diagnostics.
 
 ### 9. Stacked dF/F traces
 
-![Stacked dF/F traces](assets/roi-labeler-stacked-traces.png)
+![Stacked dF/F traces](images/roi-reviewer/roi-labeler-stacked-traces.png)
 
 The stacked trace panel is a compact view of many ROI dF/F traces at once. It
 uses the current visible ROI list, so filtering, hiding labels, and sorting all
@@ -418,7 +418,7 @@ ROI subset.
 
 ### 10. Motion correction plots
 
-![Motion correction plots](assets/roi-labeler-motion-correction.png)
+![Motion correction plots](images/roi-reviewer/roi-labeler-motion-correction.png)
 
 The motion correction area summarizes rigid frame shifts from the preprocessing
 stage. These plots are meant to help reviewers identify sessions or time ranges
@@ -488,7 +488,7 @@ for the session.
 
 ### 11. Bulk labeling
 
-![Bulk labeling](assets/roi-labeler-bulk-labeling.png)
+![Bulk labeling](images/roi-reviewer/roi-labeler-bulk-labeling.png)
 
 The **Label all visible ROIs as ...** dialog applies one manual label to the
 currently visible ROI set. Available bulk labels are **Good**, **Bad**,
@@ -502,7 +502,7 @@ revisited and assigned a different label.
 
 ### 12. Export and save options
 
-![Export and save options](assets/roi-labeler-export-save.png)
+![Export and save options](images/roi-reviewer/roi-labeler-export-save.png)
 
 The **Export** section and **Save Labels** dialog provide the main ways to
 preserve reviewer state and move results into downstream analysis. **Save
