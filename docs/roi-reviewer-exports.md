@@ -580,11 +580,13 @@ The summary stage creates:
 <session>_interactive_fov_roi_dff.html
 ```
 
-Run the commands below from the `2p_imaging` repository root with the
-preprocessing QC environment available. The first positional argument can be a
-processed session root or a concrete data directory, such as `suite2p/plane0`,
-`suite2p/`, `qc_results/`, `manual_qc_results/`, or a directory containing
-external ROI masks and fluorescence traces.
+Run the commands below from an environment where `utils_2p` is installed. The
+shared PACE preprocessing environment already has the package available, so a
+local `2p_imaging` checkout is not required just to generate summaries. The
+first positional argument can be a processed session root or a concrete data
+directory, such as `suite2p/plane0`, `suite2p/`, `qc_results/`,
+`manual_qc_results/`, or a directory containing external ROI masks and
+fluorescence traces.
 
 ### Required processed-session files
 
@@ -890,7 +892,7 @@ Submit summary generation as a small CPU job instead of running it on a PACE
 login node:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 
 sbatch \
   --account=gts-fnajafi3 \

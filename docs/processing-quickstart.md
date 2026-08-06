@@ -1,8 +1,9 @@
 # Processing Quickstart
 
 This guide covers the complete staged preprocessing and QC pipeline in
-`utils_2p.preprocessing_qc_pipeline`, including environment installation,
-single-session submission, and multi-session submission.
+`utils_2p.preprocessing_qc_pipeline`, including shared environment use,
+environment installation, single-session submission, and multi-session
+submission.
 
 The full pipeline is:
 
@@ -10,21 +11,26 @@ The full pipeline is:
 prep -> suite2p -> qc -> label -> dff -> summary
 ```
 
-The launcher generates linked Slurm jobs and is designed to run on PACE.
+The launcher generates linked Slurm jobs and is designed to run on PACE. The
+current default workflow is to run it from a Conda environment where
+`utils_2p` is installed as a package. A local `2p_imaging` repository checkout
+is only needed when editing code or rebuilding an environment.
 
-## Get the repository
+## Use the shared PACE environment
 
-Run the launcher from the root of a current `2p_imaging` checkout:
+Most lab users should start with the shared Suite2p 1.x environment:
 
 ```bash
-git clone https://github.com/najafi-laboratory/2p_imaging.git
-cd 2p_imaging
-git checkout main
-git pull origin main
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
+
+"$TWO_P_PYTHON" -c "from importlib.metadata import version; import utils_2p; print('utils_2p:', utils_2p.__file__); print('suite2p:', version('suite2p'))"
 ```
 
-For an existing laboratory checkout configured with an `upstream` remote, use
-`git pull upstream main`.
+The pipeline no longer requires running commands from the `2p_imaging`
+repository root. Generated Slurm jobs call `python -m
+utils_2p.preprocessing_qc_pipeline` from the installed package and use bundled
+Suite2p config/QC helper files by default.
 
 ## Companion notebook
 
@@ -37,16 +43,13 @@ and keeps command execution disabled until `RUN_COMMAND = True`.
 ## Launch one session on PACE
 
 Users with read and execute access can launch directly with the shared Suite2p
-1.x Python. They do not need to build or activate a personal Conda
-environment:
+1.x Python. They do not need to build or activate a personal Conda environment:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
 export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
 
 "$TWO_P_PYTHON" -c "from importlib.metadata import version; print(version('suite2p'))"
-
-cd /path/to/2p_imaging
 
 "$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
   --session /path/to/raw/session \
@@ -69,6 +72,8 @@ Argument meanings:
 | `--target-structure` | Morphology QC preset: `neuron`, `dendrite`, or `cerebellum_lax`. |
 | `--suite2p-version` | Select the default versioned environment when `--python-bin` is not supplied. |
 | `--python-bin` | Exact Python executable used inside every generated job. |
+| `--processing-root` | Optional override for Suite2p config JSON files. Omit this for the packaged defaults. |
+| `--postprocess-root` | Optional override for legacy QC/cell-labeling helper modules. Omit this for the packaged defaults. |
 | `--account` | Slurm allocation charged for the jobs. |
 | `--qos` | Slurm QOS for all stages. `embers` is preemptible; use `inferno` when paid, non-preemptible execution is required. |
 | `--run-name` | Readable name for the generated job directory and provenance files. |
@@ -175,7 +180,7 @@ Suite2p requests a GPU by default. Add `--no-suite2p-gpu` to run Suite2p on
 CPU-only resources. The anatomical `label` stage still requires a GPU when it
 is enabled.
 
-## Rebuild the environment if needed
+## Rebuild or install the environment if needed
 
 Most PACE users should use the shared Python shown above. Build a personal
 environment only when the shared path is unavailable or different package
@@ -190,17 +195,24 @@ Make Conda available:
 module load anaconda3/2023.03
 ```
 
-From the repository checkout:
+From a repository checkout:
 
 ```bash
+git clone https://github.com/najafi-laboratory/2p_imaging.git
+cd 2p_imaging
+git checkout main
+git pull origin main
+
 conda env create \
   --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
   --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
 
 export TWO_P_PYTHON=~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python
+"$TWO_P_PYTHON" -m pip install -e .
 ```
 
-Without a checkout, download the YAML first:
+Without keeping a checkout, download the YAML first and install the package from
+GitHub:
 
 ```bash
 curl -L -o environment-preprocessing-qc-suite2p-1x.yml \
@@ -209,6 +221,9 @@ curl -L -o environment-preprocessing-qc-suite2p-1x.yml \
 conda env create \
   --prefix ~/conda/envs/2p_preprocessing_qc_suite2p_1x \
   --file environment-preprocessing-qc-suite2p-1x.yml
+
+~/conda/envs/2p_preprocessing_qc_suite2p_1x/bin/python -m pip install \
+  "git+https://github.com/najafi-laboratory/2p_imaging.git"
 ```
 
 For legacy Suite2p 0.x, use
@@ -318,8 +333,7 @@ bash /path/to/processed_outputs/.preprocessing_qc_jobs/neuron_manifest_${USER}/s
 ```
 
 Run both `generate` and the resulting submission script on PACE so all
-repository, Python, session, and output paths are accessible to the compute
-nodes.
+Python, session, and output paths are accessible to the compute nodes.
 
 ## Important optional arguments
 

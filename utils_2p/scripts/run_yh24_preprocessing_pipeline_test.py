@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Reproducible YH24 test for the staged preprocessing pipeline.
 
-Edit the variables below, then run this file from the repository root:
+Edit the variables below, then run this file with a Python environment where
+`utils_2p` is installed:
 
-    python utils_2p/scripts/run_yh24_preprocessing_pipeline_test.py
+    python -m utils_2p.scripts.run_yh24_preprocessing_pipeline_test
 
 By default this only generates the Slurm scripts. Set MODE = "submit" or pass
 --submit to actually submit the linked job chain.
@@ -13,13 +14,8 @@ from __future__ import annotations
 
 import argparse
 import getpass
-import sys
 from pathlib import Path
 
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from utils_2p.preprocessing_qc_pipeline import (
     PipelineConfig,
@@ -43,7 +39,7 @@ RAW_SESSION = Path(
 OUTPUT_ROOT = Path(f"/storage/scratch1/3/{getpass.getuser()}/2p_pipeline_tests/yh24_preprocessing")
 
 PYTHON_BIN = Path(
-    "/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python"
+    "/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python"
 )
 
 SLURM_ACCOUNT = "gts-fnajafi3"

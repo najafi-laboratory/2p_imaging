@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "utils-2p"
+version = "0.1.0"
+description = "Najafi laboratory two-photon preprocessing and ROI reviewer utilities"
+readme = "README.md"
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+include = [
+  "utils_2p",
+  "utils_2p.scripts",
+  "utils_2p.resources",
+  "utils_2p.resources.*",
+]
+exclude = [
+  "utils_2p.tests",
+  "utils_2p.pipeline_scripts",
+]
+
+[tool.setuptools.package-data]
+utils_2p = [
+  "environment-preprocessing-qc-suite2p-*.yml",
+  "resources/suite2p_configs/*.json",
+  "resources/postprocess_modules/*.py",
+]

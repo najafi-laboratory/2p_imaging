@@ -13,18 +13,21 @@ import concurrent.futures
 import json
 import os
 import shutil
-import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from utils_2p.preprocessing_qc_pipeline import _processing_ops, _suite2p_v1_settings_db
+from utils_2p.preprocessing_qc_pipeline import (
+    _default_postprocess_root,
+    _default_processing_root,
+    _current_python_bin,
+    _processing_ops,
+    _repo_root,
+    _suite2p_v1_settings_db,
+    _suite2p_python_path,
+)
 
 
 def _jsonable(value: Any) -> Any:
@@ -116,13 +119,13 @@ def _create_manifest_from_old_suite2p(
             overrides[key] = _jsonable(ops[key])
 
     pipeline = {
-        "repo_root": str(REPO_ROOT),
-        "processing_root": str(Path(processing_root).expanduser().resolve() if processing_root else REPO_ROOT / "2p_processing_pipeline_202401"),
-        "postprocess_root": str(Path(postprocess_root).expanduser().resolve() if postprocess_root else REPO_ROOT / "2p_post_process_module_202404"),
+        "repo_root": str(_repo_root()),
+        "processing_root": str(Path(processing_root).expanduser().resolve() if processing_root else _default_processing_root()),
+        "postprocess_root": str(Path(postprocess_root).expanduser().resolve() if postprocess_root else _default_postprocess_root()),
         "python_bin": str(
             Path(python_bin).expanduser().resolve()
             if python_bin
-            else Path("/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python")
+            else (_suite2p_python_path("1.x") if _suite2p_python_path("1.x").exists() else _current_python_bin())
         ),
         "suite2p_version": "1.x",
         "account": "gts-fnajafi3",

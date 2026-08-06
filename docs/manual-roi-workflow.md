@@ -146,13 +146,15 @@ pipeline, its existing metadata is detected and reused. If not, temporary
 metadata is generated from `suite2p/plane0/ops.npy` and used internally.
 
 ```bash
-utils_2p/scripts/run_suite2p_binary_prebuild.sh \
-  /path/to/processed/session \
-  /path/to/raw_tiff_folder \
-  /path/to/output_root \
-  8 \
-  5000 \
-  dendrite
+/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python \
+  -m utils_2p.scripts.prebuild_suite2p_binary_parallel \
+  --processed-session /path/to/processed/session \
+  --raw-path /path/to/raw_tiff_folder \
+  --output-root /path/to/output_root \
+  --workers 8 \
+  --batch-size 5000 \
+  --target-structure dendrite \
+  --force
 ```
 
 This writes:
@@ -243,8 +245,8 @@ channel or frame count.
 The direct Python CLI uses the same interface:
 
 ```bash
-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python \
-  utils_2p/scripts/prebuild_suite2p_binary_parallel.py \
+/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python \
+  -m utils_2p.scripts.prebuild_suite2p_binary_parallel \
   --processed-session /path/to/processed/session \
   --raw-path /path/to/raw_tiff_folder \
   --output-root /path/to/output_root \
@@ -263,43 +265,36 @@ ROI. The same GUI workflow is used whether you are editing an original
 
 ### Repository and helper access
 
-The most recent versions of the `utils_2p` helper functions are in the
-`2p_imaging` GitHub repository on the `main` branch:
+The current recommended workflow is to use a Conda environment where
+`utils_2p` is installed as a package. The shared PACE environment is:
+
+```text
+/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+```
+
+Check that the helper package is importable:
+
+```bash
+/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python \
+  -c "import utils_2p; print(utils_2p.__file__)"
+```
+
+The source code remains on GitHub for development, review, and rebuilding
+environments:
 
 ```text
 https://github.com/najafi-laboratory/2p_imaging
 ```
 
-If you do not already have a local checkout, clone the repository first:
+Clone or update the repository only when you need to edit helper code or build
+a new environment:
 
 ```bash
 git clone https://github.com/najafi-laboratory/2p_imaging.git
 cd 2p_imaging
 git checkout main
-```
-
-If you already have a checkout, update it before running helper commands:
-
-```bash
-cd /path/to/2p_imaging
-git checkout main
 git pull --ff-only
 ```
-
-On PACE, the shared working copy used here is:
-
-```text
-/storage/home/hcoda1/3/grubin6/2p_imaging
-```
-
-The helper package lives inside that repo at:
-
-```text
-/storage/home/hcoda1/3/grubin6/2p_imaging/utils_2p
-```
-
-Run helper commands from the repo root, or make sure the repo root is on
-`PYTHONPATH` before importing `utils_2p`.
 
 ### Start the interactive desktop
 

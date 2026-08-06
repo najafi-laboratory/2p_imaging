@@ -6,6 +6,7 @@ from pathlib import Path
 from utils_2p.preprocessing_qc_pipeline import (
     PipelineConfig,
     SUITE2P_VERSIONED_PYTHONS,
+    _current_python_bin,
     _suite2p_python_path,
 )
 
@@ -26,7 +27,10 @@ class Suite2pEnvSelectionTest(unittest.TestCase):
             with tempfile.TemporaryDirectory() as tmp:
                 normalized = PipelineConfig().normalized(Path(tmp))
             self.assertEqual(normalized.suite2p_version, "1.x")
-            self.assertEqual(normalized.python_bin, _suite2p_python_path("1.x"))
+            expected = _suite2p_python_path("1.x")
+            if not expected.exists():
+                expected = _current_python_bin()
+            self.assertEqual(normalized.python_bin, expected)
         finally:
             if old_python is not None:
                 os.environ["TWO_P_PYTHON"] = old_python

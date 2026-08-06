@@ -14,13 +14,9 @@ workers=$4
 batch_size=${5:-5000}
 target_structure=${6:-dendrite}
 
-repo_root=/storage/home/hcoda1/3/grubin6/2p_imaging
-python_bin=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+python_bin=${TWO_P_PYTHON:-/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python}
 
-cd "$repo_root"
-export PYTHONPATH="$repo_root${PYTHONPATH:+:$PYTHONPATH}"
-
-"$python_bin" utils_2p/scripts/prebuild_suite2p_binary_parallel.py \
+"$python_bin" -m utils_2p.scripts.prebuild_suite2p_binary_parallel \
   --processed-session "$processed_session" \
   --raw-path "$raw_path" \
   --output-root "$output_root" \

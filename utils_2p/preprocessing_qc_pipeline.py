@@ -25,6 +25,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -65,7 +66,7 @@ SUITE2P_CONFIG_TARGETS = {
     "cerebellum_lax": "dendrite",
 }
 
-SUITE2P_SHARED_ENV_ROOT = Path("/storage/project/r-fnajafi3-0/grubin6/shared_envs")
+SUITE2P_SHARED_ENV_ROOT = Path("/storage/project/r-fnajafi3-0/shared/shared_envs")
 SUITE2P_VERSIONED_PYTHONS = {
     "0.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_0x" / "bin" / "python",
     "1.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
@@ -76,6 +77,28 @@ STAGE_ORDER = ("prep", "suite2p", "qc", "label", "dff", "spikes", "summary")
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _package_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _default_processing_root() -> Path:
+    packaged = _package_root() / "resources" / "suite2p_configs"
+    if (packaged / "config_neuron.json").exists():
+        return packaged
+    return _repo_root() / "2p_processing_pipeline_202401"
+
+
+def _default_postprocess_root() -> Path:
+    packaged = _package_root() / "resources" / "postprocess_modules"
+    if (packaged / "QualControlDataIO.py").exists():
+        return packaged
+    return _repo_root() / "2p_post_process_module_202404" / "modules"
+
+
+def _current_python_bin() -> Path:
+    return Path(sys.executable).resolve()
 
 
 def _suite2p_python_path(version: str) -> Path:
@@ -235,18 +258,21 @@ class PipelineConfig:
         processing = (
             Path(self.processing_root).expanduser().resolve()
             if self.processing_root
-            else repo / "2p_processing_pipeline_202401"
+            else _default_processing_root()
         )
         postprocess = (
             Path(self.postprocess_root).expanduser().resolve()
             if self.postprocess_root
-            else repo / "2p_post_process_module_202404"
+            else _default_postprocess_root()
         )
+        if (postprocess / "modules" / "QualControlDataIO.py").exists():
+            postprocess = postprocess / "modules"
         configured_python = self.python_bin or os.environ.get("TWO_P_PYTHON")
         if configured_python:
             python_bin = Path(configured_python).expanduser()
         else:
-            python_bin = _suite2p_python_path(self.suite2p_version).expanduser()
+            shared_python = _suite2p_python_path(self.suite2p_version).expanduser()
+            python_bin = shared_python if shared_python.exists() else _current_python_bin()
         if not python_bin.exists():
             raise FileNotFoundError(f"Configured Python executable does not exist: {python_bin}")
         account = self.account or os.environ.get("TWO_P_SLURM_ACCOUNT", "gts-fnajafi3")
@@ -280,8 +306,8 @@ class PipelineConfig:
             processing / "config_neuron.json",
             processing / "config_neuron_1chan.json",
             processing / "config_dendrite.json",
-            postprocess / "modules" / "QualControlDataIO.py",
-            postprocess / "modules" / "LabelExcInh.py",
+            postprocess / "QualControlDataIO.py",
+            postprocess / "LabelExcInh.py",
         ):
             if not required.exists():
                 raise FileNotFoundError(f"Required pipeline code is missing: {required}")
@@ -411,7 +437,6 @@ def _sbatch_text(
         f"export NUMBA_CACHE_DIR={_quote(config.numba_cache_dir)}",
         f"export MPLCONFIGDIR={_quote(matplotlib_cache_dir)}",
         'export MPLBACKEND="Agg"',
-        f"export PYTHONPATH={_quote(config.repo_root)}${{PYTHONPATH:+:${{PYTHONPATH}}}}",
     ]
     if stage == "suite2p" and config.suite2p_gpu:
         body.append('export TWO_P_SUITE2P_TORCH_DEVICE="cuda"')
@@ -436,7 +461,7 @@ def _sbatch_text(
         [
             ': "${SESSION_INDEX:?SESSION_INDEX is required}"',
             f"mkdir -p {_quote(run_dir / 'logs')} {_quote(run_dir / 'home')} {_quote(config.numba_cache_dir)} {_quote(matplotlib_cache_dir)}",
-            f"cd {_quote(config.repo_root)}",
+            f"cd {_quote(run_dir)}",
             (
                 f"{_quote(config.python_bin)} -m utils_2p.preprocessing_qc_pipeline run-stage "
                 f"--manifest {_quote(manifest)} --index \"${{SESSION_INDEX}}\" --stage {stage}"
@@ -571,6 +596,14 @@ def _load_module(name: str, path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _postprocess_module_path(root: Path | str, filename: str) -> Path:
+    path = Path(root)
+    direct = path / filename
+    if direct.exists():
+        return direct
+    return path / "modules" / filename
 
 
 def _session_runtime(manifest: Path, index: int) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -1006,7 +1039,7 @@ def _run_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
     ops = _read_ops(session)
     qc = _load_module(
         "quality_control",
-        Path(data["pipeline"]["postprocess_root"]) / "modules" / "QualControlDataIO.py",
+        _postprocess_module_path(data["pipeline"]["postprocess_root"], "QualControlDataIO.py"),
     )
     params = session["qc_parameters"]
     qc.run(
@@ -1052,7 +1085,7 @@ def _run_label(data: dict[str, Any], session: dict[str, Any]) -> None:
     ops = _read_ops(session)
     label = _load_module(
         "label_exc_inh",
-        Path(data["pipeline"]["postprocess_root"]) / "modules" / "LabelExcInh.py",
+        _postprocess_module_path(data["pipeline"]["postprocess_root"], "LabelExcInh.py"),
     )
     cellpose_constructor = label.models.Cellpose
 
