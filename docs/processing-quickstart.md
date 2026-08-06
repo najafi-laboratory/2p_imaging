@@ -382,6 +382,9 @@ Downstream-only runs assume all required upstream files are already present.
 
 ## Pipeline outputs
 
+For a graphical overview of how the main inputs and outputs move through each
+stage, see the [full preprocessing QC data flow](workflow.md#full-preprocessing-qc-data-flow).
+
 | Stage | Resource | Main outputs |
 |---|---|---|
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |

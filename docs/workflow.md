@@ -65,6 +65,21 @@ The starting point for all our 2p imaging based analyses are anatomical and func
 
 The following sections provide more detail on each data processing step, files generated, and definitions of the fields and data contained within.
 
+## Full Preprocessing QC Data Flow
+
+The chart below shows the current data flow when all staged preprocessing QC
+steps are enabled. It separates the high-level stages from the main functions,
+input files, generated outputs, and downstream reviewer exports.
+
+<div class="overview-flowchart pipeline-dataflow">
+  <img src="../images/workflow/preprocessing-pipeline-dataflow.svg" alt="Detailed preprocessing QC pipeline data flow" />
+</div>
+
+The rendered diagram above is stored as
+`docs/images/workflow/preprocessing-pipeline-dataflow.svg`. The editable
+Mermaid source is stored beside it at
+`docs/images/workflow/preprocessing-pipeline-dataflow.mmd`.
+
 The two main locations where data is stored are PACE project storage, where files are uploaded from experimental or lab PCs after recording sessions, and the long-term CEDAR data storage.
 
 For more information on the technical specifications of the 2p imaging rig and experimental recording setup, see the respective OneDrive documentation links when they are added here in the future.

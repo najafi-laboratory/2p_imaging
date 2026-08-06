@@ -1,0 +1,176 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1900 1500" role="img" aria-labelledby="title desc">
+  <title id="title">Preprocessing QC Pipeline Data Flow</title>
+  <desc id="desc">Flowchart showing raw session inputs, Slurm launcher, preprocessing stages, generated files, interactive ROI reviewer exports, and downstream analysis use.</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#475467" />
+    </marker>
+    <style>
+      .title { font: 700 34px Arial, sans-serif; fill: #101828; }
+      .subtitle { font: 17px Arial, sans-serif; fill: #475467; }
+      .group-title { font: 700 18px Arial, sans-serif; fill: #344054; }
+      .box-title { font: 700 16px Arial, sans-serif; fill: #101828; }
+      .box-text { font: 13px Arial, sans-serif; fill: #344054; }
+      .small { font: 12px Arial, sans-serif; fill: #475467; }
+      .group { fill: #f8fafc; stroke: #d0d5dd; stroke-width: 2; rx: 18; }
+      .input { fill: #eff8ff; stroke: #2e90fa; stroke-width: 2; rx: 12; }
+      .process { fill: #f4f3ff; stroke: #7a5af8; stroke-width: 2; rx: 12; }
+      .file { fill: #ecfdf3; stroke: #12b76a; stroke-width: 2; rx: 12; }
+      .optional { fill: #fff7ed; stroke: #f79009; stroke-width: 2; rx: 12; }
+      .review { fill: #fdf2fa; stroke: #c11574; stroke-width: 2; rx: 12; }
+      .arrow { stroke: #475467; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .arrow-light { stroke: #98a2b3; stroke-width: 1.8; fill: none; marker-end: url(#arrow); stroke-dasharray: 6 5; }
+    </style>
+  </defs>
+
+  <rect width="1900" height="1500" fill="#ffffff" />
+  <text x="60" y="55" class="title">Preprocessing QC Pipeline Data Flow</text>
+  <text x="60" y="86" class="subtitle">All stages enabled: prep -> Suite2p -> morphology QC -> cell-type labeling -> dF/F -> inferred spikes -> PDF and interactive HTML reviewer</text>
+
+  <rect x="45" y="120" width="330" height="210" class="group" />
+  <text x="65" y="150" class="group-title">Inputs and Launcher</text>
+  <rect x="70" y="175" width="280" height="70" class="input" />
+  <text x="90" y="200" class="box-title">Raw session directory</text>
+  <text x="90" y="222" class="box-text">TIFF/OME-TIFF movies</text>
+  <text x="90" y="240" class="box-text">Voltage CSV and Bpod .mat optional</text>
+  <rect x="70" y="260" width="280" height="50" class="process" />
+  <text x="90" y="290" class="box-title">Installed utils_2p package</text>
+
+  <rect x="420" y="120" width="360" height="210" class="group" />
+  <text x="440" y="150" class="group-title">Slurm Job Generation</text>
+  <rect x="445" y="175" width="310" height="55" class="process" />
+  <text x="465" y="200" class="box-title">preprocessing_qc_pipeline submit</text>
+  <text x="465" y="220" class="box-text">Normalizes session specs and resources</text>
+  <rect x="445" y="250" width="310" height="60" class="file" />
+  <text x="465" y="275" class="box-title">.preprocessing_qc_jobs/</text>
+  <text x="465" y="295" class="box-text">manifest.json, stage .sbatch files, logs</text>
+
+  <rect x="70" y="395" width="305" height="225" class="group" />
+  <text x="90" y="425" class="group-title">1. Prep Stage</text>
+  <rect x="95" y="450" width="255" height="45" class="process" />
+  <text x="115" y="478" class="box-title">_run_prep</text>
+  <rect x="95" y="510" width="255" height="85" class="file" />
+  <text x="115" y="535" class="box-title">Processed session root</text>
+  <text x="115" y="555" class="box-text">raw_voltages.h5</text>
+  <text x="115" y="573" class="box-text">bpod_session_data.mat optional</text>
+  <text x="115" y="591" class="box-text">preprocessing_pipeline_parameters.json</text>
+
+  <rect x="425" y="395" width="345" height="285" class="group" />
+  <text x="445" y="425" class="group-title">2. Suite2p Stage</text>
+  <rect x="450" y="450" width="295" height="65" class="process" />
+  <text x="470" y="475" class="box-title">_processing_ops</text>
+  <text x="470" y="495" class="box-text">Load target config JSON and CLI overrides</text>
+  <rect x="450" y="530" width="295" height="45" class="process" />
+  <text x="470" y="558" class="box-title">suite2p.run_s2p</text>
+  <rect x="450" y="590" width="295" height="70" class="file" />
+  <text x="470" y="615" class="box-title">suite2p/plane0</text>
+  <text x="470" y="635" class="box-text">ops.npy, stat.npy, F.npy, Fneu.npy</text>
+  <text x="470" y="653" class="box-text">iscell.npy, spks.npy, data.bin optional</text>
+
+  <rect x="815" y="395" width="335" height="285" class="group" />
+  <text x="835" y="425" class="group-title">3. ROI QC Stage</text>
+  <rect x="840" y="450" width="285" height="55" class="process" />
+  <text x="860" y="475" class="box-title">QualControlDataIO.run</text>
+  <text x="860" y="495" class="box-text">Apply target-structure thresholds</text>
+  <rect x="840" y="520" width="285" height="65" class="process" />
+  <text x="860" y="545" class="box-title">Morphology/QC metrics</text>
+  <text x="860" y="565" class="box-text">skew, connectivity, aspect ratio</text>
+  <text x="860" y="583" class="box-text">compactness, footprint</text>
+  <rect x="840" y="600" width="285" height="60" class="file" />
+  <text x="860" y="625" class="box-title">qc_results/</text>
+  <text x="860" y="645" class="box-text">fluo.npy, neuropil.npy, stat.npy, masks.npy</text>
+
+  <rect x="1195" y="395" width="330" height="285" class="group" />
+  <text x="1215" y="425" class="group-title">4. Cell-Type Label Stage</text>
+  <text x="1215" y="448" class="small">Two-channel recordings only</text>
+  <rect x="1220" y="465" width="280" height="55" class="optional" />
+  <text x="1240" y="490" class="box-title">LabelExcInh.run</text>
+  <text x="1240" y="510" class="box-text">Cellpose on anatomical mean image</text>
+  <rect x="1220" y="535" width="280" height="55" class="process" />
+  <text x="1240" y="560" class="box-title">Overlap-based labels</text>
+  <text x="1240" y="580" class="box-text">Functional masks vs anatomical masks</text>
+  <rect x="1220" y="605" width="280" height="55" class="file" />
+  <text x="1240" y="630" class="box-title">masks.h5</text>
+  <text x="1240" y="650" class="box-text">labels, masks, mean/max images</text>
+
+  <rect x="70" y="760" width="305" height="210" class="group" />
+  <text x="90" y="790" class="group-title">5. dF/F Stage</text>
+  <rect x="95" y="815" width="255" height="55" class="process" />
+  <text x="115" y="840" class="box-title">dff_traces.run</text>
+  <text x="115" y="860" class="box-text">F - neuropil correction, baseline, dF/F</text>
+  <rect x="95" y="885" width="255" height="60" class="file" />
+  <text x="115" y="910" class="box-title">dff.h5</text>
+  <text x="115" y="930" class="box-text">raw non-z-scored dF/F traces</text>
+
+  <rect x="425" y="760" width="345" height="210" class="group" />
+  <text x="445" y="790" class="group-title">6. Inferred Spikes Stage</text>
+  <text x="445" y="813" class="small">Optional when --run-oasis is supplied</text>
+  <rect x="450" y="835" width="295" height="55" class="optional" />
+  <text x="470" y="860" class="box-title">oasis_spikes.run</text>
+  <text x="470" y="880" class="box-text">Deconvolve dF/F into spike amplitudes</text>
+  <rect x="450" y="905" width="295" height="45" class="file" />
+  <text x="470" y="933" class="box-title">spikes.h5</text>
+
+  <rect x="815" y="760" width="710" height="325" class="group" />
+  <text x="835" y="790" class="group-title">7. Summary and Interactive Reviewer Stage</text>
+  <rect x="840" y="815" width="305" height="65" class="process" />
+  <text x="860" y="840" class="box-title">create_preprocessing_summary</text>
+  <text x="860" y="860" class="box-text">Loads Suite2p, QC, labels, dF/F, spikes</text>
+  <rect x="1185" y="815" width="310" height="90" class="process" />
+  <text x="1205" y="840" class="box-title">Reviewer metrics</text>
+  <text x="1205" y="860" class="box-text">ROI area, morphology, SNR metrics</text>
+  <text x="1205" y="878" class="box-text">autocorrelation e-fold time</text>
+  <text x="1205" y="896" class="box-text">inferred-spike fit metrics when available</text>
+  <rect x="840" y="925" width="305" height="65" class="file" />
+  <text x="860" y="950" class="box-title">Preprocessing summary PDF</text>
+  <text x="860" y="970" class="box-text">FOV, motion correction, ROI/trace overview</text>
+  <rect x="1185" y="925" width="310" height="65" class="review" />
+  <text x="1205" y="950" class="box-title">Interactive HTML ROI labeler</text>
+  <text x="1205" y="970" class="box-text">FOV masks, traces, filters, sorting, labels</text>
+  <rect x="1185" y="1005" width="310" height="55" class="file" />
+  <text x="1205" y="1030" class="box-title">Large-session sidecars</text>
+  <text x="1205" y="1050" class="box-text">dF/F .npy and inferred-spikes .npy</text>
+
+  <rect x="555" y="1160" width="805" height="225" class="group" />
+  <text x="575" y="1190" class="group-title">Manual Review Exports and Downstream Analysis</text>
+  <rect x="585" y="1215" width="225" height="70" class="review" />
+  <text x="605" y="1240" class="box-title">roi_manual_labels.npy</text>
+  <text x="605" y="1260" class="box-text">NaN not labeled, 0 bad</text>
+  <text x="605" y="1278" class="box-text">1 good, 2 unsure</text>
+  <rect x="840" y="1215" width="225" height="70" class="review" />
+  <text x="860" y="1240" class="box-title">Metric spreadsheet CSV</text>
+  <text x="860" y="1260" class="box-text">Per-ROI metrics, labels</text>
+  <text x="860" y="1278" class="box-text">and exclusion reasons</text>
+  <rect x="1095" y="1215" width="225" height="70" class="review" />
+  <text x="1115" y="1240" class="box-title">QC thresholds JSON</text>
+  <text x="1115" y="1260" class="box-text">Reusable reviewer filters</text>
+  <rect x="710" y="1310" width="405" height="50" class="file" />
+  <text x="730" y="1340" class="box-title">Downstream scripts load original traces and apply ROI-indexed masks</text>
+
+  <path class="arrow" d="M350 210 C385 210 405 205 445 205" />
+  <path class="arrow" d="M350 285 C385 285 405 285 445 285" />
+  <path class="arrow" d="M600 310 C560 360 370 380 275 450" />
+  <path class="arrow" d="M225 595 C285 680 420 720 520 760" />
+  <path class="arrow" d="M745 552 C790 552 805 552 840 552" />
+  <path class="arrow" d="M1125 630 C1160 630 1180 630 1220 630" />
+  <path class="arrow" d="M1360 660 C1315 730 1240 770 1145 815" />
+  <path class="arrow" d="M350 915 C385 915 410 905 450 890" />
+  <path class="arrow-light" d="M595 660 C560 700 535 755 535 835" />
+  <path class="arrow" d="M745 930 C780 930 800 880 840 850" />
+  <path class="arrow" d="M1125 850 C1150 850 1160 850 1185 850" />
+  <path class="arrow" d="M1145 960 C1160 960 1170 960 1185 960" />
+  <path class="arrow-light" d="M745 925 C830 1070 1035 1115 1265 1215" />
+  <path class="arrow" d="M1340 990 C1325 1060 1255 1165 1205 1215" />
+  <path class="arrow" d="M1300 990 C1170 1120 950 1165 700 1215" />
+  <path class="arrow" d="M810 1250 C800 1290 810 1305 850 1310" />
+  <path class="arrow" d="M952 1285 C952 1295 952 1300 952 1310" />
+  <path class="arrow" d="M1135 1285 C1100 1305 1080 1310 1060 1310" />
+  <path class="arrow-light" d="M595 660 C705 1110 740 1265 810 1310" />
+
+  <rect x="1545" y="1220" width="285" height="120" class="group" />
+  <text x="1565" y="1250" class="group-title">Stable mapping rule</text>
+  <text x="1565" y="1276" class="box-text">ROI row/index is preserved across</text>
+  <text x="1565" y="1294" class="box-text">Suite2p files, reviewer labels,</text>
+  <text x="1565" y="1312" class="box-text">metric exports, and downstream masks.</text>
+  <path class="arrow-light" d="M1320 1250 C1410 1250 1470 1260 1545 1280" />
+</svg>

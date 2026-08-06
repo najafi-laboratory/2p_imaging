@@ -1,0 +1,95 @@
+flowchart LR
+  raw["Raw session directory<br/>TIFF/OME-TIFF movies<br/>VoltageRecording CSV<br/>Bpod .mat optional"]
+  launcher["utils_2p.preprocessing_qc_pipeline<br/>submit or generate<br/>Creates manifest.json and Slurm stage scripts"]
+  env["Conda env with utils_2p installed<br/>Shared default:<br/>/storage/project/r-fnajafi3-0/shared/shared_envs"]
+
+  subgraph prep["1. Prep stage"]
+    prep_fn["_run_prep"]
+    voltage["_write_raw_voltages<br/>VoltageRecording CSV -> raw_voltages.h5"]
+    bpod["Copy single Bpod .mat<br/>-> bpod_session_data.mat"]
+    provenance["preprocessing_pipeline_parameters.json"]
+  end
+
+  subgraph suite2p["2. Suite2p stage"]
+    ops["_processing_ops<br/>Load target config JSON<br/>Apply CLI overrides"]
+    s2p["suite2p.run_s2p"]
+    s2p_out["suite2p/plane0<br/>ops.npy, stat.npy, F.npy, Fneu.npy,<br/>iscell.npy, spks.npy, redcell.npy optional,<br/>data.bin optional"]
+  end
+
+  subgraph qc["3. QC stage"]
+    qc_fn["QualControlDataIO.run"]
+    qc_metrics["Morphology/QC metrics<br/>skew, connectivity, aspect_ratio,<br/>compact, footprint"]
+    qc_out["qc_results<br/>fluo.npy, neuropil.npy, stat.npy,<br/>masks.npy, qc_parameters.json,<br/>move_offset.h5"]
+  end
+
+  subgraph label["4. Cell-type label stage<br/>(two-channel only)"]
+    cellpose["LabelExcInh.run<br/>Cellpose on anatomical mean image"]
+    overlap["Functional ROI mask vs anatomical mask overlap"]
+    masks_h5["masks.h5<br/>labels, masks_func, mean_func, max_func,<br/>mean_anat, masks_anat"]
+  end
+
+  subgraph dff["5. dF/F stage"]
+    dff_fn["dff_traces.run"]
+    dff_out["dff.h5<br/>raw non-z-scored dF/F traces"]
+  end
+
+  subgraph spikes["6. Inferred spikes stage<br/>(optional)"]
+    oasis["oasis_spikes.run<br/>Suite2p/OASIS deconvolution"]
+    spike_out["spikes.h5<br/>inferred spike amplitudes<br/>event threshold metadata"]
+  end
+
+  subgraph summary["7. Summary stage"]
+    summary_fn["preprocessing_summary.create_preprocessing_summary"]
+    metrics["Viewer metrics<br/>ROI area, morphology metrics,<br/>95/50 percentile SNR, CaImAn-style SNR,<br/>autocorrelation e-fold time,<br/>inferred-spike fit metrics when available"]
+    pdf["Summary PDF<br/>FOV, motion correction,<br/>ROI/trace overview"]
+    html["Interactive HTML ROI labeler<br/>FOV masks, dF/F traces,<br/>sorting/filtering, manual labels"]
+    sidecars["Large sessions only<br/>dF/F .npy and inferred-spikes .npy sidecars"]
+  end
+
+  subgraph review["Manual review and downstream use"]
+    labels["roi_manual_labels.npy<br/>NaN not labeled, 0 bad,<br/>1 good, 2 unsure"]
+    spreadsheet["ROI metric spreadsheet CSV"]
+    filters["QC thresholds JSON"]
+    analysis["Downstream scripts<br/>Load original Suite2p traces<br/>Apply label/filter masks by ROI index"]
+  end
+
+  env --> launcher
+  raw --> launcher
+  launcher --> prep_fn
+  prep_fn --> voltage
+  prep_fn --> bpod
+  prep_fn --> provenance
+  raw --> ops
+  provenance --> ops
+  ops --> s2p
+  s2p --> s2p_out
+  s2p_out --> qc_fn
+  qc_fn --> qc_metrics
+  qc_metrics --> qc_out
+  s2p_out --> qc_out
+  qc_out --> cellpose
+  s2p_out --> cellpose
+  cellpose --> overlap
+  overlap --> masks_h5
+  qc_out --> dff_fn
+  s2p_out --> dff_fn
+  dff_fn --> dff_out
+  dff_out --> oasis
+  s2p_out --> oasis
+  oasis --> spike_out
+  s2p_out --> summary_fn
+  qc_out --> summary_fn
+  masks_h5 --> summary_fn
+  dff_out --> summary_fn
+  spike_out --> summary_fn
+  summary_fn --> metrics
+  metrics --> html
+  summary_fn --> pdf
+  summary_fn --> sidecars
+  html --> labels
+  html --> spreadsheet
+  html --> filters
+  labels --> analysis
+  spreadsheet --> analysis
+  filters --> analysis
+  s2p_out --> analysis

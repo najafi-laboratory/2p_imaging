@@ -21,6 +21,14 @@
   height: auto;
 }
 
+.pipeline-dataflow {
+  overflow-x: auto;
+}
+
+.pipeline-dataflow img {
+  min-width: 1200px;
+}
+
 .channel-diagram {
   position: relative;
   max-width: 760px;
