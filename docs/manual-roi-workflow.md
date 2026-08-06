@@ -308,7 +308,7 @@ On the interactive desktop, launch the patched Suite2p 1.x GUI with the full
 path to the shared patched environment:
 
 ```bash
-/storage/project/r-fnajafi3-0/grubin6/.conda/envs/suite2p1_gui/bin/suite2p
+/storage/project/r-fnajafi3-0/shared/shared_envs/suite2p_1gui/bin/suite2p
 ```
 
 Use this specific Suite2p 1.x installation for manual ROI work instead of a
@@ -319,7 +319,7 @@ present in the unpatched PyPI install.
 Users can optionally create their own shorter symlink in their home directory:
 
 ```bash
-ln -s /storage/project/r-fnajafi3-0/grubin6/.conda/envs/suite2p1_gui ~/suite2p1_gui
+ln -s /storage/project/r-fnajafi3-0/shared/shared_envs/suite2p_1gui ~/suite2p1_gui
 ```
 
 Then launch through the symlink:
@@ -331,6 +331,10 @@ Then launch through the symlink:
 The `~` path resolves to the current user's home directory, so each user can
 make their own shortcut without depending on another user's home-directory
 symlink.
+
+The lab shared directory may also contain compatibility aliases named
+`suite2p1_gui` or `s2p_gui`, but new instructions should use `suite2p_1gui` so
+the name is unambiguous.
 
 You can verify the active executable from the terminal with:
 
