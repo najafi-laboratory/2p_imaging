@@ -4,7 +4,9 @@ This module tracks the same neurons across imaging sessions. It takes the Suite2
 
 ## Attribution and license
 
-`interactive_tracking.ipynb` is adapted from the ROICaT project by Rich Hakim (<https://github.com/RichieHakim/ROICaT>), licensed under **GPL-3.0**. Redistribution of this notebook — or of a larger work containing it — must preserve the copyright and license notices and apply GPL-3.0 to derivative works. See the repo-root `LICENSE`.
+`interactive_tracking.ipynb` is adapted from the ROICaT project by Rich Hakim (<https://github.com/RichieHakim/ROICaT>), licensed under **GPL-3.0**. Redistribution of this notebook — or of a larger work containing it — must preserve the copyright and license notices and apply GPL-3.0 to derivative works. See the `LICENSE` in this directory.
+
+**This directory is GPL-3.0; the rest of the repository is not.** The GPL covers this module and works derived from it. Other top-level directories are separate, independent programs that merely share a repository with it, which GPL-3.0 §5 treats as an aggregate — including `tracking/` here does not place them under the GPL.
 
 ## Contents
 
@@ -42,8 +44,8 @@ The screening pass costs one extra geometric fit. `z_threshold` (default 4.0) is
 ### Setup
 
 ```bash
-conda env create -f ../environment.yml
-conda activate 2p_postprocessing
+conda env create -f environment.yml
+conda activate roi_tracking
 jupyter lab
 ```
 
@@ -259,4 +261,4 @@ It needs `paths_save`, `dir_save`, `name_save`, `dir_allOuterFolders`, and `get_
 - `um_per_pixel` is currently `1.0`, i.e. distances in the aligner's micrometer parameters are really pixels. Set it correctly if you want `radius_in`/`radius_out` to mean physical distance.
 - Silhouette-based ordering is only as meaningful as the mixing fit. If the pairwise-distance plot was not bimodal, `cs_sil` ranking is not a reliable guide to which clusters to inspect — page through the PDF instead.
 - `cluster_silhouette` is indexed by position in `cluster_labels_unique`, which starts at −1 — never index it by UCID directly. Use `rt.cs_sil_by_ucid()`, or pass the whole `quality_metrics` dict to the QC functions.
-- `roi_idx` in the tables is the index into that session's `stat.npy` — i.e. *all* Suite2p ROIs. The dF/F pipeline selects a subset and records its own mapping in `cell_indices`, so joining tracking to dF/F means matching `roi_table.roi_idx` against `dff.h5:/cell_indices`, not against dF/F row order.
+- `roi_idx` in the tables is the index into that session's `stat.npy` — i.e. *all* Suite2p ROIs. The dF/F pipeline (the `dff` module in <https://github.com/glwjr/2p_postprocessing>, a separate repository) selects a subset and records its own mapping in `cell_indices`, so joining tracking to dF/F means matching `roi_table.roi_idx` against `dff.h5:/cell_indices`, not against dF/F row order.
