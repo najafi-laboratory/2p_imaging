@@ -1,0 +1,31 @@
+# Supplements the repo-root .gitignore, which does not cover imaging data.
+# Note the root also ignores *.png, *.pdf and *.csv globally — to commit a
+# canonical example figure or table, force-add it: git add -f <path>
+
+# Imaging data — never commit
+*.npy
+*.h5
+*.hdf5
+*.tif
+*.tiff
+*.bin
+*.dat
+*.mat
+
+# Tracking run outputs
+*.tracking.results_clusters.json
+*.tracking.params_used.json
+*.tracking.results_all.richfile.zip
+*.tracking.run_data.richfile.zip
+*.roi_table.csv
+*.match_matrix.csv
+*.quality_metrics_summary.csv
+*.matched_neurons_*.csv
+out_tracking*.html
+FOV_clusters*.gif
+
+# Notebook state
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
