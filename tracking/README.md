@@ -1,10 +1,12 @@
 # Cross-Session ROI Tracking
 
+This module lives in `tracking/` at the repository root. Everything below assumes you are working from inside that directory — the notebook's `import pipeline` and `import roi_tracking_qc` resolve relative to its own location.
+
 This module tracks the same neurons across imaging sessions. It takes the Suite2p outputs for every session of a mouse, registers the fields of view onto a common frame, and clusters ROIs so that each neuron receives a single **UCID** (unique cluster ID) valid across all sessions. The tracking itself is done by [ROICaT](https://github.com/RichieHakim/ROICaT); what lives here is the lab's driver notebook, a session-screening helper, and a QC layer for eyeballing individual UCIDs before trusting them downstream.
 
 ## Attribution and license
 
-`interactive_tracking.ipynb` is adapted from the ROICaT project by Rich Hakim (<https://github.com/RichieHakim/ROICaT>), licensed under **GPL-3.0**. Redistribution of this notebook — or of a larger work containing it — must preserve the copyright and license notices and apply GPL-3.0 to derivative works. See the `LICENSE` in this directory.
+`interactive_tracking.ipynb` is adapted from the ROICaT project by Rich Hakim (<https://github.com/RichieHakim/ROICaT>), licensed under **GPL-3.0**. Redistribution of this notebook — or of a larger work containing it — must preserve the copyright and license notices and apply GPL-3.0 to derivative works. See [`tracking/LICENSE`](https://github.com/najafi-laboratory/2p_imaging/blob/main/tracking/LICENSE).
 
 **This directory is GPL-3.0; the rest of the repository is not.** The GPL covers this module and works derived from it. Other top-level directories are separate, independent programs that merely share a repository with it, which GPL-3.0 §5 treats as an aggregate — including `tracking/` here does not place them under the GPL.
 
