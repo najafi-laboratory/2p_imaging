@@ -27,6 +27,15 @@ The [Interactive Manual ROI Labeler guide](roi-reviewer-exports.md) explains how
 good/bad/unlabeled decisions map back to Suite2p arrays and to the downstream
 loading conventions used across this repository.
 
+## Cross-session analysis
+
+Task-agnostic tooling that runs after the preparation workflow completes, operating on
+finished Suite2p outputs from many sessions at once rather than a single session.
+
+- `tracking/`: cross-session ROI tracking via ROICaT — assigns each neuron a UCID stable
+  across sessions. See the [ROI tracking guide](roi-tracking.md). Note this directory is
+  **GPL-3.0**, unlike the rest of the repository.
+
 ## Experiment families
 
 - `passive_interval_oddball_202412/`: passive visual oddball and interval paradigms with HTML report generation

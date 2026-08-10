@@ -24,6 +24,8 @@ nav:
       - Postprocessing: postprocessing.md
       - Adding Manual ROIs: manual-roi-workflow.md
       - Interactive ROI Labeling: roi-reviewer-exports.md
+  - Cross-Session Analysis:
+      - ROI Tracking: roi-tracking.md
   - Experiments and Analyses:
       - Passive: passive.md
       - 2AFC: twoafc.md
