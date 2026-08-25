@@ -1,0 +1,8 @@
+numpy>=1.24
+scipy>=1.10
+tifffile>=2023.7
+imageio[ffmpeg]>=2.31
+tqdm>=4.65
+torch>=1.8
+einops
+timm
