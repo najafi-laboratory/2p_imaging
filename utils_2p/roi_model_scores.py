@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the trained ROI quality-control classifier on Suite2p/QC outputs."""
+"""Run trained ROI model scoring on Suite2p outputs."""
 
 from __future__ import annotations
 
@@ -14,13 +14,16 @@ import h5py
 import numpy as np
 
 
-MODEL_PATH_ENV_VAR = "TWO_P_ROI_QC_MODEL_PATH"
-MODEL_REGISTRY_ENV_VAR = "TWO_P_ROI_QC_MODEL_REGISTRY"
+MODEL_PATH_ENV_VAR = "TWO_P_ROI_MODEL_PATH"
+MODEL_REGISTRY_ENV_VAR = "TWO_P_ROI_MODEL_REGISTRY"
+LEGACY_MODEL_PATH_ENV_VAR = "TWO_P_ROI_QC_MODEL_PATH"
+LEGACY_MODEL_REGISTRY_ENV_VAR = "TWO_P_ROI_QC_MODEL_REGISTRY"
 DEFAULT_GOOD_THRESHOLD = 0.8
 DEFAULT_BAD_THRESHOLD = 0.2
 DEFAULT_PATCH_SIZE = 64
 DEFAULT_BATCH_SIZE = 128
-TORCH_THREADS_ENV_VAR = "TWO_P_ROI_QC_TORCH_THREADS"
+TORCH_THREADS_ENV_VAR = "TWO_P_ROI_MODEL_TORCH_THREADS"
+LEGACY_TORCH_THREADS_ENV_VAR = "TWO_P_ROI_QC_TORCH_THREADS"
 TARGET_ALIASES = {
     "neuron": "soma",
     "cerebellum_lax": "dendrite_relaxed",
@@ -28,18 +31,18 @@ TARGET_ALIASES = {
 
 
 @dataclass(frozen=True)
-class RoiQcPrediction:
+class RoiModelScorePrediction:
     """One model prediction for an original Suite2p ROI row."""
 
-    qc_roi: int
+    summary_roi: int
     suite2p_roi: int | None
     probability: float
     state: str
 
 
 @dataclass(frozen=True)
-class RoiQcModelSelection:
-    """Resolved checkpoint for a target-specific ROI QC model."""
+class RoiModelScoreSelection:
+    """Resolved checkpoint for a target-specific ROI model score."""
 
     model_path: Path
     target_structure: str
@@ -61,11 +64,11 @@ def _parse_registry_entries(entries: Sequence[str] | str | None) -> dict[str, Pa
         entries = (entries,)
     for entry in entries or ():
         if "=" not in entry:
-            raise ValueError(f"ROI QC target model entries must use target=/path/to/model.pt: {entry}")
+            raise ValueError(f"ROI model target model entries must use target=/path/to/model.pt: {entry}")
         target, path = entry.split("=", 1)
         target = normalize_target_structure(target)
         if not target:
-            raise ValueError(f"ROI QC target model entry has an empty target: {entry}")
+            raise ValueError(f"ROI model target model entry has an empty target: {entry}")
         registry[target] = Path(path).expanduser().resolve()
     return registry
 
@@ -77,7 +80,7 @@ def load_model_registry(registry_path: Path | str | None = None) -> dict[str, Pa
     ``{"models": {"dendrite": "/path/model.pt"}}``.
     """
 
-    configured = registry_path or os.environ.get(MODEL_REGISTRY_ENV_VAR)
+    configured = registry_path or os.environ.get(MODEL_REGISTRY_ENV_VAR) or os.environ.get(LEGACY_MODEL_REGISTRY_ENV_VAR)
     if not configured:
         return {}
     path = Path(configured).expanduser().resolve()
@@ -85,7 +88,7 @@ def load_model_registry(registry_path: Path | str | None = None) -> dict[str, Pa
         raw = json.load(handle)
     models = raw.get("models", raw) if isinstance(raw, dict) else raw
     if not isinstance(models, dict):
-        raise ValueError(f"ROI QC model registry must be a JSON object: {path}")
+        raise ValueError(f"ROI model score registry must be a JSON object: {path}")
     return {
         normalize_target_structure(str(target)): Path(model_path).expanduser().resolve()
         for target, model_path in models.items()
@@ -206,17 +209,17 @@ def make_stat_two_channel_patch(
 
 
 def default_model_path() -> Path:
-    """Return the configured ROI QC checkpoint path.
+    """Return the configured ROI model checkpoint path.
 
     The predictor code is packaged with ``utils_2p``. Model weights are kept
     outside the package so labs can update or swap checkpoints without changing
     the Python package.
     """
 
-    configured = os.environ.get(MODEL_PATH_ENV_VAR)
+    configured = os.environ.get(MODEL_PATH_ENV_VAR) or os.environ.get(LEGACY_MODEL_PATH_ENV_VAR)
     if not configured:
         raise FileNotFoundError(
-            "No ROI QC model checkpoint was supplied. Pass --roi-qc-model-path "
+            "No ROI model score checkpoint was supplied. Pass --roi-model-path "
             f"or set {MODEL_PATH_ENV_VAR}=/path/to/best_model.pt."
         )
     return Path(configured).expanduser().resolve()
@@ -232,42 +235,43 @@ def select_model(
     target_structure: str | None = None,
     model_registry_path: Path | str | None = None,
     target_models: Sequence[str] | None = None,
-) -> RoiQcModelSelection:
+) -> RoiModelScoreSelection:
     """Resolve the checkpoint to use for a target structure.
 
     Priority:
-    1. explicit ``--roi-qc-model-path`` fallback,
+    1. explicit ``--roi-model-path`` fallback,
     2. repeated ``target=/path.pt`` command-line entries,
-    3. JSON registry path or ``TWO_P_ROI_QC_MODEL_REGISTRY``,
-    4. ``TWO_P_ROI_QC_MODEL_<TARGET>`` environment variable,
-    5. legacy ``TWO_P_ROI_QC_MODEL_PATH`` environment variable.
+    3. JSON registry path or ``TWO_P_ROI_MODEL_REGISTRY``,
+    4. ``TWO_P_ROI_MODEL_<TARGET>`` environment variable,
+    5. ``TWO_P_ROI_MODEL_PATH`` / legacy ``TWO_P_ROI_QC_MODEL_PATH`` fallback.
     """
 
     target = normalize_target_structure(target_structure)
     if model_path not in (None, ""):
-        return RoiQcModelSelection(
+        return RoiModelScoreSelection(
             model_path=Path(model_path).expanduser().resolve(),
             target_structure=target,
-            source="explicit --roi-qc-model-path",
+            source="explicit --roi-model-path",
         )
     registry = load_model_registry(model_registry_path)
     registry.update(_parse_registry_entries(target_models))
     if target and target in registry:
-        return RoiQcModelSelection(
+        return RoiModelScoreSelection(
             model_path=registry[target],
             target_structure=target,
             source="target model registry",
         )
     if target:
-        env_name = f"TWO_P_ROI_QC_MODEL_{target.upper().replace('-', '_')}"
-        configured = os.environ.get(env_name)
+        env_name = f"TWO_P_ROI_MODEL_{target.upper().replace('-', '_')}"
+        legacy_env_name = f"TWO_P_ROI_QC_MODEL_{target.upper().replace('-', '_')}"
+        configured = os.environ.get(env_name) or os.environ.get(legacy_env_name)
         if configured:
-            return RoiQcModelSelection(
+            return RoiModelScoreSelection(
                 model_path=Path(configured).expanduser().resolve(),
                 target_structure=target,
-                source=env_name,
+                source=env_name if os.environ.get(env_name) else legacy_env_name,
             )
-    return RoiQcModelSelection(
+    return RoiModelScoreSelection(
         model_path=default_model_path(),
         target_structure=target,
         source=MODEL_PATH_ENV_VAR,
@@ -279,7 +283,7 @@ def _load_model(model_path: Path):
     import torch.nn as nn
     import torchvision.models as models
 
-    torch.set_num_threads(int(os.environ.get(TORCH_THREADS_ENV_VAR, "1")))
+    torch.set_num_threads(int(os.environ.get(TORCH_THREADS_ENV_VAR, os.environ.get(LEGACY_TORCH_THREADS_ENV_VAR, "1"))))
 
     class ROICNN(nn.Module):
         def __init__(self, in_channels: int = 2):
@@ -363,8 +367,8 @@ def predict_session(
     batch_size: int = DEFAULT_BATCH_SIZE,
     good_threshold: float = DEFAULT_GOOD_THRESHOLD,
     bad_threshold: float = DEFAULT_BAD_THRESHOLD,
-) -> list[RoiQcPrediction]:
-    """Predict ROI quality for all original Suite2p ROIs in a processed session."""
+) -> list[RoiModelScorePrediction]:
+    """Score all original Suite2p ROIs in a processed session with a trained model."""
 
     session_dir = Path(session_dir).expanduser().resolve()
     selection = select_model(
@@ -374,10 +378,10 @@ def predict_session(
         target_models=target_models,
     )
     if not selection.model_path.exists():
-        raise FileNotFoundError(f"ROI QC model checkpoint does not exist: {selection.model_path}")
+        raise FileNotFoundError(f"ROI model score checkpoint does not exist: {selection.model_path}")
     mean_img, stat = load_session_inputs(session_dir)
     model, device = _load_model(selection.model_path)
-    predictions: list[RoiQcPrediction] = []
+    predictions: list[RoiModelScorePrediction] = []
     roi_ids = np.arange(len(stat), dtype=np.int64)
     patches = np.stack(
         [make_stat_two_channel_patch(mean_img, stat[int(roi_id)], patch_size=patch_size) for roi_id in roi_ids],
@@ -387,8 +391,8 @@ def predict_session(
     for roi_id, probability in zip(roi_ids, probabilities):
         suite2p_roi = int(roi_id)
         predictions.append(
-            RoiQcPrediction(
-                qc_roi=suite2p_roi,
+            RoiModelScorePrediction(
+                summary_roi=suite2p_roi,
                 suite2p_roi=suite2p_roi,
                 probability=float(probability),
                 state=_prediction_state(
@@ -403,9 +407,9 @@ def predict_session(
 
 def save_predictions(
     session_dir: Path | str,
-    predictions: list[RoiQcPrediction],
+    predictions: list[RoiModelScorePrediction],
     *,
-    output_name: str = "roi_qc_predictions.h5",
+    output_name: str = "roi_model_scores.h5",
     model_path: Path | str | None = None,
     target_structure: str | None = None,
     model_source: str = "",
@@ -420,7 +424,7 @@ def save_predictions(
     output = session_dir / output_name
     dt = h5py.string_dtype(encoding="utf-8")
     with h5py.File(output, "w") as h5:
-        h5.create_dataset("qc_roi", data=np.asarray([p.qc_roi for p in predictions], dtype=np.int32))
+        h5.create_dataset("summary_roi", data=np.asarray([p.summary_roi for p in predictions], dtype=np.int32))
         h5.create_dataset(
             "suite2p_roi",
             data=np.asarray([-1 if p.suite2p_roi is None else p.suite2p_roi for p in predictions], dtype=np.int32),
@@ -439,7 +443,7 @@ def save_predictions(
     return output
 
 
-def update_roi_label_h5(session_dir: Path | str, predictions: list[RoiQcPrediction]) -> Path:
+def update_roi_label_h5(session_dir: Path | str, predictions: list[RoiModelScorePrediction]) -> Path:
     """Update legacy ``ROI_label.h5`` while preserving existing good/bad labels."""
 
     session_dir = Path(session_dir).expanduser().resolve()
@@ -466,7 +470,7 @@ def update_roi_label_h5(session_dir: Path | str, predictions: list[RoiQcPredicti
         h5.create_dataset("good_roi", data=np.asarray(sorted(good_roi), dtype=np.int32))
         h5.create_dataset("bad_roi", data=np.asarray(sorted(bad_roi), dtype=np.int32))
         h5.attrs["index_space"] = "suite2p_original"
-        h5.attrs["source"] = "utils_2p.roi_qc_model"
+        h5.attrs["source"] = "utils_2p.roi_model_scores"
     return label_path
 
 
@@ -483,15 +487,20 @@ def run(
     bad_threshold: float = DEFAULT_BAD_THRESHOLD,
     force: bool = False,
 ) -> tuple[Path, Path]:
-    """Run ROI QC model inference and update session-level label files."""
+    """Run ROI model score inference and update session-level label files."""
 
     session_dir = Path(session_dir).expanduser().resolve()
-    prediction_path = session_dir / "roi_qc_predictions.h5"
+    prediction_path = session_dir / "roi_model_scores.h5"
+    legacy_prediction_path = session_dir / "roi_qc_predictions.h5"
     label_path = session_dir / "ROI_label.h5"
     if prediction_path.exists() and not force:
-        print(f"Using existing ROI QC predictions: {prediction_path}")
-        print("Pass --force to regenerate ROI QC model predictions.")
+        print(f"Using existing ROI model scores: {prediction_path}")
+        print("Pass --force to regenerate ROI model score predictions.")
         return prediction_path, label_path
+    if legacy_prediction_path.exists() and not force:
+        print(f"Using existing legacy ROI model scores: {legacy_prediction_path}")
+        print("Pass --force to regenerate ROI model score predictions as roi_model_scores.h5.")
+        return legacy_prediction_path, label_path
 
     selection = select_model(
         model_path=model_path,
@@ -499,6 +508,7 @@ def run(
         model_registry_path=model_registry_path,
         target_models=target_models,
     )
+    print("ROI model scores warning: the currently available trained model is intended for cerebellar dendrite ROIs only.")
     predictions = predict_session(
         session_dir,
         model_path=selection.model_path,
@@ -521,15 +531,20 @@ def run(
     )
     label_path = update_roi_label_h5(session_dir, predictions)
     counts = {state: sum(1 for prediction in predictions if prediction.state == state) for state in ("good", "bad", "gray")}
-    print(f"Saved ROI QC predictions: {prediction_path}")
+    print(f"Saved ROI model scores: {prediction_path}")
     print(f"Updated ROI labels: {label_path}")
-    print(f"ROI QC model target: {selection.target_structure or 'unspecified'} ({selection.model_path})")
+    print(f"ROI model score target: {selection.target_structure or 'unspecified'} ({selection.model_path})")
     print(f"Good: {counts['good']} Bad: {counts['bad']} Gray: {counts['gray']}")
     return prediction_path, label_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(
+        description=(
+            f"{__doc__} The currently available trained model is intended for "
+            "cerebellar dendrite ROIs only."
+        )
+    )
     parser.add_argument("session", type=Path, help="Processed session directory.")
     parser.add_argument(
         "--model-path",
@@ -554,7 +569,7 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE)
     parser.add_argument("--good-threshold", type=float, default=DEFAULT_GOOD_THRESHOLD)
     parser.add_argument("--bad-threshold", type=float, default=DEFAULT_BAD_THRESHOLD)
-    parser.add_argument("--force", action="store_true", help="Regenerate predictions even if roi_qc_predictions.h5 exists.")
+    parser.add_argument("--force", action="store_true", help="Regenerate predictions even if roi_model_scores.h5 exists.")
     args = parser.parse_args()
     run(
         args.session,

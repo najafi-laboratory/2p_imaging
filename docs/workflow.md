@@ -68,7 +68,7 @@ The following sections provide more detail on each data processing step, files g
 ## Full Preprocessing QC Data Flow
 
 The chart below shows the staged preprocessing QC data flow. The current
-editable source includes optional ROI QC model prediction and inferred-spike
+editable source includes optional ROI model score prediction and inferred-spike
 stages in addition to prep, Suite2p, QC, cell-type labeling, dF/F generation,
 and summary export.
 

@@ -4,7 +4,7 @@
 The default chain is:
 
     prep (CPU) -> suite2p (high-memory CPU) -> qc (CPU)
-    -> roi_qc (CPU, optional trained ROI classifier)
+    -> roi_model_scores (CPU, optional trained ROI classifier)
     -> label (GPU, two-channel only) -> dff (CPU) -> summary (CPU)
 
 Use ``--run-oasis`` to insert the optional OASIS spike-inference stage between
@@ -79,7 +79,7 @@ SUITE2P_VERSIONED_PYTHONS = {
     "1.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
 }
 
-STAGE_ORDER = ("prep", "suite2p", "qc", "roi_qc", "label", "dff", "spikes", "summary")
+STAGE_ORDER = ("prep", "suite2p", "qc", "roi_model_scores", "label", "dff", "spikes", "summary")
 
 
 def _repo_root() -> Path:
@@ -177,7 +177,7 @@ class SessionSpec:
     bpod_mat_path: Path | str | None = None
     run_label: bool | None = None
     run_oasis: bool | None = None
-    run_roi_qc_model: bool | None = None
+    run_roi_model_scores: bool | None = None
     stages: Sequence[str] | str | None = None
 
     def normalized(self) -> "SessionSpec":
@@ -206,12 +206,12 @@ class SessionSpec:
             raise ValueError(f"Cannot derive an output session name from {raw_path}")
         run_label = self.run_label if self.run_label is not None else nchannels == 2
         run_oasis = bool(self.run_oasis) if self.run_oasis is not None else False
-        run_roi_qc_model = bool(self.run_roi_qc_model) if self.run_roi_qc_model is not None else False
+        run_roi_model_scores = bool(self.run_roi_model_scores) if self.run_roi_model_scores is not None else False
         stages = _normalize_stages(
             self.stages,
             run_label=run_label,
             run_oasis=run_oasis,
-            run_roi_qc_model=run_roi_qc_model,
+            run_roi_model_scores=run_roi_model_scores,
         )
         return SessionSpec(
             raw_path=raw_path,
@@ -224,7 +224,7 @@ class SessionSpec:
             bpod_mat_path=bpod,
             run_label=run_label,
             run_oasis=run_oasis,
-            run_roi_qc_model=run_roi_qc_model,
+            run_roi_model_scores=run_roi_model_scores,
             stages=stages,
         )
 
@@ -275,15 +275,15 @@ class PipelineConfig:
     keep_suite2p_bin: bool = False
     oasis_tau: float | None = None
     oasis_event_threshold: float = 0.05
-    roi_qc_model_path: Path | str = ""
-    roi_qc_model_registry: Path | str = ""
-    roi_qc_target_models: Sequence[str] | str | None = None
-    roi_qc_good_threshold: float = 0.8
-    roi_qc_bad_threshold: float = 0.2
-    roi_qc_patch_size: int = 64
-    roi_qc_batch_size: int = 128
-    force_roi_qc_model: bool = False
-    initialize_summary_labels_from_roi_qc: bool = False
+    roi_model_scores_path: Path | str = ""
+    roi_model_scores_registry: Path | str = ""
+    roi_model_scores_target_models: Sequence[str] | str | None = None
+    roi_model_scores_good_threshold: float = 0.8
+    roi_model_scores_bad_threshold: float = 0.2
+    roi_model_scores_patch_size: int = 64
+    roi_model_scores_batch_size: int = 128
+    force_roi_model_scores: bool = False
+    initialize_summary_labels_from_roi_model_scores: bool = False
     summary_input_layout: str = "suite2p"
 
     def normalized(self, output_root: Path) -> "PipelineConfig":
@@ -369,15 +369,15 @@ class PipelineConfig:
             keep_suite2p_bin=self.keep_suite2p_bin,
             oasis_tau=self.oasis_tau,
             oasis_event_threshold=self.oasis_event_threshold,
-            roi_qc_model_path=self.roi_qc_model_path,
-            roi_qc_model_registry=self.roi_qc_model_registry,
-            roi_qc_target_models=self.roi_qc_target_models,
-            roi_qc_good_threshold=self.roi_qc_good_threshold,
-            roi_qc_bad_threshold=self.roi_qc_bad_threshold,
-            roi_qc_patch_size=self.roi_qc_patch_size,
-            roi_qc_batch_size=self.roi_qc_batch_size,
-            force_roi_qc_model=self.force_roi_qc_model,
-            initialize_summary_labels_from_roi_qc=self.initialize_summary_labels_from_roi_qc,
+            roi_model_scores_path=self.roi_model_scores_path,
+            roi_model_scores_registry=self.roi_model_scores_registry,
+            roi_model_scores_target_models=self.roi_model_scores_target_models,
+            roi_model_scores_good_threshold=self.roi_model_scores_good_threshold,
+            roi_model_scores_bad_threshold=self.roi_model_scores_bad_threshold,
+            roi_model_scores_patch_size=self.roi_model_scores_patch_size,
+            roi_model_scores_batch_size=self.roi_model_scores_batch_size,
+            force_roi_model_scores=self.force_roi_model_scores,
+            initialize_summary_labels_from_roi_model_scores=self.initialize_summary_labels_from_roi_model_scores,
             summary_input_layout=self.summary_input_layout,
         )
 
@@ -414,7 +414,7 @@ def _normalize_stages(
     *,
     run_label: bool,
     run_oasis: bool = False,
-    run_roi_qc_model: bool = False,
+    run_roi_model_scores: bool = False,
 ) -> tuple[str, ...]:
     if stages is None:
         requested = tuple(
@@ -422,12 +422,13 @@ def _normalize_stages(
             for stage in STAGE_ORDER
             if (run_label or stage != "label")
             and (run_oasis or stage != "spikes")
-            and (run_roi_qc_model or stage != "roi_qc")
+            and (run_roi_model_scores or stage != "roi_model_scores")
         )
     elif isinstance(stages, str):
         requested = tuple(part.strip() for part in stages.split(",") if part.strip())
     else:
         requested = tuple(stages)
+    requested = tuple("roi_model_scores" if stage == "roi_qc" else stage for stage in requested)
     unknown = set(requested) - set(STAGE_ORDER)
     if unknown:
         raise ValueError(f"Unknown stages: {sorted(unknown)}; valid stages are {list(STAGE_ORDER)}")
@@ -435,8 +436,8 @@ def _normalize_stages(
         raise ValueError("Each processing stage may be selected only once")
     if "label" in requested and not run_label:
         raise ValueError("The label stage requires a two-channel session unless run_label=True is specified")
-    if "roi_qc" in requested and not run_roi_qc_model:
-        raise ValueError("The roi_qc stage requires --run-roi-qc-model")
+    if "roi_model_scores" in requested and not run_roi_model_scores:
+        raise ValueError("The roi_model_scores stage requires --run-roi-model-scores")
     return tuple(stage for stage in STAGE_ORDER if stage in requested)
 
 
@@ -1107,22 +1108,22 @@ def _run_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
     path.write_text(json.dumps(params, indent=2) + "\n", encoding="ascii")
 
 
-def _run_roi_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
-    from utils_2p import roi_qc_model
+def _run_roi_model_scores(data: dict[str, Any], session: dict[str, Any]) -> None:
+    from utils_2p import roi_model_scores
 
     pipeline = data["pipeline"]
-    model_path = pipeline.get("roi_qc_model_path") or None
-    roi_qc_model.run(
+    model_path = pipeline.get("roi_model_scores_path") or pipeline.get("roi_qc_model_path") or None
+    roi_model_scores.run(
         session["output_path"],
         model_path=model_path,
         target_structure=session.get("target_structure"),
-        model_registry_path=pipeline.get("roi_qc_model_registry") or None,
-        target_models=pipeline.get("roi_qc_target_models") or None,
-        patch_size=int(pipeline.get("roi_qc_patch_size", roi_qc_model.DEFAULT_PATCH_SIZE)),
-        batch_size=int(pipeline.get("roi_qc_batch_size", roi_qc_model.DEFAULT_BATCH_SIZE)),
-        good_threshold=float(pipeline.get("roi_qc_good_threshold", roi_qc_model.DEFAULT_GOOD_THRESHOLD)),
-        bad_threshold=float(pipeline.get("roi_qc_bad_threshold", roi_qc_model.DEFAULT_BAD_THRESHOLD)),
-        force=bool(pipeline.get("force_roi_qc_model", False)),
+        model_registry_path=pipeline.get("roi_model_scores_registry") or pipeline.get("roi_qc_model_registry") or None,
+        target_models=pipeline.get("roi_model_scores_target_models") or pipeline.get("roi_qc_target_models") or None,
+        patch_size=int(pipeline.get("roi_model_scores_patch_size", pipeline.get("roi_qc_patch_size", roi_model_scores.DEFAULT_PATCH_SIZE))),
+        batch_size=int(pipeline.get("roi_model_scores_batch_size", pipeline.get("roi_qc_batch_size", roi_model_scores.DEFAULT_BATCH_SIZE))),
+        good_threshold=float(pipeline.get("roi_model_scores_good_threshold", pipeline.get("roi_qc_good_threshold", roi_model_scores.DEFAULT_GOOD_THRESHOLD))),
+        bad_threshold=float(pipeline.get("roi_model_scores_bad_threshold", pipeline.get("roi_qc_bad_threshold", roi_model_scores.DEFAULT_BAD_THRESHOLD))),
+        force=bool(pipeline.get("force_roi_model_scores", pipeline.get("force_roi_qc_model", False))),
     )
 
 
@@ -1194,7 +1195,12 @@ def _run_summary(data: dict[str, Any], session: dict[str, Any]) -> None:
     pdf, html = summary.create_preprocessing_summary(
         session["output_path"],
         input_layout=str(data["pipeline"].get("summary_input_layout", "suite2p")),
-        initialize_labels_from_roi_qc=bool(data["pipeline"].get("initialize_summary_labels_from_roi_qc", False)),
+        initialize_labels_from_roi_model_scores=bool(
+            data["pipeline"].get(
+                "initialize_summary_labels_from_roi_model_scores",
+                data["pipeline"].get("initialize_summary_labels_from_roi_qc", False),
+            )
+        ),
     )
     print(f"Saved preprocessing PDF: {pdf}")
     print(f"Saved interactive HTML: {html}")
@@ -1216,7 +1222,7 @@ def run_stage(manifest: Path | str, index: int, stage: str) -> None:
         "prep": _run_prep,
         "suite2p": _run_suite2p,
         "qc": _run_qc,
-        "roi_qc": _run_roi_qc,
+        "roi_model_scores": _run_roi_model_scores,
         "label": _run_label,
         "dff": _run_dff,
         "spikes": _run_spikes,
@@ -1243,7 +1249,7 @@ def _specs_from_args(args: argparse.Namespace) -> list[SessionSpec]:
             spatial_scale=args.spatial_scale,
             run_label=False if args.no_label else None,
             run_oasis=args.run_oasis,
-            run_roi_qc_model=args.run_roi_qc_model,
+            run_roi_model_scores=args.run_roi_model_scores,
             stages=args.stages,
         )
         for path in raw_paths
@@ -1276,15 +1282,15 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         keep_suite2p_bin=args.keep_suite2p_bin,
         oasis_tau=args.oasis_tau,
         oasis_event_threshold=args.oasis_event_threshold,
-        roi_qc_model_path=args.roi_qc_model_path or "",
-        roi_qc_model_registry=args.roi_qc_model_registry or "",
-        roi_qc_target_models=tuple(args.roi_qc_target_model or ()),
-        roi_qc_good_threshold=args.roi_qc_good_threshold,
-        roi_qc_bad_threshold=args.roi_qc_bad_threshold,
-        roi_qc_patch_size=args.roi_qc_patch_size,
-        roi_qc_batch_size=args.roi_qc_batch_size,
-        force_roi_qc_model=args.force_roi_qc_model,
-        initialize_summary_labels_from_roi_qc=args.initialize_summary_labels_from_roi_qc,
+        roi_model_scores_path=args.roi_model_scores_path or "",
+        roi_model_scores_registry=args.roi_model_scores_registry or "",
+        roi_model_scores_target_models=tuple(args.roi_model_scores_target_model or ()),
+        roi_model_scores_good_threshold=args.roi_model_scores_good_threshold,
+        roi_model_scores_bad_threshold=args.roi_model_scores_bad_threshold,
+        roi_model_scores_patch_size=args.roi_model_scores_patch_size,
+        roi_model_scores_batch_size=args.roi_model_scores_batch_size,
+        force_roi_model_scores=args.force_roi_model_scores,
+        initialize_summary_labels_from_roi_model_scores=args.initialize_summary_labels_from_roi_model_scores,
         summary_input_layout=args.summary_input_layout,
     )
 
@@ -1410,73 +1416,94 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
         help="Add the optional OASIS spike-inference stage between dF/F generation and summaries.",
     )
     parser.add_argument(
+        "--run-roi-model-scores",
         "--run-roi-qc-model",
+        dest="run_roi_model_scores",
         action="store_true",
         help=(
-            "Add the optional trained ROI quality-classifier stage after qc. "
-            "This writes roi_qc_predictions.h5 and updates ROI_label.h5."
+            "Add the optional trained ROI model scoring stage after qc. "
+            "This writes roi_model_scores.h5 and updates ROI_label.h5. "
+            "The currently available trained model is intended for cerebellar dendrite ROIs only."
         ),
     )
     parser.add_argument(
+        "--roi-model-path",
         "--roi-qc-model-path",
+        dest="roi_model_scores_path",
         default=None,
         help=(
-            "Fallback path to a trained ROI QC model checkpoint. If omitted, "
-            "the roi_qc stage uses the target-specific registry or TWO_P_ROI_QC_MODEL_PATH."
+            "Fallback path to a trained ROI model score checkpoint. If omitted, "
+            "the roi_model_scores stage uses the target-specific registry or environment variables."
         ),
     )
     parser.add_argument(
+        "--roi-model-registry",
         "--roi-qc-model-registry",
+        dest="roi_model_scores_registry",
         default=None,
         help=(
-            "JSON file mapping target structures to ROI QC model checkpoints, "
+            "JSON file mapping target structures to ROI model score checkpoints, "
             "for example {'dendrite': '/path/best_model.pt'}."
         ),
     )
     parser.add_argument(
+        "--roi-target-model",
         "--roi-qc-target-model",
+        dest="roi_model_scores_target_model",
         action="append",
         default=None,
         help=(
-            "Register one target-specific ROI QC model as target=/path/to/checkpoint.pt. "
+            "Register one target-specific ROI model score as target=/path/to/checkpoint.pt. "
             "Repeat for multiple targets."
         ),
     )
     parser.add_argument(
+        "--roi-model-good-threshold",
         "--roi-qc-good-threshold",
+        dest="roi_model_scores_good_threshold",
         type=float,
         default=0.8,
         help="Probability threshold for model-labeled good ROIs. Default: 0.8.",
     )
     parser.add_argument(
+        "--roi-model-bad-threshold",
         "--roi-qc-bad-threshold",
+        dest="roi_model_scores_bad_threshold",
         type=float,
         default=0.2,
         help="Probability threshold for model-labeled bad ROIs. Default: 0.2.",
     )
     parser.add_argument(
+        "--roi-model-patch-size",
         "--roi-qc-patch-size",
+        dest="roi_model_scores_patch_size",
         type=int,
         default=64,
-        help="Square patch size used by the trained ROI QC classifier. Default: 64.",
+        help="Square patch size used by the trained ROI model scoring stage. Default: 64.",
     )
     parser.add_argument(
+        "--roi-model-batch-size",
         "--roi-qc-batch-size",
+        dest="roi_model_scores_batch_size",
         type=int,
         default=128,
-        help="Batch size for trained ROI QC classifier inference. Default: 128.",
+        help="Batch size for trained ROI model scoring inference. Default: 128.",
     )
     parser.add_argument(
+        "--force-roi-model-scores",
         "--force-roi-qc-model",
+        dest="force_roi_model_scores",
         action="store_true",
-        help="Regenerate roi_qc_predictions.h5 even if it already exists.",
+        help="Regenerate roi_model_scores.h5 even if it already exists.",
     )
     parser.add_argument(
+        "--initialize-summary-labels-from-roi-model-scores",
         "--initialize-summary-labels-from-roi-qc",
+        dest="initialize_summary_labels_from_roi_model_scores",
         action="store_true",
         help=(
             "Initialize the generated interactive reviewer from ROI_label.h5 / "
-            "roi_qc_predictions.h5. By default, the reviewer opens with all ROIs "
+            "roi_model_scores.h5. By default, the reviewer opens with all ROIs "
             "not labeled and uses model/QC outputs only as metrics."
         ),
     )

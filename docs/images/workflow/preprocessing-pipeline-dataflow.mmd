@@ -22,10 +22,10 @@ flowchart LR
     qc_out["qc_results<br/>fluo.npy, neuropil.npy, stat.npy,<br/>masks.npy, qc_parameters.json,<br/>move_offset.h5"]
   end
 
-  subgraph roi_qc["4. ROI QC model stage<br/>(optional)"]
-    roi_qc_fn["roi_qc_model.run"]
-    roi_qc_model["Target-specific trained model checkpoint<br/>CLI path, registry, or environment variable"]
-    roi_qc_out["roi_qc_predictions.h5<br/>p(good ROI), state, thresholds,<br/>original Suite2p ROI index"]
+  subgraph roi_model_scores["4. ROI model score stage<br/>(optional)"]
+    roi_model_scores_fn["roi_model_scores.run"]
+    roi_model_checkpoint["Target-specific trained model checkpoint<br/>CLI path, registry, or environment variable"]
+    roi_model_scores_out["roi_model_scores.h5<br/>p(good ROI), state, thresholds,<br/>original Suite2p ROI index"]
     roi_label_h5["ROI_label.h5<br/>legacy good/bad compatibility"]
   end
 
@@ -74,10 +74,10 @@ flowchart LR
   qc_fn --> qc_metrics
   qc_metrics --> qc_out
   s2p_out --> qc_out
-  s2p_out --> roi_qc_fn
-  roi_qc_model --> roi_qc_fn
-  roi_qc_fn --> roi_qc_out
-  roi_qc_fn --> roi_label_h5
+  s2p_out --> roi_model_scores_fn
+  roi_model_checkpoint --> roi_model_scores_fn
+  roi_model_scores_fn --> roi_model_scores_out
+  roi_model_scores_fn --> roi_label_h5
   qc_out --> cellpose
   s2p_out --> cellpose
   cellpose --> overlap
@@ -90,7 +90,7 @@ flowchart LR
   oasis --> spike_out
   s2p_out --> summary_fn
   qc_out --> summary_fn
-  roi_qc_out --> summary_fn
+  roi_model_scores_out --> summary_fn
   roi_label_h5 --> summary_fn
   masks_h5 --> summary_fn
   dff_out --> summary_fn

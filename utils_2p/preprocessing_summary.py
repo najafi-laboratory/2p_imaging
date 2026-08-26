@@ -459,13 +459,19 @@ def _decode_h5_strings(values: np.ndarray) -> list[str]:
     return decoded
 
 
-def _load_roi_qc_predictions(session_dir: Path, n_rois: int) -> tuple[list[dict[str, Any] | None], str]:
-    """Load trained ROI QC model predictions indexed by original Suite2p ROI."""
+def _load_roi_model_scores(session_dir: Path, n_rois: int) -> tuple[list[dict[str, Any] | None], str]:
+    """Load trained ROI model score predictions indexed by original Suite2p ROI."""
 
-    path = _first_existing([session_dir / "roi_qc_predictions.h5", session_dir / "roi_predictions.h5"])
+    path = _first_existing(
+        [
+            session_dir / "roi_model_scores.h5",
+            session_dir / "roi_qc_predictions.h5",
+            session_dir / "roi_predictions.h5",
+        ]
+    )
     predictions: list[dict[str, Any] | None] = [None] * n_rois
     if path is None:
-        return predictions, "No ROI QC model predictions loaded."
+        return predictions, "No ROI model score predictions loaded."
     with h5py.File(path, "r") as h5:
         probability = np.asarray(h5["probability"], dtype=np.float64).reshape(-1)
         states = _decode_h5_strings(np.asarray(h5["state"]))
@@ -495,9 +501,9 @@ def _load_roi_qc_predictions(session_dir: Path, n_rois: int) -> tuple[list[dict[
     return predictions, str(path)
 
 
-def _initial_labels_from_roi_qc(
-    roi_qc_labels: list[int | None],
-    roi_qc_predictions: list[dict[str, Any] | None],
+def _initial_labels_from_roi_model_scores(
+    roi_model_scores_labels: list[int | None],
+    roi_model_scores: list[dict[str, Any] | None],
 ) -> list[int]:
     """Build the viewer's initial label vector from model/manual QC outputs.
 
@@ -506,8 +512,8 @@ def _initial_labels_from_roi_qc(
     viewer's Unsure label.
     """
 
-    initial = [-1 if label is None else int(label) for label in roi_qc_labels]
-    for roi, prediction in enumerate(roi_qc_predictions):
+    initial = [-1 if label is None else int(label) for label in roi_model_scores_labels]
+    for roi, prediction in enumerate(roi_model_scores):
         if not prediction:
             continue
         state = str(prediction.get("state", "")).lower()
@@ -640,8 +646,8 @@ def _all_rois_filter() -> dict[str, float | int | None]:
         "oasisDecayTauMax": None,
         "oasisResidualKsMax": None,
         "cellTypeFilter": None,
-        "roiQcModelProbabilityMin": None,
-        "roiQcModelProbabilityMax": None,
+        "roiModelScoreProbabilityMin": None,
+        "roiModelScoreProbabilityMax": None,
     }
 
 
@@ -671,8 +677,8 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
             "oasisDecayTauMax": None,
             "oasisResidualKsMax": None,
             "cellTypeFilter": None,
-            "roiQcModelProbabilityMin": None,
-            "roiQcModelProbabilityMax": None,
+            "roiModelScoreProbabilityMin": None,
+            "roiModelScoreProbabilityMax": None,
         }
     return presets
 
@@ -1535,10 +1541,10 @@ def _write_html(
     morphology_metrics: list[dict[str, float | int]],
     cell_type_labels: list[int | None],
     cell_type_label_source: str,
-    roi_qc_labels: list[int | None],
-    roi_qc_label_source: str,
-    roi_qc_predictions: list[dict[str, Any] | None],
-    roi_qc_prediction_source: str,
+    roi_model_scores_labels: list[int | None],
+    roi_model_score_label_source: str,
+    roi_model_scores: list[dict[str, Any] | None],
+    roi_model_score_source: str,
     preset_exclusion_reasons: list[list[str]],
     qc_parameters: dict[str, Any] | None,
     target_structure: str,
@@ -1557,7 +1563,7 @@ def _write_html(
     oasis_attrs: dict[str, Any],
     oasis_storage_mode: str,
     oasis_sidecar_name: str | None,
-    initialize_labels_from_roi_qc: bool = False,
+    initialize_labels_from_roi_model_scores: bool = False,
 ) -> None:
     rois = _roi_table(stat, mask, n_rois)
     red_available = mean_red is not None
@@ -1589,21 +1595,21 @@ def _write_html(
         "morphology": morphology_metrics,
         "cellTypeLabels": cell_type_labels,
         "cellTypeLabelSource": cell_type_label_source,
-        "roiQcLabels": roi_qc_labels,
-        "roiQcLabelSource": roi_qc_label_source,
-        "roiQcPredictions": roi_qc_predictions,
-        "roiQcPredictionSource": roi_qc_prediction_source,
+        "roiModelLabels": roi_model_scores_labels,
+        "roiModelLabelSource": roi_model_score_label_source,
+        "roiModelScores": roi_model_scores,
+        "roiModelScoreSource": roi_model_score_source,
         "presetExclusionReasons": preset_exclusion_reasons,
         "qcParameters": qc_parameters,
         "targetStructure": target_structure,
         "initialLabels": (
-            _initial_labels_from_roi_qc(roi_qc_labels, roi_qc_predictions)
-            if initialize_labels_from_roi_qc
+            _initial_labels_from_roi_model_scores(roi_model_scores_labels, roi_model_scores)
+            if initialize_labels_from_roi_model_scores
             else [-1] * int(n_rois)
         ),
         "initialLabelsSource": (
-            "ROI QC model/ROI_label.h5"
-            if initialize_labels_from_roi_qc
+            "ROI model score/ROI_label.h5"
+            if initialize_labels_from_roi_model_scores
             else "not labeled by default"
         ),
         "initialMorphologyFilter": None,
@@ -1839,7 +1845,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
   <div class="head"><h1>{session_name} preprocessing QC ({n_rois} ROIs)</h1><div class="meta" id="meta"></div></div>
   <dialog id="morphologyDialog">
     <div class="dialog-header">
-      <div class="dialog-title">ROI QC Filters</div>
+      <div class="dialog-title">ROI Metric Filters</div>
       <button id="closeMorphologyDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
     </div>
     <div class="dialog-section">
@@ -1897,7 +1903,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <div id="cellTypeMetricSources" class="info-box" hidden>
         <p>Cell-type labels are loaded from pipeline outputs when available. Codes are <code>-1</code> excitatory/non-red, <code>0</code> unsure, and <code>1</code> inhibitory/red.</p>
         <p>To override or add labels, upload a CSV/TSV file with one row per original Suite2p ROI and columns <code>cell_type_code</code> and <code>cell_type_label</code>. If a <code>suite2p_index</code>, <code>roi</code>, or <code>index</code> column is present, rows are mapped by that Suite2p index; otherwise row order is used.</p>
-        <p>ROI QC model probability is the trained classifier output for <code>p(good ROI)</code>, loaded from <code>roi_qc_predictions.h5</code> when available.</p>
+        <p>ROI model score probability is the trained classifier output for <code>p(good ROI)</code>, loaded from <code>roi_model_scores.h5</code> when available.</p>
+        <p>The currently registered trained model is intended for cerebellar dendrite ROIs only; use it as a target-specific suggestion, not a general ROI quality score for other structures.</p>
         <p>By default, these scores are suggestions for filtering/sorting and do not label ROIs on page load. If the summary was generated with label initialization enabled, probability greater than or equal to the good threshold opens as <strong>Good</strong>, probability less than or equal to the bad threshold opens as <strong>Bad</strong>, and probabilities between those thresholds open as <strong>Unsure</strong>.</p>
       </div>
       <div class="filter-controls">
@@ -1906,9 +1913,9 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <button id="loadCellTypeFile" type="button">Load cell-type file</button>
       </div>
       <div class="filter-controls">
-        <label>ROI QC model probability min <span class="threshold-default" id="roiQcModelProbabilityMinDefault"></span><input id="roiQcModelProbabilityMin" type="number" min="0" max="1" step="0.01" placeholder="Not Used"></label>
-        <label>ROI QC model probability max <span class="threshold-default" id="roiQcModelProbabilityMaxDefault"></span><input id="roiQcModelProbabilityMax" type="number" min="0" max="1" step="0.01" placeholder="Not Used"></label>
-        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="roi_qc_model_probability" data-min="roiQcModelProbabilityMin" data-max="roiQcModelProbabilityMax" aria-label="ROI QC model probability distribution"></canvas></details>
+        <label>ROI model score probability min <span class="threshold-default" id="roiModelScoreProbabilityMinDefault"></span><input id="roiModelScoreProbabilityMin" type="number" min="0" max="1" step="0.01" placeholder="Not Used"></label>
+        <label>ROI model score probability max <span class="threshold-default" id="roiModelScoreProbabilityMaxDefault"></span><input id="roiModelScoreProbabilityMax" type="number" min="0" max="1" step="0.01" placeholder="Not Used"></label>
+        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="roi_model_score_probability" data-min="roiModelScoreProbabilityMin" data-max="roiModelScoreProbabilityMax" aria-label="ROI model score probability distribution"></canvas></details>
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Fluorescence Trace Metrics</span>
@@ -2010,7 +2017,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <label><input type="checkbox" name="sortMetric" value="connectivity"> Connectivity</label>
           <div class="sort-metric-group">Cell Type / Indicator Metrics</div>
           <label><input type="checkbox" name="sortMetric" value="cell_type_code"> Cell type code</label>
-          <label><input type="checkbox" name="sortMetric" value="roi_qc_model_probability"> ROI QC model probability</label>
+          <label><input type="checkbox" name="sortMetric" value="roi_model_score_probability"> ROI model score probability</label>
           <div class="sort-metric-group">Fluorescence Trace Metrics</div>
           <label><input type="checkbox" name="sortMetric" value="footprint"> Footprint</label>
           <label><input type="checkbox" name="sortMetric" value="skew"> Skew</label>
@@ -2148,7 +2155,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <details class="panel morphology-card menu-card" open>
             <summary>Filter</summary>
             <div class="menu-card-content">
-            <div class="qc-header"><strong>ROI QC Filters</strong><span id="targetStructureInline" class="qc-current"></span></div>
+            <div class="qc-header"><strong>ROI Metric Filters</strong><span id="targetStructureInline" class="qc-current"></span></div>
             <div id="filterSummaryInline" class="filter-summary"></div>
             <button id="openMorphologyDialog" type="button">Filter ROIs</button>
             </div>
@@ -2245,12 +2252,12 @@ function targetStructureLabel(name) {{
 }}
 document.getElementById("targetStructureSummary").textContent = `Pipeline target structure: ${{targetStructureLabel(data.targetStructure)}}; no ROI filter is applied on load.`;
 document.getElementById("targetStructureInline").textContent = `Pipeline target structure: ${{targetStructureLabel(data.targetStructure)}}; default view includes all Suite2p ROIs.`;
-const roiQcModelInfo = (data.roiQcPredictions || []).find(item => item && item.model_target_structure);
-if (roiQcModelInfo) {{
-  const modelTarget = targetStructureLabel(roiQcModelInfo.model_target_structure || "unspecified");
-  const modelSource = roiQcModelInfo.model_source ? ` via ${{roiQcModelInfo.model_source}}` : "";
-  document.getElementById("targetStructureSummary").textContent += ` ROI QC model target: ${{modelTarget}}${{modelSource}}.`;
-  document.getElementById("targetStructureInline").textContent += ` ROI QC model target: ${{modelTarget}}${{modelSource}}.`;
+const roiModelScoreInfo = (data.roiModelScores || []).find(item => item && item.model_target_structure);
+if (roiModelScoreInfo) {{
+  const modelTarget = targetStructureLabel(roiModelScoreInfo.model_target_structure || "unspecified");
+  const modelSource = roiModelScoreInfo.model_source ? ` via ${{roiModelScoreInfo.model_source}}` : "";
+  document.getElementById("targetStructureSummary").textContent += ` ROI model score target: ${{modelTarget}}${{modelSource}}.`;
+  document.getElementById("targetStructureInline").textContent += ` ROI model score target: ${{modelTarget}}${{modelSource}}.`;
 }}
 document.getElementById("roiInput").max = Math.max(...data.suite2pIndices);
 const sessionDurationSec = (data.nFrames - 1) / data.frameRate;
@@ -2549,7 +2556,7 @@ function metricValue(roi, metric) {{
   if (metric === "oasis_rise_tau_seconds") return dffMetric(roi, "oasis_rise_tau_seconds");
   if (metric === "oasis_decay_tau_seconds") return dffMetric(roi, "oasis_decay_tau_seconds");
   if (metric === "cell_type_code") return data.cellTypeLabels?.[roi] ?? NaN;
-  if (metric === "roi_qc_model_probability") return data.roiQcPredictions?.[roi]?.probability ?? NaN;
+  if (metric === "roi_model_score_probability") return data.roiModelScores?.[roi]?.probability ?? NaN;
   if (metric === "roi_area") return data.dffMetrics[roi].roi_area;
   if (metric === "connectivity") return data.morphology[roi].connect;
   if (metric === "skew") return data.morphology[roi].skew;
@@ -2568,7 +2575,7 @@ function metricLabel(metric) {{
   if (metric === "oasis_rise_tau_seconds") return "inferred spike rise tau";
   if (metric === "oasis_decay_tau_seconds") return "inferred spike decay tau";
   if (metric === "cell_type_code") return "cell type code";
-  if (metric === "roi_qc_model_probability") return "ROI QC model probability";
+  if (metric === "roi_model_score_probability") return "ROI model score probability";
   if (metric === "roi_area") return "ROI area (px)";
   if (metric === "connectivity") return "Connectivity";
   if (metric === "skew") return "Skew";
@@ -2621,7 +2628,7 @@ function updateMetricDefaults() {{
   const oasisRiseTau = finiteMetricValues("oasis_rise_tau_seconds");
   const oasisDecayTau = finiteMetricValues("oasis_decay_tau_seconds");
   const oasisResidualKs = finiteMetricValues("oasis_event_residual_ks");
-  const roiQcProbability = finiteMetricValues("roi_qc_model_probability");
+  const roiModelProbability = finiteMetricValues("roi_model_score_probability");
   const selectedPreset = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.all_rois || {{}};
   setSuggestedThreshold("skewMin", selectedPreset.skewMin ?? mean(skew));
   setSuggestedThreshold("skewMax", selectedPreset.skewMax ?? mean(skew));
@@ -2644,8 +2651,8 @@ function updateMetricDefaults() {{
   setSuggestedThreshold("oasisDecayTauMin", percentile(oasisDecayTau, 0.25));
   setSuggestedThreshold("oasisDecayTauMax", percentile(oasisDecayTau, 0.75));
   setSuggestedThreshold("oasisResidualKsMax", percentile(oasisResidualKs, 0.75));
-  setSuggestedThreshold("roiQcModelProbabilityMin", mean(roiQcProbability));
-  setSuggestedThreshold("roiQcModelProbabilityMax", percentile(roiQcProbability, 0.75));
+  setSuggestedThreshold("roiModelScoreProbabilityMin", mean(roiModelProbability));
+  setSuggestedThreshold("roiModelScoreProbabilityMax", percentile(roiModelProbability, 0.75));
   document.getElementById("maxConnectDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.maxConnect)}})`;
   document.getElementById("roiAreaMinDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.roiAreaMin)}})`;
   document.getElementById("roiAreaMaxDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.roiAreaMax)}})`;
@@ -2658,8 +2665,8 @@ function updateMetricDefaults() {{
   document.getElementById("oasisRiseTauMaxDefault").textContent = oasisRiseTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisRiseTauMax)}})` : "";
   document.getElementById("oasisDecayTauMinDefault").textContent = oasisDecayTau.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisDecayTauMin)}})` : "";
   document.getElementById("oasisDecayTauMaxDefault").textContent = oasisDecayTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisDecayTauMax)}})` : "";
-  document.getElementById("roiQcModelProbabilityMinDefault").textContent = roiQcProbability.length ? `(suggested min: ${{fmt(suggestedThresholds.roiQcModelProbabilityMin)}})` : "";
-  document.getElementById("roiQcModelProbabilityMaxDefault").textContent = roiQcProbability.length ? `(suggested max: ${{fmt(suggestedThresholds.roiQcModelProbabilityMax)}})` : "";
+  document.getElementById("roiModelScoreProbabilityMinDefault").textContent = roiModelProbability.length ? `(suggested min: ${{fmt(suggestedThresholds.roiModelScoreProbabilityMin)}})` : "";
+  document.getElementById("roiModelScoreProbabilityMaxDefault").textContent = roiModelProbability.length ? `(suggested max: ${{fmt(suggestedThresholds.roiModelScoreProbabilityMax)}})` : "";
   document.getElementById("oasisResidualKsDefault").textContent = oasisResidualKs.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisResidualKsMax)}})` : "";
   configureOasisFilterControls();
 }}
@@ -2891,15 +2898,15 @@ function setSelected(roi) {{
   const postdocSnr = dffMetric(selected, "andrea_postdoc_snr");
   const suite2pRoi = data.suite2pIndices[selected];
   const cellType = cellTypeLabelName(data.cellTypeLabels?.[selected]);
-  const roiQcPrediction = data.roiQcPredictions?.[selected] || null;
-  const roiQcState = roiQcPrediction?.state === "gray" ? "unsure" : roiQcPrediction?.state;
-  const roiQcText = roiQcPrediction
-    ? ` | ROI QC model ${{roiQcState}} p(good) ${{fmt(roiQcPrediction.probability)}}`
+  const roiModelScore = data.roiModelScores?.[selected] || null;
+  const roiModelState = roiModelScore?.state === "gray" ? "unsure" : roiModelScore?.state;
+  const roiModelText = roiModelScore
+    ? ` | ROI model score ${{roiModelState}} p(good) ${{fmt(roiModelScore.probability)}}`
     : "";
   if (data.oasisAvailable) setOasisThreshold(selectedOasisDefaultThreshold(), false);
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `cell type ${{cellType}}${{roiQcText}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s | inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
+  document.getElementById("readout").textContent = `cell type ${{cellType}}${{roiModelText}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s | inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -3023,8 +3030,8 @@ function readFilter() {{
     oasisDecayTauMin: filterValue("oasisDecayTauMin"), oasisDecayTauMax: filterValue("oasisDecayTauMax"),
     oasisResidualKsMax: filterValue("oasisResidualKsMax"),
     cellTypeFilter: filterString("cellTypeFilter"),
-    roiQcModelProbabilityMin: filterValue("roiQcModelProbabilityMin"),
-    roiQcModelProbabilityMax: filterValue("roiQcModelProbabilityMax"),
+    roiModelScoreProbabilityMin: filterValue("roiModelScoreProbabilityMin"),
+    roiModelScoreProbabilityMax: filterValue("roiModelScoreProbabilityMax"),
   }};
 }}
 function normalizeFilter(filter) {{
@@ -3039,7 +3046,7 @@ function normalizeFilter(filter) {{
     const value = Number(filter[key]);
     normalized[key] = Number.isFinite(value) ? value : null;
   }}
-  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","roiQcModelProbabilityMin","roiQcModelProbabilityMax"]) {{
+  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -3104,7 +3111,7 @@ function passesFilter(roi, metrics, filter) {{
   const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
   const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
   const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
-  const roiQcProbability = metricValue(roi, "roi_qc_model_probability");
+  const roiModelProbability = metricValue(roi, "roi_model_score_probability");
   const cellTypeFilter = filter.cellTypeFilter;
   const cellTypeValue = data.cellTypeLabels?.[roi];
   const cellTypePass = !cellTypeFilter || (
@@ -3128,8 +3135,8 @@ function passesFilter(roi, metrics, filter) {{
     passesLower(oasisDecayTau, filter.oasisDecayTauMin) &&
     passesUpper(oasisDecayTau, filter.oasisDecayTauMax) &&
     passesUpper(oasisResidualKs, filter.oasisResidualKsMax) &&
-    passesLower(roiQcProbability, filter.roiQcModelProbabilityMin) &&
-    passesUpper(roiQcProbability, filter.roiQcModelProbabilityMax) &&
+    passesLower(roiModelProbability, filter.roiModelScoreProbabilityMin) &&
+    passesUpper(roiModelProbability, filter.roiModelScoreProbabilityMax) &&
     cellTypePass
   );
 }}
@@ -3141,7 +3148,7 @@ function morphologyReasons(metrics, dffMetrics, filter, roi = null) {{
   const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
   const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
   const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
-  const roiQcProbability = metricValue(roi, "roi_qc_model_probability");
+  const roiModelProbability = metricValue(roi, "roi_model_score_probability");
   const cellTypeFilter = filter.cellTypeFilter;
   if (roi === null || roi === undefined) roi = data.dffMetrics.indexOf(dffMetrics);
   if (!passesLower(metrics.footprint, filter.footprintMin)) reasons.push(`footprint ${{fmt(metrics.footprint)}} below ${{filter.footprintMin}}`);
@@ -3165,8 +3172,8 @@ function morphologyReasons(metrics, dffMetrics, filter, roi = null) {{
   if (!passesLower(oasisDecayTau, filter.oasisDecayTauMin)) reasons.push(`inferred spike decay tau ${{fmt(oasisDecayTau)}} below ${{filter.oasisDecayTauMin}}`);
   if (!passesUpper(oasisDecayTau, filter.oasisDecayTauMax)) reasons.push(`inferred spike decay tau ${{fmt(oasisDecayTau)}} above ${{filter.oasisDecayTauMax}}`);
   if (!passesUpper(oasisResidualKs, filter.oasisResidualKsMax)) reasons.push(`inferred spike residual Gaussian-fit distance ${{fmt(oasisResidualKs)}} above ${{filter.oasisResidualKsMax}}`);
-  if (!passesLower(roiQcProbability, filter.roiQcModelProbabilityMin)) reasons.push(`ROI QC model probability ${{fmt(roiQcProbability)}} below ${{filter.roiQcModelProbabilityMin}}`);
-  if (!passesUpper(roiQcProbability, filter.roiQcModelProbabilityMax)) reasons.push(`ROI QC model probability ${{fmt(roiQcProbability)}} above ${{filter.roiQcModelProbabilityMax}}`);
+  if (!passesLower(roiModelProbability, filter.roiModelScoreProbabilityMin)) reasons.push(`ROI model score probability ${{fmt(roiModelProbability)}} below ${{filter.roiModelScoreProbabilityMin}}`);
+  if (!passesUpper(roiModelProbability, filter.roiModelScoreProbabilityMax)) reasons.push(`ROI model score probability ${{fmt(roiModelProbability)}} above ${{filter.roiModelScoreProbabilityMax}}`);
   if (cellTypeFilter) {{
     const cellTypeValue = data.cellTypeLabels?.[roi];
     const passesCellType = cellTypeFilter === "not_loaded" ? (cellTypeValue === null || cellTypeValue === undefined) : Number(cellTypeValue) === Number(cellTypeFilter);
@@ -4125,8 +4132,8 @@ function metricSpreadsheetRows() {{
     const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
     const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
     const cellTypeCode = data.cellTypeLabels?.[roi] ?? null;
-    const roiQcPrediction = data.roiQcPredictions?.[roi] || null;
-    const roiQcModelState = roiQcPrediction?.state === "gray" ? "unsure" : roiQcPrediction?.state ?? "";
+    const roiModelScore = data.roiModelScores?.[roi] || null;
+    const roiModelScoreState = roiModelScore?.state === "gray" ? "unsure" : roiModelScore?.state ?? "";
     const reasons = morphologyReasons(metrics, dffMetrics, filter, roi);
     if (labels[roi] === 0) reasons.push("manual/current label: bad");
     else if (labels[roi] === 2) reasons.push("manual/current label: unsure");
@@ -4136,8 +4143,8 @@ function metricSpreadsheetRows() {{
       label: labelName(labels[roi]),
       cellTypeLabel: cellTypeLabelName(cellTypeCode),
       cellTypeCode,
-      roiQcModelState,
-      roiQcModelProbability: roiQcPrediction?.probability ?? null,
+      roiModelScoreState,
+      roiModelScoreProbability: roiModelScore?.probability ?? null,
       footprint: metrics.footprint,
       skew: metrics.skew,
       aspect: metrics.aspect,
@@ -4165,16 +4172,16 @@ function metricSpreadsheetRows() {{
         oasisRiseTau: !(passesLower(oasisRiseTau, filter.oasisRiseTauMin) && passesUpper(oasisRiseTau, filter.oasisRiseTauMax)),
         oasisDecayTau: !(passesLower(oasisDecayTau, filter.oasisDecayTauMin) && passesUpper(oasisDecayTau, filter.oasisDecayTauMax)),
         oasisResidualKs: !passesUpper(oasisResidualKs, filter.oasisResidualKsMax),
-        roiQcModelProbability: !(passesLower(roiQcPrediction?.probability, filter.roiQcModelProbabilityMin) && passesUpper(roiQcPrediction?.probability, filter.roiQcModelProbabilityMax)),
+        roiModelScoreProbability: !(passesLower(roiModelScore?.probability, filter.roiModelScoreProbabilityMin) && passesUpper(roiModelScore?.probability, filter.roiModelScoreProbabilityMax)),
       }},
       reason: reasons.join("; ") || "included",
     }};
   }});
 }}
 function metricSpreadsheetCsv(rowsData = metricSpreadsheetRows()) {{
-  const csvHeader = ["suite2p_index","manual_label","cell_type_label","cell_type_code","roi_qc_model_state","roi_qc_model_probability","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","caiman_exceptional_event_snr","autocorr_efold_time_seconds","inferred_spike_snr","inferred_spike_rise_tau_seconds","inferred_spike_decay_tau_seconds","inferred_spike_residual_gaussian_ks","reason"];
+  const csvHeader = ["suite2p_index","manual_label","cell_type_label","cell_type_code","roi_model_score_state","roi_model_score_probability","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","caiman_exceptional_event_snr","autocorr_efold_time_seconds","inferred_spike_snr","inferred_spike_rise_tau_seconds","inferred_spike_decay_tau_seconds","inferred_spike_residual_gaussian_ks","reason"];
   const csvRows = rowsData.map(row => [
-    row.suite2p, row.label, row.cellTypeLabel, row.cellTypeCode ?? "", row.roiQcModelState, fmt(row.roiQcModelProbability), fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
+    row.suite2p, row.label, row.cellTypeLabel, row.cellTypeCode ?? "", row.roiModelScoreState, fmt(row.roiModelScoreProbability), fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
     row.connectivity, fmt(row.roiArea), fmt(row.snr9550), fmt(row.postdocSnr), fmt(row.autocorrEfold),
     fmt(row.oasisEventSnr), fmt(row.oasisRiseTau), fmt(row.oasisDecayTau), fmt(row.oasisResidualKs), row.reason,
   ].map(csvEscape).join(","));
@@ -4194,8 +4201,8 @@ function openMetricSpreadsheet() {{
     labelTd(row.label) +
     td(row.cellTypeLabel) +
     td(row.cellTypeCode ?? "") +
-    td(row.roiQcModelState) +
-    td(fmt(row.roiQcModelProbability), row.fail.roiQcModelProbability) +
+    td(row.roiModelScoreState) +
+    td(fmt(row.roiModelScoreProbability), row.fail.roiModelScoreProbability) +
     td(fmt(row.footprint), row.fail.footprint) +
     td(fmt(row.skew), row.fail.skew) +
     td(fmt(row.aspect), row.fail.aspect) +
@@ -4213,7 +4220,7 @@ function openMetricSpreadsheet() {{
   }}</tr>`).join("");
   const csv = metricSpreadsheetCsv(rowsData);
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:nth-child(3),.metric-table td:nth-child(4),.metric-table td:nth-child(5),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><p>cell_type_label_source: ${{data.cellTypeLabelSource || "not loaded"}}</p><p>roi_qc_label_source: ${{data.roiQcLabelSource || "not loaded"}}</p><p>roi_qc_prediction_source: ${{data.roiQcPredictionSource || "not loaded"}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>manual_label</th><th>cell_type_label</th><th>cell_type_code</th><th>roi_qc_model_state</th><th>roi_qc_model_probability</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>caiman_exceptional_event_snr</th><th>autocorr_efold_time_seconds</th><th>inferred_spike_snr</th><th>inferred_spike_rise_tau_seconds</th><th>inferred_spike_decay_tau_seconds</th><th>inferred_spike_residual_gaussian_ks</th><th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:nth-child(3),.metric-table td:nth-child(4),.metric-table td:nth-child(5),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><p>cell_type_label_source: ${{data.cellTypeLabelSource || "not loaded"}}</p><p>roi_model_score_label_source: ${{data.roiModelLabelSource || "not loaded"}}</p><p>roi_model_score_source: ${{data.roiModelScoreSource || "not loaded"}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>manual_label</th><th>cell_type_label</th><th>cell_type_code</th><th>roi_model_score_state</th><th>roi_model_score_probability</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>caiman_exceptional_event_snr</th><th>autocorr_efold_time_seconds</th><th>inferred_spike_snr</th><th>inferred_spike_rise_tau_seconds</th><th>inferred_spike_decay_tau_seconds</th><th>inferred_spike_residual_gaussian_ks</th><th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }}
 function saveMetricSpreadsheet() {{
@@ -4411,7 +4418,7 @@ if (oasisDiagnosticsPanel && toggleOasisDiagnostics) {{
     requestAnimationFrame(draw);
   }});
 }}
-["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","cellTypeFilter","roiQcModelProbabilityMin","roiQcModelProbabilityMax"].forEach(id => {{
+["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","cellTypeFilter","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"].forEach(id => {{
   document.getElementById(id).addEventListener("change", evaluateFilter);
   document.getElementById(id).addEventListener("input", drawMetricHistograms);
 }});
@@ -4486,7 +4493,7 @@ def create_preprocessing_summary(
     html_name: str | None = None,
     target_structure: str | None = None,
     input_layout: str = "auto",
-    initialize_labels_from_roi_qc: bool = False,
+    initialize_labels_from_roi_model_scores: bool = False,
 ) -> tuple[Path, Path]:
     input_path = Path(os.path.abspath(os.path.expanduser(os.fspath(session_data_path))))
     session_dir, resolved_layout = _resolve_summary_session_and_layout(input_path, input_layout)
@@ -4594,8 +4601,8 @@ def create_preprocessing_summary(
     suite2p_fingerprint = suite2p_stat_fingerprint(stat)
     morphology_metrics = roi_morphology_metrics(stat)
     cell_type_labels, cell_type_label_source = _load_cell_type_labels(session_dir, n_rois, stat)
-    roi_qc_labels, roi_qc_label_source = _load_roi_label_h5(session_dir, n_rois, stat)
-    roi_qc_predictions, roi_qc_prediction_source = _load_roi_qc_predictions(session_dir, n_rois)
+    roi_model_scores_labels, roi_model_score_label_source = _load_roi_label_h5(session_dir, n_rois, stat)
+    roi_model_scores, roi_model_score_source = _load_roi_model_scores(session_dir, n_rois)
     target_structure = target_structure or _target_structure(pipeline_parameters, qc_parameters)
     preset_exclusion_reasons = (
         morphology_exclusion_reasons(morphology_metrics, qc_parameters)
@@ -4633,10 +4640,10 @@ def create_preprocessing_summary(
         morphology_metrics=morphology_metrics,
         cell_type_labels=cell_type_labels,
         cell_type_label_source=cell_type_label_source,
-        roi_qc_labels=roi_qc_labels,
-        roi_qc_label_source=roi_qc_label_source,
-        roi_qc_predictions=roi_qc_predictions,
-        roi_qc_prediction_source=roi_qc_prediction_source,
+        roi_model_scores_labels=roi_model_scores_labels,
+        roi_model_score_label_source=roi_model_score_label_source,
+        roi_model_scores=roi_model_scores,
+        roi_model_score_source=roi_model_score_source,
         preset_exclusion_reasons=preset_exclusion_reasons,
         qc_parameters=qc_parameters,
         target_structure=target_structure,
@@ -4655,7 +4662,7 @@ def create_preprocessing_summary(
         oasis_attrs=oasis_attrs,
         oasis_storage_mode=oasis_storage_mode,
         oasis_sidecar_name=oasis_sidecar_name,
-        initialize_labels_from_roi_qc=initialize_labels_from_roi_qc,
+        initialize_labels_from_roi_model_scores=initialize_labels_from_roi_model_scores,
     )
     return pdf_path, html_path
 
@@ -4700,11 +4707,13 @@ def main() -> None:
         help="Override the morphology QC preset used to initialize the interactive reviewer.",
     )
     parser.add_argument(
+        "--initialize-labels-from-roi-model-scores",
         "--initialize-labels-from-roi-qc",
+        dest="initialize_labels_from_roi_model_scores",
         action="store_true",
         help=(
-            "Initialize reviewer labels from ROI_label.h5 / roi_qc_predictions.h5. "
-            "By default, all ROIs open as not labeled and model/QC outputs are loaded only as metrics."
+            "Initialize reviewer labels from ROI_label.h5 / roi_model_scores.h5. "
+            "By default, all ROIs open as not labeled and model score outputs are loaded only as metrics."
         ),
     )
     args = parser.parse_args()
@@ -4715,7 +4724,7 @@ def main() -> None:
         html_name=args.html_name,
         target_structure=args.target_structure,
         input_layout=args.input_layout,
-        initialize_labels_from_roi_qc=args.initialize_labels_from_roi_qc,
+        initialize_labels_from_roi_model_scores=args.initialize_labels_from_roi_model_scores,
     )
     print(f"Saved preprocessing PDF: {pdf_path}")
     print(f"Saved interactive HTML: {html_path}")

@@ -8,7 +8,7 @@ submission.
 The full pipeline is:
 
 ```text
-prep -> suite2p -> qc -> roi_qc (optional) -> label (optional) -> dff -> spikes (optional) -> summary
+prep -> suite2p -> qc -> roi_model_scores (optional) -> label (optional) -> dff -> spikes (optional) -> summary
 ```
 
 The launcher generates linked Slurm jobs and is designed to run on PACE. The
@@ -366,16 +366,16 @@ Python, session, and output paths are accessible to the compute nodes.
 | `--suite2p-registration-batch-size` | Tune the Suite2p 1.x registration batch size; default `500`. |
 | `--suite2p-extraction-batch-size` | Tune the Suite2p 1.x extraction/deconvolution batch size; default `500`. |
 | `--run-oasis` | Add the optional inferred-spike stage between dF/F generation and summary generation. |
-| `--run-roi-qc-model` | Add the optional trained ROI quality-classifier stage after `qc` and before summary generation. |
-| `--roi-qc-model-path` | Fallback path to a trained ROI QC model checkpoint. If omitted, the pipeline checks target-specific registrations first, then `TWO_P_ROI_QC_MODEL_PATH`. |
-| `--roi-qc-model-registry` | JSON file mapping target structures to checkpoints, for example `{"dendrite": "/path/to/best_model.pt"}`. |
-| `--roi-qc-target-model dendrite=/path/to/best_model.pt` | Register one target-specific checkpoint directly on the command line. Repeat for multiple targets. |
-| `--roi-qc-good-threshold` / `--roi-qc-bad-threshold` | Probability thresholds saved with ROI QC model states. Defaults are `0.8` and `0.2`; probabilities between the bad and good thresholds are model Unsure. |
-| `--force-roi-qc-model` | Regenerate `roi_qc_predictions.h5` even when it already exists. Without this flag, existing model predictions are reused. |
-| `--initialize-summary-labels-from-roi-qc` | Opt in to opening generated HTML summaries with ROI QC model/legacy labels applied. By default, all ROIs open as Not labeled and model scores are only metrics/suggestions. |
+| `--run-roi-model-scores` | Add the optional trained ROI model scoring stage after `qc` and before summary generation. The currently registered trained model is intended for cerebellar dendrite ROIs only. |
+| `--roi-model-path` | Fallback path to a trained ROI model score checkpoint. If omitted, the pipeline checks target-specific registrations first, then `TWO_P_ROI_MODEL_PATH`. |
+| `--roi-model-registry` | JSON file mapping target structures to checkpoints, for example `{"dendrite": "/path/to/best_model.pt"}`. |
+| `--roi-target-model dendrite=/path/to/best_model.pt` | Register one target-specific checkpoint directly on the command line. Repeat for multiple targets. |
+| `--roi-model-good-threshold` / `--roi-model-bad-threshold` | Probability thresholds saved with ROI model score states. Defaults are `0.8` and `0.2`; probabilities between the bad and good thresholds are model Unsure. |
+| `--force-roi-model-scores` | Regenerate `roi_model_scores.h5` even when it already exists. Without this flag, existing model predictions are reused. |
+| `--initialize-summary-labels-from-roi-model-scores` | Opt in to opening generated HTML summaries with ROI model score/legacy labels applied. By default, all ROIs open as Not labeled and model scores are only metrics/suggestions. |
 | `--summary-input-layout` | ROI/trace layout used by summary stages. The default is `suite2p`, so the HTML reviewer opens with all original Suite2p ROIs rather than the post-QC subset. Use `qc_results`, `manual_qc_results`, `external_rois`, or `auto` only when intentionally generating from another layout. |
 
-For target-specific ROI QC models, prefer either repeated command-line
+For target-specific ROI model scores, prefer either repeated command-line
 registrations:
 
 ```bash
@@ -383,9 +383,9 @@ registrations:
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
   --target-structure dendrite \
-  --run-roi-qc-model \
-  --roi-qc-target-model dendrite=/path/to/dendrite_best_model.pt \
-  --roi-qc-target-model soma=/path/to/soma_best_model.pt
+  --run-roi-model-scores \
+  --roi-target-model dendrite=/path/to/dendrite_best_model.pt \
+  --roi-target-model soma=/path/to/soma_best_model.pt
 ```
 
 or a JSON registry:
@@ -397,9 +397,11 @@ or a JSON registry:
 }
 ```
 
-The ROI QC stage selects the checkpoint matching `--target-structure`. If no
-target-specific checkpoint is registered, it falls back to `--roi-qc-model-path`
-or `TWO_P_ROI_QC_MODEL_PATH`.
+The ROI model score stage selects the checkpoint matching `--target-structure`.
+If no target-specific checkpoint is registered, it falls back to
+`--roi-model-path` or `TWO_P_ROI_MODEL_PATH`. The old `roi_qc` flag names are
+still accepted as compatibility aliases, but new scripts should use the
+`roi_model_scores` names.
 
 Suite2p's temporary binary movie is deleted when processing completes. Keeping
 it in node-local `$TMPDIR` avoids writing a large intermediate file to project
@@ -439,7 +441,7 @@ stage, see the [full preprocessing QC data flow](workflow.md#full-preprocessing-
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
 | `suite2p` | High-memory CPU and optional GPU | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
 | `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
-| `roi_qc` | CPU | `roi_qc_predictions.h5` with trained-model probabilities/states and `ROI_label.h5` for legacy good/bad compatibility when `--run-roi-qc-model` is used |
+| `roi_model_scores` | CPU | `roi_model_scores.h5` with trained-model probabilities/states and `ROI_label.h5` for legacy good/bad compatibility when `--run-roi-model-scores` is used |
 | `label` | GPU | `masks.h5` and anatomical Cellpose outputs; skipped for functional-only recordings |
 | `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
 | `summary` | CPU | `<session>_preprocessing_summary.pdf`, `<session>_interactive_fov_roi_dff.html` |

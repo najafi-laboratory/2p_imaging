@@ -55,17 +55,21 @@ states: **Good**, **Bad**, **Unsure**, or **Not labeled**. The button
 corresponding to the current ROI's label is filled with color, and the keyboard
 shortcuts `G`, `B`, `U`, and `N` provide faster entry for repeated review.
 
-If the optional trained ROI QC model stage has been run, the reviewer loads the
-model probability and model state from `roi_qc_predictions.h5`. By default,
+If the optional trained ROI model score stage has been run, the reviewer loads the
+model probability and model state from `roi_model_scores.h5`. By default,
 these values are suggestions for filtering, sorting, and bulk review; they do
 not label ROIs on page load. If the summary is generated with
-`--initialize-labels-from-roi-qc`, model states initialize the manual labels:
+`--initialize-labels-from-roi-model-scores`, model states initialize the manual labels:
 `p(good ROI) >= good_threshold` opens as **Good**,
 `p(good ROI) <= bad_threshold` opens as **Bad**, and probabilities between
 those thresholds open as **Unsure**.
 
-The ROI QC model stage reuses an existing `roi_qc_predictions.h5` by default.
-Use the pipeline flag `--force-roi-qc-model` or the direct predictor flag
+The currently registered trained model is intended for cerebellar dendrite ROIs
+only. Treat its scores as target-specific suggestions, not as a general ROI
+quality score for other structures.
+
+The ROI model score stage reuses an existing `roi_model_scores.h5` by default.
+Use the pipeline flag `--force-roi-model-scores` or the direct predictor flag
 `--force` only when the checkpoint, target structure, or prediction code has
 changed and the scores need to be regenerated.
 
@@ -100,11 +104,11 @@ the filter are automatically labeled **Bad**, but they are not visible or
 selectable simply because Bad ROIs are enabled in the Show ROIs menu. To view
 filtered-out ROIs, the relevant QC filter must be removed or reset.
 
-### 5. ROI QC filters
+### 5. ROI Metric Filters
 
-![ROI QC filters](images/roi-reviewer/roi-labeler-qc-filters.png)
+![ROI Metric Filters](images/roi-reviewer/roi-labeler-qc-filters.png)
 
-The **ROI QC Filters** menu previews which ROIs pass the active QC thresholds.
+The **ROI Metric Filters** menu previews which ROIs pass the active QC thresholds.
 By default, no thresholds are active and all ROIs pass. Editing a threshold
 field immediately updates the pass/fail count and the visible ROI set, but it
 does not change manual labels until **Apply Filters** is clicked. Empty
@@ -210,7 +214,7 @@ Fields omitted from the `filter` object are treated as unused thresholds.
 ![Sort ROIs](images/roi-reviewer/roi-labeler-sort-rois.png)
 
 The **Sort ROIs** dialog orders ROIs by original Suite2p index, row order, or
-metrics from the same categories used in the ROI QC filters: morphology,
+metrics from the same categories used in the ROI Metric Filters: morphology,
 fluorescence trace, and inferred-spike metrics. Sorting updates both the
 selected ROI navigation order and the stacked trace order, making it useful for
 reviewing ROIs with similar metric values together.
@@ -620,18 +624,18 @@ At minimum, the processed session must contain:
 existing `iscell.npy` is used when present for provenance, but the reviewer
 opens with all Suite2p ROIs available and not labeled.
 
-When the trained ROI QC model stage has already been run, the session root may
+When the trained ROI model score stage has already been run, the session root may
 also contain:
 
 ```text
 /path/to/processed/session/
 ├── ROI_label.h5              # legacy good_roi/bad_roi label sets
-└── roi_qc_predictions.h5     # per-ROI model probability and state
+└── roi_model_scores.h5       # per-ROI model probability and state
 ```
 
 The summary generator maps these files back onto original Suite2p ROI indices
 before embedding them in the interactive viewer. They are loaded as metrics by
-default. Pass `--initialize-labels-from-roi-qc` only when you want the reviewer
+default. Pass `--initialize-labels-from-roi-model-scores` only when you want the reviewer
 to open with model-derived good/bad/unsure labels already applied.
 
 The summary generator can also read filtered `qc_results`-style outputs. When a
@@ -805,7 +809,7 @@ Suite2p files, but the target-structure preset metadata will be unavailable.
 ### Optional cell-type or indicator labels
 
 The reviewer can display, filter, sort, and export optional cell-type or
-indicator labels. These are separate from manual ROI QC labels. They are meant
+indicator labels. These are separate from manual ROI metric labels. They are meant
 for labels such as red/inhibitory versus non-red/excitatory status, or an
 equivalent binary indicator classification from upstream processing.
 
@@ -860,7 +864,7 @@ indexed to `qc_results/stat.npy`, the summary tries to map them back to the
 original Suite2p ROI order.
 
 Cell-type labels can also be loaded after the HTML is open by using the
-**Upload cell-type labels** control in the ROI QC filters menu. The upload file
+**Upload cell-type labels** control in the ROI Metric Filters menu. The upload file
 can be CSV, TSV, or plain text with a delimited table. It must contain a header
 row and these columns:
 
@@ -967,7 +971,7 @@ The preprocessing pipeline's target structure is still shown, and the built-in
 `soma`, `dendrite`, and `dendrite_relaxed` filters remain available for manual
 testing in the viewer.
 
-If the trained ROI QC model stage was run, the viewer also reports the target
+If the trained ROI model score stage was run, the viewer also reports the target
 structure used to select the model checkpoint. This can differ from the
 pipeline target if a fallback checkpoint was supplied manually.
 
