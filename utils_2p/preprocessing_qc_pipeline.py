@@ -3,8 +3,9 @@
 
 The default chain is:
 
-    prep (CPU) -> suite2p (high-memory CPU) -> qc (CPU) -> label (GPU, two-channel only)
-    -> dff (CPU) -> summary (CPU)
+    prep (CPU) -> suite2p (high-memory CPU) -> qc (CPU)
+    -> roi_qc (CPU, optional trained ROI classifier)
+    -> label (GPU, two-channel only) -> dff (CPU) -> summary (CPU)
 
 Use ``--run-oasis`` to insert the optional OASIS spike-inference stage between
 ``dff`` and ``summary``.
@@ -33,7 +34,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 
 QC_PRESETS: dict[str, dict[str, Any]] = {
-    "neuron": {
+    "soma": {
         "range_skew": [-5.0, 5.0],
         "max_connect": 1,
         "range_aspect": [0.0, 5.0],
@@ -51,7 +52,7 @@ QC_PRESETS: dict[str, dict[str, Any]] = {
         "diameter": 6,
         "source": "2p_post_process_module_202404/run_postprocess.py dendrites preset",
     },
-    "cerebellum_lax": {
+    "dendrite_relaxed": {
         "range_skew": [0.4, 2.5],
         "max_connect": 30,
         "range_aspect": [0.0, 55.0],
@@ -62,8 +63,14 @@ QC_PRESETS: dict[str, dict[str, Any]] = {
     },
 }
 
+QC_TARGET_ALIASES = {
+    "neuron": "soma",
+    "cerebellum_lax": "dendrite_relaxed",
+}
+
 SUITE2P_CONFIG_TARGETS = {
-    "cerebellum_lax": "dendrite",
+    "soma": "neuron",
+    "dendrite_relaxed": "dendrite",
 }
 
 SUITE2P_SHARED_ENV_ROOT = Path("/storage/project/r-fnajafi3-0/shared/shared_envs")
@@ -72,7 +79,7 @@ SUITE2P_VERSIONED_PYTHONS = {
     "1.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
 }
 
-STAGE_ORDER = ("prep", "suite2p", "qc", "label", "dff", "spikes", "summary")
+STAGE_ORDER = ("prep", "suite2p", "qc", "roi_qc", "label", "dff", "spikes", "summary")
 
 
 def _repo_root() -> Path:
@@ -110,6 +117,13 @@ def _suite2p_python_path(version: str) -> Path:
 
 def _env_path(name: str, default: Path | str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(os.environ.get(name, str(default))))).resolve()
+
+
+def normalize_qc_target(target_structure: str) -> str:
+    """Return the canonical user-facing QC target name."""
+
+    target = target_structure.strip()
+    return QC_TARGET_ALIASES.get(target, target)
 
 
 def _detect_imaging_channels(raw_path: Path) -> dict[str, int]:
@@ -163,13 +177,15 @@ class SessionSpec:
     bpod_mat_path: Path | str | None = None
     run_label: bool | None = None
     run_oasis: bool | None = None
+    run_roi_qc_model: bool | None = None
     stages: Sequence[str] | str | None = None
 
     def normalized(self) -> "SessionSpec":
         raw_path = Path(self.raw_path).expanduser().resolve()
         if not raw_path.is_dir():
             raise FileNotFoundError(f"Raw session directory does not exist: {raw_path}")
-        if self.target_structure not in QC_PRESETS:
+        target_structure = normalize_qc_target(self.target_structure)
+        if target_structure not in QC_PRESETS:
             raise ValueError(f"target_structure must be one of {sorted(QC_PRESETS)}")
         detected = _detect_imaging_channels(raw_path)
         nchannels = self.nchannels if self.nchannels is not None else detected["nchannels"]
@@ -190,11 +206,17 @@ class SessionSpec:
             raise ValueError(f"Cannot derive an output session name from {raw_path}")
         run_label = self.run_label if self.run_label is not None else nchannels == 2
         run_oasis = bool(self.run_oasis) if self.run_oasis is not None else False
-        stages = _normalize_stages(self.stages, run_label=run_label, run_oasis=run_oasis)
+        run_roi_qc_model = bool(self.run_roi_qc_model) if self.run_roi_qc_model is not None else False
+        stages = _normalize_stages(
+            self.stages,
+            run_label=run_label,
+            run_oasis=run_oasis,
+            run_roi_qc_model=run_roi_qc_model,
+        )
         return SessionSpec(
             raw_path=raw_path,
             name=name,
-            target_structure=self.target_structure,
+            target_structure=target_structure,
             nchannels=nchannels,
             functional_chan=functional_chan,
             denoise=self.denoise,
@@ -202,6 +224,7 @@ class SessionSpec:
             bpod_mat_path=bpod,
             run_label=run_label,
             run_oasis=run_oasis,
+            run_roi_qc_model=run_roi_qc_model,
             stages=stages,
         )
 
@@ -252,6 +275,16 @@ class PipelineConfig:
     keep_suite2p_bin: bool = False
     oasis_tau: float | None = None
     oasis_event_threshold: float = 0.05
+    roi_qc_model_path: Path | str = ""
+    roi_qc_model_registry: Path | str = ""
+    roi_qc_target_models: Sequence[str] | str | None = None
+    roi_qc_good_threshold: float = 0.8
+    roi_qc_bad_threshold: float = 0.2
+    roi_qc_patch_size: int = 64
+    roi_qc_batch_size: int = 128
+    force_roi_qc_model: bool = False
+    initialize_summary_labels_from_roi_qc: bool = False
+    summary_input_layout: str = "suite2p"
 
     def normalized(self, output_root: Path) -> "PipelineConfig":
         repo = Path(self.repo_root).expanduser().resolve() if self.repo_root else _repo_root()
@@ -334,6 +367,18 @@ class PipelineConfig:
             suite2p_detection_nbins=self.suite2p_detection_nbins,
             suite2p_diameter=self.suite2p_diameter,
             keep_suite2p_bin=self.keep_suite2p_bin,
+            oasis_tau=self.oasis_tau,
+            oasis_event_threshold=self.oasis_event_threshold,
+            roi_qc_model_path=self.roi_qc_model_path,
+            roi_qc_model_registry=self.roi_qc_model_registry,
+            roi_qc_target_models=self.roi_qc_target_models,
+            roi_qc_good_threshold=self.roi_qc_good_threshold,
+            roi_qc_bad_threshold=self.roi_qc_bad_threshold,
+            roi_qc_patch_size=self.roi_qc_patch_size,
+            roi_qc_batch_size=self.roi_qc_batch_size,
+            force_roi_qc_model=self.force_roi_qc_model,
+            initialize_summary_labels_from_roi_qc=self.initialize_summary_labels_from_roi_qc,
+            summary_input_layout=self.summary_input_layout,
         )
 
 
@@ -365,13 +410,19 @@ def _safe_id(name: str, index: int) -> str:
 
 
 def _normalize_stages(
-    stages: Sequence[str] | str | None, *, run_label: bool, run_oasis: bool = False
+    stages: Sequence[str] | str | None,
+    *,
+    run_label: bool,
+    run_oasis: bool = False,
+    run_roi_qc_model: bool = False,
 ) -> tuple[str, ...]:
     if stages is None:
         requested = tuple(
             stage
             for stage in STAGE_ORDER
-            if (run_label or stage != "label") and (run_oasis or stage != "spikes")
+            if (run_label or stage != "label")
+            and (run_oasis or stage != "spikes")
+            and (run_roi_qc_model or stage != "roi_qc")
         )
     elif isinstance(stages, str):
         requested = tuple(part.strip() for part in stages.split(",") if part.strip())
@@ -384,6 +435,8 @@ def _normalize_stages(
         raise ValueError("Each processing stage may be selected only once")
     if "label" in requested and not run_label:
         raise ValueError("The label stage requires a two-channel session unless run_label=True is specified")
+    if "roi_qc" in requested and not run_roi_qc_model:
+        raise ValueError("The roi_qc stage requires --run-roi-qc-model")
     return tuple(stage for stage in STAGE_ORDER if stage in requested)
 
 
@@ -1054,6 +1107,25 @@ def _run_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
     path.write_text(json.dumps(params, indent=2) + "\n", encoding="ascii")
 
 
+def _run_roi_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
+    from utils_2p import roi_qc_model
+
+    pipeline = data["pipeline"]
+    model_path = pipeline.get("roi_qc_model_path") or None
+    roi_qc_model.run(
+        session["output_path"],
+        model_path=model_path,
+        target_structure=session.get("target_structure"),
+        model_registry_path=pipeline.get("roi_qc_model_registry") or None,
+        target_models=pipeline.get("roi_qc_target_models") or None,
+        patch_size=int(pipeline.get("roi_qc_patch_size", roi_qc_model.DEFAULT_PATCH_SIZE)),
+        batch_size=int(pipeline.get("roi_qc_batch_size", roi_qc_model.DEFAULT_BATCH_SIZE)),
+        good_threshold=float(pipeline.get("roi_qc_good_threshold", roi_qc_model.DEFAULT_GOOD_THRESHOLD)),
+        bad_threshold=float(pipeline.get("roi_qc_bad_threshold", roi_qc_model.DEFAULT_BAD_THRESHOLD)),
+        force=bool(pipeline.get("force_roi_qc_model", False)),
+    )
+
+
 def _patch_cellpose_api() -> None:
     import inspect
     from cellpose import io, models
@@ -1119,7 +1191,11 @@ def _run_spikes(data: dict[str, Any], session: dict[str, Any]) -> None:
 def _run_summary(data: dict[str, Any], session: dict[str, Any]) -> None:
     from utils_2p import preprocessing_summary as summary
 
-    pdf, html = summary.create_preprocessing_summary(session["output_path"])
+    pdf, html = summary.create_preprocessing_summary(
+        session["output_path"],
+        input_layout=str(data["pipeline"].get("summary_input_layout", "suite2p")),
+        initialize_labels_from_roi_qc=bool(data["pipeline"].get("initialize_summary_labels_from_roi_qc", False)),
+    )
     print(f"Saved preprocessing PDF: {pdf}")
     print(f"Saved interactive HTML: {html}")
 
@@ -1140,6 +1216,7 @@ def run_stage(manifest: Path | str, index: int, stage: str) -> None:
         "prep": _run_prep,
         "suite2p": _run_suite2p,
         "qc": _run_qc,
+        "roi_qc": _run_roi_qc,
         "label": _run_label,
         "dff": _run_dff,
         "spikes": _run_spikes,
@@ -1166,6 +1243,7 @@ def _specs_from_args(args: argparse.Namespace) -> list[SessionSpec]:
             spatial_scale=args.spatial_scale,
             run_label=False if args.no_label else None,
             run_oasis=args.run_oasis,
+            run_roi_qc_model=args.run_roi_qc_model,
             stages=args.stages,
         )
         for path in raw_paths
@@ -1198,6 +1276,16 @@ def _pipeline_config_from_args(args: argparse.Namespace) -> PipelineConfig:
         keep_suite2p_bin=args.keep_suite2p_bin,
         oasis_tau=args.oasis_tau,
         oasis_event_threshold=args.oasis_event_threshold,
+        roi_qc_model_path=args.roi_qc_model_path or "",
+        roi_qc_model_registry=args.roi_qc_model_registry or "",
+        roi_qc_target_models=tuple(args.roi_qc_target_model or ()),
+        roi_qc_good_threshold=args.roi_qc_good_threshold,
+        roi_qc_bad_threshold=args.roi_qc_bad_threshold,
+        roi_qc_patch_size=args.roi_qc_patch_size,
+        roi_qc_batch_size=args.roi_qc_batch_size,
+        force_roi_qc_model=args.force_roi_qc_model,
+        initialize_summary_labels_from_roi_qc=args.initialize_summary_labels_from_roi_qc,
+        summary_input_layout=args.summary_input_layout,
     )
 
 
@@ -1205,7 +1293,12 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--session", action="append", help="Raw session directory. Repeat for multiple sessions.")
     parser.add_argument("--sessions-file", help="Text file containing one raw session directory per line.")
     parser.add_argument("--output-root", required=True, help="Directory where processed sessions will be written.")
-    parser.add_argument("--target-structure", choices=sorted(QC_PRESETS), default="neuron")
+    parser.add_argument(
+        "--target-structure",
+        default="soma",
+        metavar="TARGET",
+        help=f"Anatomical target / QC preset. Supported targets: {', '.join(sorted(QC_PRESETS))}.",
+    )
     parser.add_argument(
         "--nchannels",
         type=int,
@@ -1315,6 +1408,86 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
         "--run-oasis",
         action="store_true",
         help="Add the optional OASIS spike-inference stage between dF/F generation and summaries.",
+    )
+    parser.add_argument(
+        "--run-roi-qc-model",
+        action="store_true",
+        help=(
+            "Add the optional trained ROI quality-classifier stage after qc. "
+            "This writes roi_qc_predictions.h5 and updates ROI_label.h5."
+        ),
+    )
+    parser.add_argument(
+        "--roi-qc-model-path",
+        default=None,
+        help=(
+            "Fallback path to a trained ROI QC model checkpoint. If omitted, "
+            "the roi_qc stage uses the target-specific registry or TWO_P_ROI_QC_MODEL_PATH."
+        ),
+    )
+    parser.add_argument(
+        "--roi-qc-model-registry",
+        default=None,
+        help=(
+            "JSON file mapping target structures to ROI QC model checkpoints, "
+            "for example {'dendrite': '/path/best_model.pt'}."
+        ),
+    )
+    parser.add_argument(
+        "--roi-qc-target-model",
+        action="append",
+        default=None,
+        help=(
+            "Register one target-specific ROI QC model as target=/path/to/checkpoint.pt. "
+            "Repeat for multiple targets."
+        ),
+    )
+    parser.add_argument(
+        "--roi-qc-good-threshold",
+        type=float,
+        default=0.8,
+        help="Probability threshold for model-labeled good ROIs. Default: 0.8.",
+    )
+    parser.add_argument(
+        "--roi-qc-bad-threshold",
+        type=float,
+        default=0.2,
+        help="Probability threshold for model-labeled bad ROIs. Default: 0.2.",
+    )
+    parser.add_argument(
+        "--roi-qc-patch-size",
+        type=int,
+        default=64,
+        help="Square patch size used by the trained ROI QC classifier. Default: 64.",
+    )
+    parser.add_argument(
+        "--roi-qc-batch-size",
+        type=int,
+        default=128,
+        help="Batch size for trained ROI QC classifier inference. Default: 128.",
+    )
+    parser.add_argument(
+        "--force-roi-qc-model",
+        action="store_true",
+        help="Regenerate roi_qc_predictions.h5 even if it already exists.",
+    )
+    parser.add_argument(
+        "--initialize-summary-labels-from-roi-qc",
+        action="store_true",
+        help=(
+            "Initialize the generated interactive reviewer from ROI_label.h5 / "
+            "roi_qc_predictions.h5. By default, the reviewer opens with all ROIs "
+            "not labeled and uses model/QC outputs only as metrics."
+        ),
+    )
+    parser.add_argument(
+        "--summary-input-layout",
+        choices=["suite2p", "qc_results", "manual_qc_results", "external_rois", "auto"],
+        default="suite2p",
+        help=(
+            "ROI/trace layout used by generated summary stages. Default: suite2p, "
+            "which embeds all original Suite2p ROIs instead of the post-QC subset."
+        ),
     )
     parser.add_argument(
         "--oasis-tau",

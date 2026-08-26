@@ -67,9 +67,10 @@ The following sections provide more detail on each data processing step, files g
 
 ## Full Preprocessing QC Data Flow
 
-The chart below shows the current data flow when all staged preprocessing QC
-steps are enabled. It separates the high-level stages from the main functions,
-input files, generated outputs, and downstream reviewer exports.
+The chart below shows the staged preprocessing QC data flow. The current
+editable source includes optional ROI QC model prediction and inferred-spike
+stages in addition to prep, Suite2p, QC, cell-type labeling, dF/F generation,
+and summary export.
 
 <div class="overview-flowchart pipeline-dataflow">
   <img src="../images/workflow/preprocessing-pipeline-dataflow.svg" alt="Detailed preprocessing QC pipeline data flow" />
@@ -78,7 +79,8 @@ input files, generated outputs, and downstream reviewer exports.
 The rendered diagram above is stored as
 `docs/images/workflow/preprocessing-pipeline-dataflow.svg`. The editable
 Mermaid source is stored beside it at
-`docs/images/workflow/preprocessing-pipeline-dataflow.mmd`.
+`docs/images/workflow/preprocessing-pipeline-dataflow.mmd`; regenerate the SVG
+from that source after Mermaid tooling is available.
 
 The two main locations where data is stored are PACE project storage, where files are uploaded from experimental or lab PCs after recording sessions, and the long-term CEDAR data storage.
 

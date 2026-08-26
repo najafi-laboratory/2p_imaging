@@ -22,23 +22,30 @@ flowchart LR
     qc_out["qc_results<br/>fluo.npy, neuropil.npy, stat.npy,<br/>masks.npy, qc_parameters.json,<br/>move_offset.h5"]
   end
 
-  subgraph label["4. Cell-type label stage<br/>(two-channel only)"]
+  subgraph roi_qc["4. ROI QC model stage<br/>(optional)"]
+    roi_qc_fn["roi_qc_model.run"]
+    roi_qc_model["Target-specific trained model checkpoint<br/>CLI path, registry, or environment variable"]
+    roi_qc_out["roi_qc_predictions.h5<br/>p(good ROI), state, thresholds,<br/>original Suite2p ROI index"]
+    roi_label_h5["ROI_label.h5<br/>legacy good/bad compatibility"]
+  end
+
+  subgraph label["5. Cell-type label stage<br/>(two-channel only)"]
     cellpose["LabelExcInh.run<br/>Cellpose on anatomical mean image"]
     overlap["Functional ROI mask vs anatomical mask overlap"]
     masks_h5["masks.h5<br/>labels, masks_func, mean_func, max_func,<br/>mean_anat, masks_anat"]
   end
 
-  subgraph dff["5. dF/F stage"]
+  subgraph dff["6. dF/F stage"]
     dff_fn["dff_traces.run"]
     dff_out["dff.h5<br/>raw non-z-scored dF/F traces"]
   end
 
-  subgraph spikes["6. Inferred spikes stage<br/>(optional)"]
+  subgraph spikes["7. Inferred spikes stage<br/>(optional)"]
     oasis["oasis_spikes.run<br/>Suite2p/OASIS deconvolution"]
     spike_out["spikes.h5<br/>inferred spike amplitudes<br/>event threshold metadata"]
   end
 
-  subgraph summary["7. Summary stage"]
+  subgraph summary["8. Summary stage"]
     summary_fn["preprocessing_summary.create_preprocessing_summary"]
     metrics["Viewer metrics<br/>ROI area, morphology metrics,<br/>95/50 percentile SNR, CaImAn-style SNR,<br/>autocorrelation e-fold time,<br/>inferred-spike fit metrics when available"]
     pdf["Summary PDF<br/>FOV, motion correction,<br/>ROI/trace overview"]
@@ -67,6 +74,10 @@ flowchart LR
   qc_fn --> qc_metrics
   qc_metrics --> qc_out
   s2p_out --> qc_out
+  s2p_out --> roi_qc_fn
+  roi_qc_model --> roi_qc_fn
+  roi_qc_fn --> roi_qc_out
+  roi_qc_fn --> roi_label_h5
   qc_out --> cellpose
   s2p_out --> cellpose
   cellpose --> overlap
@@ -79,6 +90,8 @@ flowchart LR
   oasis --> spike_out
   s2p_out --> summary_fn
   qc_out --> summary_fn
+  roi_qc_out --> summary_fn
+  roi_label_h5 --> summary_fn
   masks_h5 --> summary_fn
   dff_out --> summary_fn
   spike_out --> summary_fn

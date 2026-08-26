@@ -1,7 +1,7 @@
 # Interactive Manual ROI Labeler
 
 The interactive preprocessing summary lets a reviewer mark each ROI as
-**Good**, **Bad**, **Unsure**, or **Unlabeled** by inspecting its morphology and
+**Good**, **Bad**, **Unsure**, or **Not labeled** by inspecting its morphology and
 dF/F trace. It also provides filtering and sorting utilities of ROIs based on metrics calculated from morphology, dF/F, and inferred spikes, and summaries of motion correction for a given session.
 
 ## Interactive Reviewer Features and Layout
@@ -35,7 +35,7 @@ the trace and metric information elsewhere in the reviewer.
 
 When filters are applied, ROI masks that do not pass the active filter are
 removed from the FOV panel. They can be viewed again by clearing filters or
-using the control to show all ROIs. This makes the FOV panel a direct visual
+resetting the active QC thresholds. This makes the FOV panel a direct visual
 representation of the current filtered ROI population.
 
 Scroll and drag interactions support **zooming** and **panning** around dense ROI
@@ -54,6 +54,20 @@ The **manual label controls** assign the current ROI to one of four reviewer
 states: **Good**, **Bad**, **Unsure**, or **Not labeled**. The button
 corresponding to the current ROI's label is filled with color, and the keyboard
 shortcuts `G`, `B`, `U`, and `N` provide faster entry for repeated review.
+
+If the optional trained ROI QC model stage has been run, the reviewer loads the
+model probability and model state from `roi_qc_predictions.h5`. By default,
+these values are suggestions for filtering, sorting, and bulk review; they do
+not label ROIs on page load. If the summary is generated with
+`--initialize-labels-from-roi-qc`, model states initialize the manual labels:
+`p(good ROI) >= good_threshold` opens as **Good**,
+`p(good ROI) <= bad_threshold` opens as **Bad**, and probabilities between
+those thresholds open as **Unsure**.
+
+The ROI QC model stage reuses an existing `roi_qc_predictions.h5` by default.
+Use the pipeline flag `--force-roi-qc-model` or the direct predictor flag
+`--force` only when the checkpoint, target structure, or prediction code has
+changed and the scores need to be regenerated.
 
 The label counts summarize all ROIs in the session, not only the ROIs currently
 passing filters. When filters are applied, failing ROIs are automatically
@@ -606,6 +620,20 @@ At minimum, the processed session must contain:
 existing `iscell.npy` is used when present for provenance, but the reviewer
 opens with all Suite2p ROIs available and not labeled.
 
+When the trained ROI QC model stage has already been run, the session root may
+also contain:
+
+```text
+/path/to/processed/session/
+├── ROI_label.h5              # legacy good_roi/bad_roi label sets
+└── roi_qc_predictions.h5     # per-ROI model probability and state
+```
+
+The summary generator maps these files back onto original Suite2p ROI indices
+before embedding them in the interactive viewer. They are loaded as metrics by
+default. Pass `--initialize-labels-from-roi-qc` only when you want the reviewer
+to open with model-derived good/bad/unsure labels already applied.
+
 The summary generator can also read filtered `qc_results`-style outputs. When a
 session root is supplied in auto-detect mode, it uses `qc_results/` first when
 the following files are present, then `manual_qc_results/`, then native
@@ -912,11 +940,11 @@ The full PACE preprocessing pipeline includes the `summary` stage by default:
 python -m utils_2p.preprocessing_qc_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
-  --target-structure neuron
+  --target-structure soma
 ```
 
 Change `--target-structure` to the appropriate preset, such as `dendrite` or
-`cerebellum_lax`.
+`dendrite_relaxed`.
 
 To regenerate only the summaries for an existing pipeline output:
 
@@ -924,7 +952,7 @@ To regenerate only the summaries for an existing pipeline output:
 python -m utils_2p.preprocessing_qc_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/existing_processed_outputs \
-  --target-structure neuron \
+  --target-structure soma \
   --stages summary
 ```
 
@@ -936,8 +964,12 @@ The processed session must be located at
 The interactive HTML contains the original Suite2p ROI set. By default, every
 Suite2p ROI opens as **not labeled**, and no morphology/QC filter is applied.
 The preprocessing pipeline's target structure is still shown, and the built-in
-`neuron`, `dendrite`, and `cerebellum_lax` filters remain available for manual
+`soma`, `dendrite`, and `dendrite_relaxed` filters remain available for manual
 testing in the viewer.
+
+If the trained ROI QC model stage was run, the viewer also reports the target
+structure used to select the model checkpoint. This can differ from the
+pipeline target if a fallback checkpoint was supplied manually.
 
 The reviewer can label ROIs manually, apply a morphology/custom metric filter,
 or use **Label all as ... → Not labeled** to return every visible Suite2p ROI
@@ -950,7 +982,7 @@ All ROIs detected by Suite2p
 Optional morphology/custom metric filters
         |
         v
-Manual Good / Bad / Unsure / Unlabeled review
+Manual Good / Bad / Unsure / Not labeled review
         |
         v
 reviewed HTML or roi_manual_labels.npy

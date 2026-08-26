@@ -8,7 +8,7 @@ submission.
 The full pipeline is:
 
 ```text
-prep -> suite2p -> qc -> label -> dff -> summary
+prep -> suite2p -> qc -> roi_qc (optional) -> label (optional) -> dff -> spikes (optional) -> summary
 ```
 
 The launcher generates linked Slurm jobs and is designed to run on PACE. The
@@ -54,12 +54,12 @@ export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
 "$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
   --session /path/to/raw/session \
   --output-root "/storage/scratch1/3/$USER/2p_processing_results" \
-  --target-structure neuron \
+  --target-structure soma \
   --suite2p-version 1.x \
   --python-bin "$TWO_P_PYTHON" \
   --account "$TWO_P_SLURM_ACCOUNT" \
   --qos embers \
-  --run-name example_neuron_session
+  --run-name example_soma_session
 ```
 
 Argument meanings:
@@ -69,7 +69,7 @@ Argument meanings:
 | `submit` | Generate the Slurm files and immediately submit all requested stages. |
 | `--session` | Raw session directory containing the imaging TIFF files and associated session inputs. |
 | `--output-root` | Parent directory where a processed directory named after the raw session will be created. |
-| `--target-structure` | Morphology QC preset: `neuron`, `dendrite`, or `cerebellum_lax`. |
+| `--target-structure` | Anatomical target / QC preset: `soma`, `dendrite`, or `dendrite_relaxed`. |
 | `--suite2p-version` | Select the default versioned environment when `--python-bin` is not supplied. |
 | `--python-bin` | Exact Python executable used inside every generated job. |
 | `--processing-root` | Optional override for Suite2p config JSON files. Omit this for the packaged defaults. |
@@ -131,8 +131,9 @@ Scratch is temporary, may be purged according to current PACE policy, and is
 not a backup. Do not remove the durable source or only copy of a result until
 the transfer back has been verified.
 
-Each session creates up to six Slurm jobs. Submitting 50 sessions at once can
-therefore create roughly 300 queued jobs, while several Suite2p stages may
+Each session creates up to eight Slurm jobs when all optional stages are
+enabled. Submitting 50 sessions at once can therefore create hundreds of
+queued jobs, while several Suite2p stages may
 begin reading TIFFs at the same time. Large submissions increase scheduler
 load, consume pending-job allowances, and can cause an I/O burst even when the
 jobs are linked by dependencies.
@@ -188,6 +189,19 @@ versions are required.
 
 Suite2p 1.x is the default and recommended environment. The repository also
 provides a legacy Suite2p 0.x environment for reproducing older processing.
+Shared lab environments are stored under:
+
+```text
+/storage/project/r-fnajafi3-0/shared/shared_envs/
+├── 2p_preprocessing_qc_suite2p_1x/   # default pipeline launcher, Suite2p 1.x
+├── 2p_preprocessing_qc_suite2p_0x/   # legacy Suite2p 0.x compatibility
+└── suite2p_1gui/                     # patched Suite2p 1.x GUI for manual ROI work
+```
+
+The preprocessing pipeline is easiest to run by pointing `--python-bin` at one
+of the versioned preprocessing environments. The `suite2p_1gui` environment is
+for opening the patched Suite2p GUI on an interactive desktop, not for normal
+batch preprocessing submissions.
 
 Make Conda available:
 
@@ -250,11 +264,11 @@ For a small batch with the same processing settings, repeat `--session`:
   --session /path/to/raw/session_2 \
   --session /path/to/raw/session_3 \
   --output-root /path/to/processed_outputs \
-  --target-structure neuron \
+  --target-structure soma \
   --python-bin "$TWO_P_PYTHON" \
   --account gts-fnajafi3 \
   --qos embers \
-  --run-name neuron_batch
+  --run-name soma_batch
 ```
 
 Each session receives its own linked stage chain. A failed session does not
@@ -266,7 +280,7 @@ For a larger batch, create a plain-text file with one raw session path per
 line. Blank lines and lines beginning with `#` are ignored:
 
 ```text
-# neuron_sessions.txt
+# soma_sessions.txt
 /path/to/raw/session_1
 /path/to/raw/session_2
 /path/to/raw/session_3
@@ -276,13 +290,13 @@ Submit all paths in the file:
 
 ```bash
 "$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
-  --sessions-file neuron_sessions.txt \
+  --sessions-file soma_sessions.txt \
   --output-root /path/to/processed_outputs \
-  --target-structure neuron \
+  --target-structure soma \
   --python-bin "$TWO_P_PYTHON" \
   --account gts-fnajafi3 \
   --qos embers \
-  --run-name neuron_manifest
+  --run-name soma_manifest
 ```
 
 All entries in one `--sessions-file` invocation share the command-line
@@ -316,20 +330,20 @@ before submitting:
 
 ```bash
 "$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline generate \
-  --sessions-file neuron_sessions.txt \
+  --sessions-file soma_sessions.txt \
   --output-root /path/to/processed_outputs \
-  --target-structure neuron \
+  --target-structure soma \
   --python-bin "$TWO_P_PYTHON" \
   --account gts-fnajafi3 \
   --qos embers \
-  --run-name neuron_manifest
+  --run-name soma_manifest
 ```
 
 The command prints the generated job directory and the corresponding
 `submit_jobs.sh` path. On PACE, submit the generated chains with:
 
 ```bash
-bash /path/to/processed_outputs/.preprocessing_qc_jobs/neuron_manifest_${USER}/submit_jobs.sh
+bash /path/to/processed_outputs/.preprocessing_qc_jobs/soma_manifest_${USER}/submit_jobs.sh
 ```
 
 Run both `generate` and the resulting submission script on PACE so all
@@ -351,6 +365,41 @@ Python, session, and output paths are accessible to the compute nodes.
 | `--suite2p-binary-batch-size` | Tune the Suite2p 1.x TIFF-to-binary batch size; default `5000`. |
 | `--suite2p-registration-batch-size` | Tune the Suite2p 1.x registration batch size; default `500`. |
 | `--suite2p-extraction-batch-size` | Tune the Suite2p 1.x extraction/deconvolution batch size; default `500`. |
+| `--run-oasis` | Add the optional inferred-spike stage between dF/F generation and summary generation. |
+| `--run-roi-qc-model` | Add the optional trained ROI quality-classifier stage after `qc` and before summary generation. |
+| `--roi-qc-model-path` | Fallback path to a trained ROI QC model checkpoint. If omitted, the pipeline checks target-specific registrations first, then `TWO_P_ROI_QC_MODEL_PATH`. |
+| `--roi-qc-model-registry` | JSON file mapping target structures to checkpoints, for example `{"dendrite": "/path/to/best_model.pt"}`. |
+| `--roi-qc-target-model dendrite=/path/to/best_model.pt` | Register one target-specific checkpoint directly on the command line. Repeat for multiple targets. |
+| `--roi-qc-good-threshold` / `--roi-qc-bad-threshold` | Probability thresholds saved with ROI QC model states. Defaults are `0.8` and `0.2`; probabilities between the bad and good thresholds are model Unsure. |
+| `--force-roi-qc-model` | Regenerate `roi_qc_predictions.h5` even when it already exists. Without this flag, existing model predictions are reused. |
+| `--initialize-summary-labels-from-roi-qc` | Opt in to opening generated HTML summaries with ROI QC model/legacy labels applied. By default, all ROIs open as Not labeled and model scores are only metrics/suggestions. |
+| `--summary-input-layout` | ROI/trace layout used by summary stages. The default is `suite2p`, so the HTML reviewer opens with all original Suite2p ROIs rather than the post-QC subset. Use `qc_results`, `manual_qc_results`, `external_rois`, or `auto` only when intentionally generating from another layout. |
+
+For target-specific ROI QC models, prefer either repeated command-line
+registrations:
+
+```bash
+"$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure dendrite \
+  --run-roi-qc-model \
+  --roi-qc-target-model dendrite=/path/to/dendrite_best_model.pt \
+  --roi-qc-target-model soma=/path/to/soma_best_model.pt
+```
+
+or a JSON registry:
+
+```json
+{
+  "dendrite": "/path/to/dendrite_best_model.pt",
+  "soma": "/path/to/soma_best_model.pt"
+}
+```
+
+The ROI QC stage selects the checkpoint matching `--target-structure`. If no
+target-specific checkpoint is registered, it falls back to `--roi-qc-model-path`
+or `TWO_P_ROI_QC_MODEL_PATH`.
 
 Suite2p's temporary binary movie is deleted when processing completes. Keeping
 it in node-local `$TMPDIR` avoids writing a large intermediate file to project
@@ -365,7 +414,7 @@ dF/F and the PDF/interactive summaries:
 "$TWO_P_PYTHON" -m utils_2p.preprocessing_qc_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/existing_processed_outputs \
-  --target-structure neuron \
+  --target-structure soma \
   --stages dff,summary \
   --python-bin "$TWO_P_PYTHON" \
   --account gts-fnajafi3 \
@@ -390,6 +439,7 @@ stage, see the [full preprocessing QC data flow](workflow.md#full-preprocessing-
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
 | `suite2p` | High-memory CPU and optional GPU | `suite2p/plane0/ops.npy`, ROI statistics, fluorescence and neuropil traces, registered projections |
 | `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
+| `roi_qc` | CPU | `roi_qc_predictions.h5` with trained-model probabilities/states and `ROI_label.h5` for legacy good/bad compatibility when `--run-roi-qc-model` is used |
 | `label` | GPU | `masks.h5` and anatomical Cellpose outputs; skipped for functional-only recordings |
 | `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
 | `summary` | CPU | `<session>_preprocessing_summary.pdf`, `<session>_interactive_fov_roi_dff.html` |
