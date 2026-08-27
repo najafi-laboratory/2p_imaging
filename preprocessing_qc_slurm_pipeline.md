@@ -1,6 +1,6 @@
-# Preprocessing QC Slurm Pipeline
+# Processing Slurm Pipeline
 
-`utils_2p.preprocessing_qc_pipeline` creates and optionally submits a linked
+`utils_2p.processing_pipeline` creates and optionally submits a linked
 Slurm processing chain for each raw two-photon imaging session. Jobs read raw
 data in place and write all processed results under a selected output root.
 
@@ -10,10 +10,11 @@ data in place and write all processed results under a selected output root.
 |---|---|---|
 | `prep` | CPU | `raw_voltages.h5`, copied `bpod_session_data.mat` when available, provenance JSON |
 | `suite2p` | High-memory CPU; optional GPU request | `suite2p/plane0/ops.npy`, fluorescence traces, ROI statistics, registered projections |
-| `qc` | CPU | `qc_results/fluo.npy`, `neuropil.npy`, `stat.npy`, `masks.npy`, `qc_parameters.json`, `move_offset.h5` |
-| `label` | GPU | `masks.h5` and anatomical Cellpose outputs; Cellpose is invoked with GPU enabled and is omitted for single-channel data or with `--no-label` |
+| `roi_model_scores` | CPU/GPU depending on the checkpoint | `roi_model_scores.h5`; currently only available for cerebellar dendrite ROIs |
+| `label` | GPU | `masks.h5` and anatomical Cellpose outputs; enabled only when `--run-label` is passed |
 | `dff` | CPU | `dff.h5` containing raw, non-z-scored dF/F traces |
-| `summary` | CPU | `{session}_preprocessing_summary.pdf`, `{session}_interactive_fov_roi_dff.html` |
+| `spikes` | CPU | `spikes.h5`; enabled only when `--run-oasis` is passed |
+| `summary` | CPU | `{session}_processing_summary.pdf`, `{session}_interactive_fov_roi_dff.html` |
 
 Each session has its own dependency chain. A failed session does not prevent
 other submitted sessions from proceeding.
@@ -21,9 +22,8 @@ other submitted sessions from proceeding.
 The orchestration, voltage extraction, raw dF/F creation, and figure generation
 live in `utils_2p`. The utility intentionally reuses the versioned
 `2p_processing_pipeline_202401/config_*.json` Suite2p configurations and the
-existing `2p_post_process_module_202404/modules/QualControlDataIO.py` and
-`LabelExcInh.py` algorithms already on `main`, so these established algorithms
-do not need duplicate copies.
+postprocessing helpers now packaged under `utils_2p.resources`, so these
+established algorithms do not need duplicate copies.
 
 Suite2p writes its temporary binary movie to node-local `$TMPDIR` by default
 and deletes that binary when Suite2p finishes. This is the canonical execution
@@ -51,31 +51,21 @@ left/right arrow keys move between ROIs. FOV masks remain white outlines; the
 selected ROI is filled translucent white. Stacked traces retain their
 per-ROI color palette.
 
-The **Morphology filter sandbox** uses the same `stat.npy` fields and threshold
-logic as the preprocessing `qc` stage: `skew`, connectivity components,
-`aspect_ratio`, `compact`, and `footprint`. The controls initialize from the
-session's saved `qc_results/qc_parameters.json` when that file is present.
-Built-in `neuron`, `dendrite`, and `cerebellum_lax` presets come directly from
-the pipeline's `QC_PRESETS`. Changing thresholds previews the pass/fail count.
-The preview does not change labels until **Apply filter to labels** is clicked.
-Custom presets can be named and saved in the browser's local storage.
+The reviewer includes browser-side filters for morphology, fluorescence traces,
+ROI model score metrics, inferred spike metrics, and manual labels. These
+filters are applied in the interactive HTML reviewer rather than by creating a
+separate pre-filtered `qc_results/` directory.
 
-ROI review uses three states: Good, Bad, and Unlabeled. Sessions initialize
-with morphology failures marked Bad and morphology passers Unlabeled. Good and
-Unlabeled ROI outlines/traces are visible; Bad ROIs are hidden. Marking an ROI
-Bad or applying morphology thresholds updates the FOV and trace list
-immediately. **Show excluded ROIs** temporarily reveals Bad ROIs, and
-**Mark all visible as good** accepts the current visible set. The exclusion
-report is generated from the current morphology settings and current labels.
-Unlabeled exports preserve the original Suite2p `iscell.npy` row in the
-separate reviewed output.
+ROI review uses four states: Good, Bad, Unsure, and Not labeled. New sessions
+open with the original Suite2p ROI set embedded in the HTML and no morphology
+threshold applied automatically. Label and filter changes update the FOV and
+trace list immediately and can be saved back into the reviewed HTML or exported
+as `roi_manual_labels.npy`.
 
-The target-structure morphology parameters belong to the post-Suite2p QC stage;
-they are not passed into Suite2p ROI detection. The HTML embeds all original
-Suite2p ROIs. **Clear all labels / show all ROIs** removes both manual and
-morphology-derived reviewer labels, restores the pending export rows from the
-original `iscell.npy`, and reveals the complete Suite2p ROI set. Select a
-preset and click **Apply filter to labels** to restore morphology filtering.
+The target structure selects the Suite2p defaults used for ROI detection. It
+does not pre-filter morphology results in the processing pipeline. The HTML
+embeds all original Suite2p ROIs so morphology filtering can be reviewed and
+changed interactively.
 
 Suite2p stores ROI classifications in `suite2p/plane0/iscell.npy`, an
 `N x 2` floating-point array:
@@ -128,7 +118,7 @@ two-channel recordings use Ch2 as functional and Ch1 as anatomical, while
 single-channel recordings use the only detected channel as functional:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session_1 \
   --session /path/to/raw/session_2 \
   --output-root /path/to/processed_outputs
@@ -137,7 +127,7 @@ python -m utils_2p.preprocessing_qc_pipeline submit \
 For a cerebellar dendritic session:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
   --target-structure dendrite
@@ -146,7 +136,7 @@ python -m utils_2p.preprocessing_qc_pipeline submit \
 For a functional-only, single-channel session:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
   --target-structure dendrite
@@ -155,7 +145,7 @@ python -m utils_2p.preprocessing_qc_pipeline submit \
 Use `generate` instead of `submit` to review the `.sbatch` scripts first:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline generate \
+python -m utils_2p.processing_pipeline generate \
   --sessions-file raw_sessions.txt \
   --output-root /path/to/processed_outputs
 ```
@@ -164,7 +154,7 @@ This writes a job manifest, stage `.sbatch` scripts, logs directory, and a
 `submit_jobs.sh` command script beneath:
 
 ```text
-{output_root}/.preprocessing_qc_jobs/{timestamp}_{username}/
+{output_root}/.processing_jobs/{timestamp}_{username}/
 ```
 
 Select a subset of stages with `--stages`. Stages are ordered according to the
@@ -172,7 +162,7 @@ pipeline and chained only among those selected. This is useful when upstream
 outputs already exist; for example, to regenerate dF/F and QC figures:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/existing_processed_outputs \
   --stages dff,summary
@@ -189,16 +179,16 @@ The Python API permits per-session modality and target-structure settings in
 one submission:
 
 ```python
-from utils_2p.preprocessing_qc_pipeline import SessionSpec, submit_preprocessing_qc_jobs
+from utils_2p.processing_pipeline import SessionSpec, submit_processing_jobs
 
-jobs = submit_preprocessing_qc_jobs(
+jobs = submit_processing_jobs(
     [
         SessionSpec("/raw/SM07_session", target_structure="dendrite"),
         SessionSpec("/raw/EBC_single_channel", target_structure="dendrite",
                     nchannels=1, functional_chan=1, run_label=False,
                     stages=("dff", "summary")),
     ],
-    "/processed/preprocessing_qc",
+    "/processed/processing",
 )
 ```
 
@@ -229,7 +219,7 @@ values either with CLI options or environment variables:
 Example:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_processing_suite2p_1x/bin/python
 export TWO_P_SLURM_ACCOUNT=gts-fnajafi3
 export TWO_P_SLURM_QOS=embers
 export TWO_P_SLURM_MAIL_USER="$USER@gatech.edu"
@@ -242,7 +232,7 @@ single-session stage jobs free but preemptible after the QOS runtime limit. Use
 appropriate:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
   --qos inferno
@@ -262,11 +252,11 @@ A shared environment can be stored on project storage and referenced through
 about 8 to 9 GB, so capacity should be checked before creating another copy.
 The repository includes versioned YAMLs in `utils_2p/`:
 
-- `utils_2p/environment-preprocessing-qc-suite2p-0x.yml`
-- `utils_2p/environment-preprocessing-qc-suite2p-1x.yml`
+- `utils_2p/environment-processing-suite2p-0x.yml`
+- `utils_2p/environment-processing-suite2p-1x.yml`
 
-The default shared alias is `.../2p_preprocessing_qc_suite2p_1x`, and the
-legacy alias is `.../2p_preprocessing_qc_suite2p_0x`. The environment
+The default shared aliases are `.../2p_processing_suite2p_1x` and
+`.../2p_processing_suite2p_0x`. The environment
 currently used for pipeline tests has a CUDA 12.8 PyTorch build
 (`torch 2.9.1+cu128`); validate GPU availability on a compute node after
 creating or updating a shared environment.
@@ -280,15 +270,15 @@ mkdir -p /storage/project/r-fnajafi3-0/grubin6/shared_envs
 
 PYTHONNOUSERSITE=1 \
 conda env create \
-  --prefix /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x \
-  --file utils_2p/environment-preprocessing-qc-suite2p-1x.yml
+  --prefix /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_processing_suite2p_1x \
+  --file utils_2p/environment-processing-suite2p-1x.yml
 
 chmod -R g+rX,o-rwx \
-  /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x
+  /storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_processing_suite2p_1x
 
 PYTHONNOUSERSITE=1 NUMBA_CACHE_DIR="$TMPDIR/2p_numba_cache" \
 MPLCONFIGDIR="$TMPDIR/2p_matplotlib_cache" \
-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python -c \
+/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_processing_suite2p_1x/bin/python -c \
   "import suite2p, cellpose, torch; print(torch.__version__, torch.version.cuda)"
 ```
 
@@ -310,7 +300,7 @@ the submitting user's home directory.
 The current shared environment was installed at:
 
 ```text
-/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x
+/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_processing_suite2p_1x
 ```
 
 It is group-readable/executable by `pace-fnajafi3` and occupies approximately
@@ -326,7 +316,7 @@ device, so execution against a GPU remains a compute-job validation step.
 Use it in the job generator with:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
+export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/grubin6/shared_envs/2p_processing_suite2p_1x/bin/python
 ```
 
 ### Numba Cache

@@ -1,8 +1,13 @@
-"""Create raw dF/F traces from QC-filtered Suite2p fluorescence results."""
+"""Create raw dF/F traces from Suite2p fluorescence results.
+
+Native Suite2p ``F.npy`` / ``Fneu.npy`` traces are the default input. Legacy
+``qc_results`` traces are still accepted for older processed sessions.
+"""
 
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Any
 
 import h5py
@@ -36,16 +41,41 @@ def compute_dff(
     return dff
 
 
+def _load_fluorescence_traces(result_dir: Path) -> tuple[np.ndarray, np.ndarray, str]:
+    plane_dir = result_dir / "suite2p" / "plane0"
+    suite2p_fluo = plane_dir / "F.npy"
+    suite2p_neuropil = plane_dir / "Fneu.npy"
+    if suite2p_fluo.exists() and suite2p_neuropil.exists():
+        return (
+            np.load(suite2p_fluo, allow_pickle=False),
+            np.load(suite2p_neuropil, allow_pickle=False),
+            "suite2p/plane0/F.npy,Fneu.npy",
+        )
+
+    qc_fluo = result_dir / "qc_results" / "fluo.npy"
+    qc_neuropil = result_dir / "qc_results" / "neuropil.npy"
+    if qc_fluo.exists() and qc_neuropil.exists():
+        return (
+            np.load(qc_fluo, allow_pickle=False),
+            np.load(qc_neuropil, allow_pickle=False),
+            "legacy qc_results/fluo.npy,neuropil.npy",
+        )
+
+    raise FileNotFoundError(
+        f"Could not find Suite2p F.npy/Fneu.npy or legacy qc_results/fluo.npy/neuropil.npy in {result_dir}"
+    )
+
+
 def run(ops: dict[str, Any], *, normalize: bool = False, correct_pmt: bool = False) -> None:
     """Write `dff.h5`; raw non-z-scored dF/F is the default pipeline output."""
 
-    result_dir = os.fspath(ops["save_path0"])
-    fluo = np.load(os.path.join(result_dir, "qc_results", "fluo.npy"), allow_pickle=True)
-    neuropil = np.load(os.path.join(result_dir, "qc_results", "neuropil.npy"), allow_pickle=True)
+    result_dir = Path(os.fspath(ops["save_path0"]))
+    fluo, neuropil, source = _load_fluorescence_traces(result_dir)
+    print(f"Loaded fluorescence traces from {source}")
     signal = fluo.copy() - float(ops["neucoeff"]) * neuropil
     dff = compute_dff(signal, normalize=normalize)
     if correct_pmt:
         dff = _correct_pmt_led(fluo, dff)
-    with h5py.File(os.path.join(result_dir, "dff.h5"), "w") as output:
+    with h5py.File(result_dir / "dff.h5", "w") as output:
         output["dff"] = dff
         output["fluo"] = fluo

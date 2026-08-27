@@ -16,12 +16,15 @@ extra_css:
   - stylesheets/extra.css
 
 nav:
-  - Home: index.md
+  - Najafi Lab - PACE Computing Basics:
+      - PACE / Phoenix Compute: index.md
   - 2p Data Preparation Workflow:
       - Overview: workflow.md
       - Processing Quickstart: processing-quickstart.md
-      - Preprocessing: preprocessing.md
-      - Postprocessing: postprocessing.md
+      - Processing Pipeline Documentation:
+          - Pipeline Overview: processing-pipeline.md
+          - Preprocessing: preprocessing.md
+          - Postprocessing: postprocessing.md
       - Adding Manual ROIs: manual-roi-workflow.md
       - Interactive ROI Labeling: roi-reviewer-exports.md
   - Cross-Session Analysis:

@@ -42,45 +42,27 @@ The starting point for all our 2p imaging based analyses are anatomical and func
   </div>
 </div>
 
-## 5 Step Data Processing Workflow
+## Table of Contents
 
-<div class="overview-flowchart">
-  <img src="../images/workflow/flowchart-large.svg" alt="2p imaging workflow flowchart" />
-</div>
+The 2p data preparation workflow is organized around a practical quickstart,
+deeper processing-stage documentation, and reviewer/manual-ROI references.
 
-<p class="workflow-heading"><strong>Processing</strong></p>
+- [Processing Quickstart](processing-quickstart.md): copy-paste commands for
+  launching the current staged pipeline on PACE or running the stages locally
+  without Slurm.
+- [Processing Pipeline Documentation](processing-pipeline.md): reference
+  documentation for each pipeline job, including the stage order, function
+  calls, generated files, optional stages, and the full data-flow diagram. Its
+  subsections cover older **preprocessing** terminology for `prep`/`suite2p`
+  and older **postprocessing** terminology for `dff`/`summary` plus explicitly
+  enabled downstream stages.
+- [Adding Manual ROIs](manual-roi-workflow.md): GUI workflow for opening
+  processed Suite2p data, drawing manual ROIs, extracting traces, and saving
+  updated outputs.
+- [Interactive ROI Labeling](roi-reviewer-exports.md): guide to the interactive
+  ROI reviewer, filters, sorting, labels, exports, and expected upload formats.
 
-<ol class="workflow-steps">
-  <li>Prep</li>
-  <li>Suite2p</li>
-</ol>
-
-<p class="workflow-heading"><strong>Postprocessing</strong></p>
-
-<ol start="3" class="workflow-steps">
-  <li>QC</li>
-  <li>Label</li>
-  <li>dF/F</li>
-</ol>
-
-The following sections provide more detail on each data processing step, files generated, and definitions of the fields and data contained within.
-
-## Full Preprocessing QC Data Flow
-
-The chart below shows the staged preprocessing QC data flow. The current
-editable source includes optional ROI model score prediction and inferred-spike
-stages in addition to prep, Suite2p, QC, cell-type labeling, dF/F generation,
-and summary export.
-
-<div class="overview-flowchart pipeline-dataflow">
-  <img src="../images/workflow/preprocessing-pipeline-dataflow.svg" alt="Detailed preprocessing QC pipeline data flow" />
-</div>
-
-The rendered diagram above is stored as
-`docs/images/workflow/preprocessing-pipeline-dataflow.svg`. The editable
-Mermaid source is stored beside it at
-`docs/images/workflow/preprocessing-pipeline-dataflow.mmd`; regenerate the SVG
-from that source after Mermaid tooling is available.
+## Storage Context
 
 The two main locations where data is stored are PACE project storage, where files are uploaded from experimental or lab PCs after recording sessions, and the long-term CEDAR data storage.
 

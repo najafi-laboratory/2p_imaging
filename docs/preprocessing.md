@@ -1,5 +1,9 @@
 # Preprocessing
 
+In older versions of the data processing pipeline, **preprocessing** referred
+to the steps that prepare raw session inputs and run Suite2p. In the current
+staged pipeline, this mostly corresponds to `prep` and `suite2p`.
+
 ## Step 1: Prep
 
 The Prep step organizes the non-imaging session inputs so that Suite2p can run on a standardized session directory.
@@ -230,7 +234,11 @@ Common fields seen in this repo include:
 | `neuropil_mask` | Pixels used for neuropil estimation | integer or boolean array |
 | `overlap` | Whether ROI overlaps neighboring ROIs | boolean-like or integer flag |
 
-These ROI-level statistics are what the QC step later filters on.
+These ROI-level statistics are used by the interactive ROI reviewer for
+morphology filtering and sorting. New sessions keep the original Suite2p ROI
+layout and use the interactive HTML reviewer for ROI filtering. The older
+`QualControlDataIO` step that writes a separate `qc_results/` directory is
+deprecated and is not part of the current staged pipeline.
 
 ### `iscell.npy`
 
@@ -241,7 +249,9 @@ These ROI-level statistics are what the QC step later filters on.
 | column `0` | Cell or non-cell decision | float64, usually `0` or `1` |
 | column `1` | Classifier confidence or score | float64 |
 
-This file is saved by Suite2p but is not the only QC decision used in this repo; the downstream QC step applies additional morphology-based filtering.
+This file is saved by Suite2p but is not the only QC decision used in this repo.
+The interactive reviewer can apply additional morphology-based filters without
+changing the original Suite2p ROI rows.
 
 ### `ops.npy`
 

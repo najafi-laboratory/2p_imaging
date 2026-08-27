@@ -1,64 +1,267 @@
-# `2p_imaging`
+# PACE / Phoenix Compute
 
-This site documents the major analysis stacks in the `2p_imaging` repository.
+## Basics
 
-The repo is not a single polished package. It is a collection of shared preprocessing layers plus experiment-specific downstream projects. The docs therefore focus on:
+PACE is Georgia Tech's high-performance computing service. Phoenix is one of
+the PACE clusters used for research compute. This guide is meant to save time
+spent on trial-and-error by providing a basic understanding of where to store
+different files for different purposes, how to use standardized lab Conda/Python environments,
+and efficiently run different kinds of data-processing or analysis tasks. This will make
+standard tasks like running the lab 2p processing pipeline and creating / adding
+on your own extensions more intuitive.
 
-- where each pipeline lives
-- which scripts act as entry points
-- what intermediate files are expected between stages
-- how the experiment-specific directories are organized
+## Prerequisities for this Guide
 
-## 2p Data Preparation Workflow
+To access PACE Phoenix you need
 
-- `2p_processing_pipeline_202401/`: Suite2p-oriented preprocessing, voltage extraction, and session metadata handoff
-- `2p_post_process_module_202404/`: ROI QC, cross-channel labeling, and `dff.h5` generation
+1. A PACE account, which Dr.Najafi can request for you.
 
-Most downstream projects assume these outputs already exist in each session directory:
+2. Access to the Georgia Tech VPN client, see the following link to download the official GlobalProtect VPN client:
+[https://vpn.gatech.edu/global-protect/getsoftwarepage.esp](https://vpn.gatech.edu/global-protect/getsoftwarepage.esp)
 
-- `suite2p/plane0/ops.npy`
-- `raw_voltages.h5`
-- `bpod_session_data.mat`
-- `masks.h5`
-- `dff.h5`
-- often `neural_trials.h5` after trialization
+To follow this guide, you should be comfortable with:
 
-The [Interactive Manual ROI Labeler guide](roi-reviewer-exports.md) explains how manual
-good/bad/unlabeled decisions map back to Suite2p arrays and to the downstream
-loading conventions used across this repository.
+  - Using bash in the terminal to navigate a Linux filesystem (commands **cd**, **ls**, **mkdir** etc...)
+  - Experience with an IDE like VS Code will make everything easier but not strictly necessary
+  - Using a Georgia Tech account, including your GT username, password, Duo, and VPN access when off campus.
+  - Can run Python scripts, and a basic understanding of the use/purpose of package management tools like Conda.
+  - High level understanding that different tasks run faster on differ architectures (CPU vs. GPU)
 
-## Cross-session analysis
+### 1. Login nodes
 
-Task-agnostic tooling that runs after the preparation workflow completes, operating on
-finished Suite2p outputs from many sessions at once rather than a single session.
+This is the node that you use to connect to the cluster, submit jobs to compute
+nodes, and check the status of your jobs. You can use this node to edit
+scripts, inspect small files, and submit jobs that are run on compute nodes.
 
-- `tracking/`: cross-session ROI tracking via ROICaT — assigns each neuron a UCID stable
-  across sessions. See the [ROI tracking guide](roi-tracking.md). Note this directory is
-  **GPL-3.0**, unlike the rest of the repository.
 
-## Experiment families
+You should **not** use this node for long Suite2p runs, large file conversions,
+or other heavy 2p processing (it will run out of memory quickly and become non-responsive).
+You can also use an IDE with SSH support, such as VS Code, to connect and edit
+files on the login node.
 
-- `passive_interval_oddball_202412/`: passive visual oddball and interval paradigms with HTML report generation
-- `2p_2AFC_double_block_version/`, `2p_2AFC_reg_version/`, `single_interval_discrimination_202505/`: 2AFC and related decision-task analyses
-- `opto_pilot/`: optogenetic or closed-loop pilot analyses with opto/control comparisons
-- `joystick_basic_202304/` and `JoystickProcessing2026/`: joystick behavior and imaging analyses
-- `ebc_basic_202410/` and `ebc_data_analysis/`: eyeblink conditioning pipelines and exploratory analyses
-
-## Local preview
-
-Install the docs dependencies and start a local preview from the repository root:
+SSH to the following address to connect:
 
 ```bash
-python -m pip install -r requirements-docs.txt
-mkdocs serve
+ssh <gt-username>@login-phoenix.pace.gatech.edu
 ```
 
-To build the site without serving it:
+Replace `<gt-username>` with your Georgia Tech username. If you are off campus,
+connect to the GT VPN first, then run the SSH command and enter your password when prompted.
+
+### 2. Compute nodes
+
+Compute nodes have more resources and are where analysis and data processing jobs actually run.
+Phoenix has multiple classes of compute resources for different workloads, such
+as smaller CPU nodes, larger-memory CPU nodes, and GPUs. While our pipeline
+and `utils_2p` functions largely handle compute-node selection automatically,
+see [Phoenix Compute Node Resources](https://gatech.service-now.com/home?id=kb_article_view&sysparm_article=KB0041976)
+for reference on the available resources.
+
+There are two main kinds of compute jobs, interactive and non-interactive,
+both of which can be launched from a  terminal or a login node, or from
+a browser connected to [Phoenix OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard)
+is the web home for starting these browser-based sessions, and it requires a GT
+VPN connection.
+
+1.**Non-interactive (sbatch)**: Batch jobs are submitted from the command line with `sbatch`,
+which launch a request for a compute node and automatically run a specified script
+when resources become available.
+
+```
+  #!/usr/bin/env bash
+  #SBATCH --job-name=hello-world
+  #SBATCH --account=gts-fnajafi3
+  #SBATCH --qos=embers
+  #SBATCH --nodes=1
+  #SBATCH --ntasks=1
+  #SBATCH --cpus-per-task=1
+  #SBATCH --mem=1G
+  #SBATCH --time=00:05:00
+  #SBATCH --output=hello-world_%j.out
+  #SBATCH --error=hello-world_%j.err
+
+  echo "Hello from Slurm"
+  echo "Job ID: ${SLURM_JOB_ID}"
+  echo "Running on node: $(hostname)"
+  echo "Started at: $(date)"
+```
+
+  Submit it with:
+
+  `sbatch hello_world.sbatch`
+
+  Check whether it is queued or running:
+
+  `squeue -u "$USER"`
+
+  (replace $USER with your gt username if not already set as an env variable)
+
+  After it finishes, inspect the output:
+
+  `cat hello-world_<jobid>.out`
+
+  Replace <jobid> with the job ID printed by sbatch.
+
+2.**salloc**: Interactive jobs request a compute node for direct use through
+`salloc` or through the Phoenix OnDemand web interface.
+
+   - **Through the terminal*** - salloc in the terminal will print
+
+The [Phoenix OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard)
+is the web home for starting these browser-based sessions, and it requires a GT
+VPN connection. OnDemand is especially useful for workflows that need a visual
+interface, such as manual ROI labeling: the GUI runs near the data on PACE, so
+the user does not have to download an entire imaging session to a local machine
+just to inspect or edit ROIs.
+
+Useful references:
+
+- [PACE home page](https://pace.gatech.edu/)
+- [Phoenix OnDemand dashboard](https://ondemand-phoenix.pace.gatech.edu/pun/sys/dashboard)
+- [Phoenix OnDemand documentation](https://gatech.service-now.com/home?id=kb_article_view&sysparm_article=KB0042133)
+- [PACE service overview](https://oit.gatech.edu/oit-spotlight-partnership-advanced-computing-environment-pace)
+
+## Storage locations
+
+The same session may move through several storage systems during its lifetime.
+Use each location for the job it is good at.
+
+| Location | Typical path | Purpose |
+|---|---|---|
+| Home | `/home/<user>` or `~` | Shell configuration, small scripts, small text files. Do not store imaging datasets here. |
+| CEDAR | `/storage/cedar/...` | Long-term, durable research data storage. Use this for original recordings and retained results that should not be purged. |
+| Project storage | `/storage/project/r-fnajafi3-0/...` | Shared lab/project storage for software, shared environments, and active shared outputs. Good for common resources that multiple users need. |
+| Scratch | `/storage/scratch1/3/<user>/...` | Short-term high-throughput job workspace. Use this for large temporary processing runs and staged raw sessions. Scratch may be purged, so it is not a backup. |
+
+For 2p preprocessing, a good default is:
+
+1. Keep original raw recordings on CEDAR or another durable lab storage area.
+2. Stage the sessions being processed to scratch when running large batches.
+3. Write temporary and intermediate outputs to scratch.
+4. Validate the final outputs.
+5. Copy retained processed sessions back to durable project or CEDAR storage.
+
+This avoids repeatedly reading large TIFF stacks from shared long-term storage
+while many jobs are running.
+
+## Shared environments and Conda modules
+
+The shared Suite2p 1.x processing environment is installed here:
 
 ```bash
-mkdocs build
+/storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x
 ```
 
-## GitHub Pages deployment
+It has `utils_2p` installed as a package, so most users do not need a local
+repository checkout to run the processing pipeline.
 
-The repository includes a GitHub Actions workflow at `.github/workflows/docs.yml` that builds the site with MkDocs and deploys the generated `site/` directory to GitHub Pages.
+On PACE, Conda is usually made available through the module system:
+
+```bash
+module avail anaconda
+module load anaconda3/2023.03
+conda env list
+```
+
+Use the shared environment directly when possible:
+
+```bash
+module load anaconda3/2023.03
+conda activate /storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x
+
+python -c "import utils_2p; print(utils_2p.__file__)"
+```
+
+Create a personal Conda environment only when you need to test package changes,
+install a different version, or work outside PACE. See the
+[Processing Quickstart](processing-quickstart.md#rebuild-or-install-the-environment)
+for the environment YAML workflow.
+
+## Common Slurm commands
+
+PACE jobs are submitted through Slurm. The commands below are the ones most
+often used while running this repository's preprocessing jobs.
+
+| Command | Purpose |
+|---|---|
+| `sbatch script.sbatch` | Submit a batch job script. The pipeline's `submit_jobs.sh` uses this internally. |
+| `squeue -u "$USER"` | Show your queued and running jobs. |
+| `sacct -j <jobid>` | Inspect completed job accounting and exit status. |
+| `scancel <jobid>` | Cancel a queued or running job. |
+| `salloc ...` | Request an interactive allocation on a compute node. Useful for debugging, not for large unattended batches. |
+
+Examples:
+
+```bash
+squeue -u "$USER"
+
+sbatch --account=gts-fnajafi3 --qos=embers my_job.sbatch
+
+salloc --account=gts-fnajafi3 --qos=embers --cpus-per-task=4 --mem=32G --time=02:00:00
+```
+
+## QOS choices
+
+The lab examples usually use:
+
+- `embers`: preemptible QOS. Preemption means your job can be killed after
+  about an hour if those resources are needed elsewhere, so use it for short
+  jobs, jobs that are easy to rerun, or jobs where you do not care if they run
+  longer than that and get stopped.
+- `inferno`: paid, non-preemptible QOS. Use this when a long or expensive job
+  should not be interrupted and the allocation supports it.
+
+The preprocessing launcher accepts QOS arguments:
+
+```bash
+--qos embers
+--qos-cpu embers
+--qos-gpu embers
+```
+
+Use separate CPU/GPU QOS settings only when the cluster allocation or policy
+requires it.
+
+## Globus for file transfers
+
+Use Globus for large transfers between local machines, CEDAR, project storage,
+scratch, and other endpoints. It is more appropriate than browser upload or
+ad-hoc `scp` for large imaging sessions because it supports managed transfers,
+recursive directory copies, restart behavior, and task monitoring.
+
+Useful references:
+
+- [Globus CLI documentation](https://docs.globus.org/cli/)
+- [Globus transfer command reference](https://docs.globus.org/cli/reference/transfer/)
+- [PACE service overview, including Globus for file transfers](https://oit.gatech.edu/oit-spotlight-partnership-advanced-computing-environment-pace)
+
+Install the Globus CLI with `pipx` when possible. On PACE, this installs into
+your home directory, usually under `~/.local/`, and does not require modifying
+the shared Conda environments:
+
+```bash
+python -m pip install --user pipx
+python -m pipx ensurepath
+pipx install globus-cli
+globus login
+```
+
+On a local laptop or workstation, the same `pipx install globus-cli` workflow
+is preferred. If `pipx` is not available, install into an activated Python or
+Conda environment:
+
+```bash
+python -m pip install globus-cli
+globus login
+```
+
+For a recursive transfer, the command structure is:
+
+```bash
+globus transfer SOURCE_ENDPOINT:/path/to/source/ DEST_ENDPOINT:/path/to/destination/ --recursive
+globus task list
+globus task show <task-id>
+```
+
+Use Globus for bulk data movement, then run compute jobs on the filesystem
+where the data has been staged.

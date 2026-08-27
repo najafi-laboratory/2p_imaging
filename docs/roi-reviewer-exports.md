@@ -1,7 +1,7 @@
 # Interactive Manual ROI Labeler
 
 The interactive preprocessing summary lets a reviewer mark each ROI as
-**Good**, **Bad**, **Unsure**, or **Not labeled** by inspecting its morphology and
+**Good**, **Bad**, **Unsure**, or **Unlabeled** by inspecting its morphology and
 dF/F trace. It also provides filtering and sorting utilities of ROIs based on metrics calculated from morphology, dF/F, and inferred spikes, and summaries of motion correction for a given session.
 
 ## Interactive Reviewer Features and Layout
@@ -35,7 +35,7 @@ the trace and metric information elsewhere in the reviewer.
 
 When filters are applied, ROI masks that do not pass the active filter are
 removed from the FOV panel. They can be viewed again by clearing filters or
-resetting the active QC thresholds. This makes the FOV panel a direct visual
+using the control to show all ROIs. This makes the FOV panel a direct visual
 representation of the current filtered ROI population.
 
 Scroll and drag interactions support **zooming** and **panning** around dense ROI
@@ -54,24 +54,6 @@ The **manual label controls** assign the current ROI to one of four reviewer
 states: **Good**, **Bad**, **Unsure**, or **Not labeled**. The button
 corresponding to the current ROI's label is filled with color, and the keyboard
 shortcuts `G`, `B`, `U`, and `N` provide faster entry for repeated review.
-
-If the optional trained ROI model score stage has been run, the reviewer loads the
-model probability and model state from `roi_model_scores.h5`. By default,
-these values are suggestions for filtering, sorting, and bulk review; they do
-not label ROIs on page load. If the summary is generated with
-`--initialize-labels-from-roi-model-scores`, model states initialize the manual labels:
-`p(good ROI) >= good_threshold` opens as **Good**,
-`p(good ROI) <= bad_threshold` opens as **Bad**, and probabilities between
-those thresholds open as **Unsure**.
-
-The currently registered trained model is intended for cerebellar dendrite ROIs
-only. Treat its scores as target-specific suggestions, not as a general ROI
-quality score for other structures.
-
-The ROI model score stage reuses an existing `roi_model_scores.h5` by default.
-Use the pipeline flag `--force-roi-model-scores` or the direct predictor flag
-`--force` only when the checkpoint, target structure, or prediction code has
-changed and the scores need to be regenerated.
 
 The label counts summarize all ROIs in the session, not only the ROIs currently
 passing filters. When filters are applied, failing ROIs are automatically
@@ -104,11 +86,11 @@ the filter are automatically labeled **Bad**, but they are not visible or
 selectable simply because Bad ROIs are enabled in the Show ROIs menu. To view
 filtered-out ROIs, the relevant QC filter must be removed or reset.
 
-### 5. ROI Metric Filters
+### 5. ROI QC filters
 
-![ROI Metric Filters](images/roi-reviewer/roi-labeler-qc-filters.png)
+![ROI QC filters](images/roi-reviewer/roi-labeler-qc-filters.png)
 
-The **ROI Metric Filters** menu previews which ROIs pass the active QC thresholds.
+The **ROI QC Filters** menu previews which ROIs pass the active QC thresholds.
 By default, no thresholds are active and all ROIs pass. Editing a threshold
 field immediately updates the pass/fail count and the visible ROI set, but it
 does not change manual labels until **Apply Filters** is clicked. Empty
@@ -214,7 +196,7 @@ Fields omitted from the `filter` object are treated as unused thresholds.
 ![Sort ROIs](images/roi-reviewer/roi-labeler-sort-rois.png)
 
 The **Sort ROIs** dialog orders ROIs by original Suite2p index, row order, or
-metrics from the same categories used in the ROI Metric Filters: morphology,
+metrics from the same categories used in the ROI QC filters: morphology,
 fluorescence trace, and inferred-spike metrics. Sorting updates both the
 selected ROI navigation order and the stacked trace order, making it useful for
 reviewing ROIs with similar metric values together.
@@ -594,7 +576,7 @@ reasons.
 The summary stage creates:
 
 ```text
-<session>_preprocessing_summary.pdf
+<session>_processing_summary.pdf
 <session>_interactive_fov_roi_dff.html
 ```
 
@@ -604,7 +586,9 @@ local `2p_imaging` checkout is not required just to generate summaries. The
 first positional argument can be a processed session root or a concrete data
 directory, such as `suite2p/plane0`, `suite2p/`, `qc_results/`,
 `manual_qc_results/`, or a directory containing external ROI masks and
-fluorescence traces.
+fluorescence traces. For new sessions, use the native Suite2p layout. The
+`qc_results/` and `manual_qc_results/` layouts are deprecated compatibility
+inputs for older sessions.
 
 ### Required processed-session files
 
@@ -624,25 +608,11 @@ At minimum, the processed session must contain:
 existing `iscell.npy` is used when present for provenance, but the reviewer
 opens with all Suite2p ROIs available and not labeled.
 
-When the trained ROI model score stage has already been run, the session root may
-also contain:
-
-```text
-/path/to/processed/session/
-├── ROI_label.h5              # legacy good_roi/bad_roi label sets
-└── roi_model_scores.h5       # per-ROI model probability and state
-```
-
-The summary generator maps these files back onto original Suite2p ROI indices
-before embedding them in the interactive viewer. They are loaded as metrics by
-default. Pass `--initialize-labels-from-roi-model-scores` only when you want the reviewer
-to open with model-derived good/bad/unsure labels already applied.
-
-The summary generator can also read filtered `qc_results`-style outputs. When a
-session root is supplied in auto-detect mode, it uses `qc_results/` first when
-the following files are present, then `manual_qc_results/`, then native
-`suite2p/plane0/`, and finally an external-ROI layout if one is present at the
-session root:
+The summary generator can also read filtered `qc_results`-style outputs for
+older sessions. When a session root is supplied in auto-detect mode, native
+`suite2p/plane0/` is preferred for new sessions. Deprecated `qc_results/` and
+`manual_qc_results/` directories should be selected explicitly only when
+reviewing older pre-filtered outputs:
 
 ```text
 /path/to/processed/session/
@@ -655,9 +625,10 @@ session root:
 
 Use `--input-layout suite2p`, `--input-layout qc_results`,
 `--input-layout manual_qc_results`, or `--input-layout external_rois` to make
-the expected directory structure explicit. The command prints which layout it
-uses and the resolved paths for stat or ROI geometry, fluorescence, neuropil,
-optional `iscell.npy`, and inferred spikes.
+the expected directory structure explicit. Use `suite2p` for new pipeline
+outputs; `qc_results` and `manual_qc_results` are legacy layouts. The command
+prints which layout it uses and the resolved paths for stat or ROI geometry,
+fluorescence, neuropil, optional `iscell.npy`, and inferred spikes.
 
 ### Direct input directories and layout detection
 
@@ -666,19 +637,20 @@ clearer than always pointing to the session root. These calls are equivalent
 when the corresponding files exist:
 
 ```bash
-python -m utils_2p.preprocessing_summary /path/to/session
-python -m utils_2p.preprocessing_summary /path/to/session/suite2p
-python -m utils_2p.preprocessing_summary /path/to/session/suite2p/plane0
-python -m utils_2p.preprocessing_summary /path/to/session/qc_results
-python -m utils_2p.preprocessing_summary /path/to/session/manual_qc_results
+python -m utils_2p.processing_summary /path/to/session
+python -m utils_2p.processing_summary /path/to/session/suite2p
+python -m utils_2p.processing_summary /path/to/session/suite2p/plane0
+python -m utils_2p.processing_summary /path/to/session/qc_results
+python -m utils_2p.processing_summary /path/to/session/manual_qc_results
 ```
 
 When the argument already points to a concrete layout directory, that directory
 is used directly instead of searching the session root. For example,
 `/path/to/session/qc_results` is interpreted as a filtered-output layout, while
-`/path/to/session/suite2p/plane0` is interpreted as native Suite2p output. The
-default output directory is the resolved session root unless `--output-dir` is
-provided.
+`/path/to/session/suite2p/plane0` is interpreted as native Suite2p output.
+Filtered-output directories are legacy inputs; they are not created by default
+for new sessions. The default output directory is the resolved session root
+unless `--output-dir` is provided.
 
 ### External ROI masks from non-Suite2p tools
 
@@ -762,7 +734,7 @@ np.save("mean_func.npy", mean_func)
 Generate the viewer:
 
 ```bash
-python -m utils_2p.preprocessing_summary \
+python -m utils_2p.processing_summary \
   /path/to/external_roi_session \
   --input-layout external_rois
 ```
@@ -792,24 +764,22 @@ Suite2p's internal definitions for fields such as `compact` or `footprint`.
 When a real `stat.npy` already contains Suite2p-derived values, those values
 are preserved.
 
-To make the pipeline's morphology QC target-structure presets available in the
-viewer, the session should also contain:
+To make reviewer-side morphology presets available in the viewer, the session
+should contain:
 
 ```text
 /path/to/processed/session/
-├── preprocessing_pipeline_parameters.json
-└── qc_results/
-    └── qc_parameters.json
+└── processing_pipeline_parameters.json
 ```
 
-Without these morphology QC files, the summary can still be generated from the
-Suite2p files, but the target-structure preset metadata will be unavailable.
-`masks.h5` is optional and supplies anatomical images when available.
+Older sessions may instead store preset metadata in
+`qc_results/qc_parameters.json`. `masks.h5` is optional and supplies
+anatomical images when available.
 
 ### Optional cell-type or indicator labels
 
 The reviewer can display, filter, sort, and export optional cell-type or
-indicator labels. These are separate from manual ROI metric labels. They are meant
+indicator labels. These are separate from manual ROI QC labels. They are meant
 for labels such as red/inhibitory versus non-red/excitatory status, or an
 equivalent binary indicator classification from upstream processing.
 
@@ -864,7 +834,7 @@ indexed to `qc_results/stat.npy`, the summary tries to map them back to the
 original Suite2p ROI order.
 
 Cell-type labels can also be loaded after the HTML is open by using the
-**Upload cell-type labels** control in the ROI Metric Filters menu. The upload file
+**Upload cell-type labels** control in the ROI QC filters menu. The upload file
 can be CSV, TSV, or plain text with a delimited table. It must contain a header
 row and these columns:
 
@@ -905,15 +875,15 @@ uploading.
 ### Generate locally
 
 ```bash
-python -m utils_2p.preprocessing_summary /path/to/processed/session
+python -m utils_2p.processing_summary /path/to/processed/session
 ```
 
 The PDF and interactive HTML are written into the processed session directory.
 
-To force a specific input layout:
+To force a specific legacy input layout:
 
 ```bash
-python -m utils_2p.preprocessing_summary \
+python -m utils_2p.processing_summary \
   /path/to/processed/session \
   --input-layout qc_results
 ```
@@ -924,16 +894,14 @@ Submit summary generation as a small CPU job instead of running it on a PACE
 login node:
 
 ```bash
-export TWO_P_PYTHON=/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python
-
 sbatch \
   --account=gts-fnajafi3 \
   --qos=embers \
   --cpus-per-task=4 \
   --mem=24G \
   --time=02:00:00 \
-  --job-name=preprocessing_summary \
-  --wrap="$TWO_P_PYTHON -m utils_2p.preprocessing_summary /path/to/processed/session"
+  --job-name=processing_summary \
+  --wrap="module load anaconda3/2023.03 && conda activate /storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x && python -m utils_2p.processing_summary /path/to/processed/session"
 ```
 
 ### Generate as part of the preprocessing pipeline
@@ -941,19 +909,21 @@ sbatch \
 The full PACE preprocessing pipeline includes the `summary` stage by default:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/processed_outputs \
   --target-structure soma
 ```
 
-Change `--target-structure` to the appropriate preset, such as `dendrite` or
-`dendrite_relaxed`.
+Use `--target-structure soma` for soma/cell-body recordings or
+`--target-structure dendrite` for dendritic recordings. This selects the
+Suite2p default argument set; channel count and functional channel are inferred
+from the raw session files unless overridden.
 
 To regenerate only the summaries for an existing pipeline output:
 
 ```bash
-python -m utils_2p.preprocessing_qc_pipeline submit \
+python -m utils_2p.processing_pipeline submit \
   --session /path/to/raw/session \
   --output-root /path/to/existing_processed_outputs \
   --target-structure soma \
@@ -967,13 +937,8 @@ The processed session must be located at
 
 The interactive HTML contains the original Suite2p ROI set. By default, every
 Suite2p ROI opens as **not labeled**, and no morphology/QC filter is applied.
-The preprocessing pipeline's target structure is still shown, and the built-in
-`soma`, `dendrite`, and `dendrite_relaxed` filters remain available for manual
-testing in the viewer.
-
-If the trained ROI model score stage was run, the viewer also reports the target
-structure used to select the model checkpoint. This can differ from the
-pipeline target if a fallback checkpoint was supplied manually.
+Reviewer-side morphology presets, including relaxed dendrite filters when
+available, remain available for manual testing in the viewer.
 
 The reviewer can label ROIs manually, apply a morphology/custom metric filter,
 or use **Label all as ... → Not labeled** to return every visible Suite2p ROI
@@ -986,7 +951,7 @@ All ROIs detected by Suite2p
 Optional morphology/custom metric filters
         |
         v
-Manual Good / Bad / Unsure / Not labeled review
+Manual Good / Bad / Unsure / Unlabeled review
         |
         v
 reviewed HTML or roi_manual_labels.npy

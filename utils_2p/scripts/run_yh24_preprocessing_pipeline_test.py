@@ -17,11 +17,11 @@ import getpass
 from pathlib import Path
 
 
-from utils_2p.preprocessing_qc_pipeline import (
+from utils_2p.processing_pipeline import (
     PipelineConfig,
     SessionSpec,
-    generate_preprocessing_qc_jobs,
-    submit_preprocessing_qc_jobs,
+    generate_processing_jobs,
+    submit_processing_jobs,
 )
 
 
@@ -39,7 +39,7 @@ RAW_SESSION = Path(
 OUTPUT_ROOT = Path(f"/storage/scratch1/3/{getpass.getuser()}/2p_pipeline_tests/yh24_preprocessing")
 
 PYTHON_BIN = Path(
-    "/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python"
+    "/storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x/bin/python"
 )
 
 SLURM_ACCOUNT = "gts-fnajafi3"
@@ -54,7 +54,7 @@ SESSION = SessionSpec(
     nchannels=1,
     functional_chan=1,
     run_label=False,
-    stages=("prep", "suite2p", "qc", "dff", "summary"),
+    stages=("prep", "suite2p", "dff", "summary"),
 )
 
 CONFIG = PipelineConfig(
@@ -103,7 +103,7 @@ def main() -> None:
     print(f"Slurm QOS: {SLURM_QOS}")
 
     if mode == "generate":
-        generated = generate_preprocessing_qc_jobs(
+        generated = generate_processing_jobs(
             [SESSION],
             OUTPUT_ROOT,
             config=CONFIG,
@@ -113,7 +113,7 @@ def main() -> None:
         print(f"Submit with: bash {generated.submit_script}")
         return
 
-    submitted = submit_preprocessing_qc_jobs(
+    submitted = submit_processing_jobs(
         [SESSION],
         OUTPUT_ROOT,
         config=CONFIG,

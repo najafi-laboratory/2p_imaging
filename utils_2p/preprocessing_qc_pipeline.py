@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
-"""Generate and submit linked Slurm preprocessing/QC jobs for 2p sessions.
+"""Generate and submit linked Slurm processing jobs for 2p sessions.
 
 The default chain is:
 
-    prep (CPU) -> suite2p (high-memory CPU) -> qc (CPU)
-    -> roi_model_scores (CPU, optional trained ROI classifier)
-    -> label (GPU, two-channel only) -> dff (CPU) -> summary (CPU)
+    prep (CPU) -> suite2p (high-memory CPU) -> dff (CPU) -> summary (CPU)
 
-Use ``--run-oasis`` to insert the optional OASIS spike-inference stage between
-``dff`` and ``summary``.
+Optional stages include ROI model scoring, anatomical labeling, and OASIS spike
+inference. The currently available ROI model score checkpoint is intended only
+for cerebellar dendrite ROIs.
 
 Job files and provenance are written beneath the requested output root. Source
 raw sessions are read in place; processed session outputs are not written back
@@ -33,53 +32,27 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
-QC_PRESETS: dict[str, dict[str, Any]] = {
-    "soma": {
-        "range_skew": [-5.0, 5.0],
-        "max_connect": 1,
-        "range_aspect": [0.0, 5.0],
-        "range_footprint": [1.0, 2.0],
-        "range_compact": [0.0, 1.06],
-        "diameter": 6,
-        "source": "2p_post_process_module_202404/run_postprocess.py neurons preset",
-    },
-    "dendrite": {
-        "range_skew": [0.0, 2.0],
-        "max_connect": 2,
-        "range_aspect": [1.2, 5.0],
-        "range_footprint": [1.0, 2.0],
-        "range_compact": [1.06, 5.0],
-        "diameter": 6,
-        "source": "2p_post_process_module_202404/run_postprocess.py dendrites preset",
-    },
-    "dendrite_relaxed": {
-        "range_skew": [0.4, 2.5],
-        "max_connect": 30,
-        "range_aspect": [0.0, 55.0],
-        "range_footprint": [1.0, 2.0],
-        "range_compact": [1.0, 5.0],
-        "diameter": 6,
-        "source": "Joystick/PostProcessing/config.py cerebellum dendrite tuning",
-    },
-}
-
-QC_TARGET_ALIASES = {
-    "neuron": "soma",
-    "cerebellum_lax": "dendrite_relaxed",
-}
+TARGET_STRUCTURES = ("soma", "dendrite")
+LABEL_DIAMETER = 6
 
 SUITE2P_CONFIG_TARGETS = {
     "soma": "neuron",
-    "dendrite_relaxed": "dendrite",
+    "dendrite": "dendrite",
 }
 
 SUITE2P_SHARED_ENV_ROOT = Path("/storage/project/r-fnajafi3-0/shared/shared_envs")
-SUITE2P_VERSIONED_PYTHONS = {
-    "0.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_0x" / "bin" / "python",
-    "1.x": SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
+SUITE2P_VERSIONED_PYTHON_CANDIDATES = {
+    "0.x": (
+        SUITE2P_SHARED_ENV_ROOT / "2p_processing_suite2p_0x" / "bin" / "python",
+        SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_0x" / "bin" / "python",
+    ),
+    "1.x": (
+        SUITE2P_SHARED_ENV_ROOT / "2p_processing_suite2p_1x" / "bin" / "python",
+        SUITE2P_SHARED_ENV_ROOT / "2p_preprocessing_qc_suite2p_1x" / "bin" / "python",
+    ),
 }
 
-STAGE_ORDER = ("prep", "suite2p", "qc", "roi_model_scores", "label", "dff", "spikes", "summary")
+STAGE_ORDER = ("prep", "suite2p", "roi_model_scores", "label", "dff", "spikes", "summary")
 
 
 def _repo_root() -> Path:
@@ -99,7 +72,7 @@ def _default_processing_root() -> Path:
 
 def _default_postprocess_root() -> Path:
     packaged = _package_root() / "resources" / "postprocess_modules"
-    if (packaged / "QualControlDataIO.py").exists():
+    if (packaged / "LabelExcInh.py").exists():
         return packaged
     return _repo_root() / "2p_post_process_module_202404" / "modules"
 
@@ -110,20 +83,25 @@ def _current_python_bin() -> Path:
 
 def _suite2p_python_path(version: str) -> Path:
     try:
-        return SUITE2P_VERSIONED_PYTHONS[version]
+        candidates = SUITE2P_VERSIONED_PYTHON_CANDIDATES[version]
     except KeyError as error:
-        raise ValueError(f"suite2p_version must be one of {sorted(SUITE2P_VERSIONED_PYTHONS)}") from error
+        raise ValueError(
+            f"suite2p_version must be one of {sorted(SUITE2P_VERSIONED_PYTHON_CANDIDATES)}"
+        ) from error
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return candidates[0]
 
 
 def _env_path(name: str, default: Path | str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(os.environ.get(name, str(default))))).resolve()
 
 
-def normalize_qc_target(target_structure: str) -> str:
-    """Return the canonical user-facing QC target name."""
+def normalize_target_structure(target_structure: str) -> str:
+    """Return the canonical user-facing Suite2p target name."""
 
-    target = target_structure.strip()
-    return QC_TARGET_ALIASES.get(target, target)
+    return target_structure.strip()
 
 
 def _detect_imaging_channels(raw_path: Path) -> dict[str, int]:
@@ -169,7 +147,7 @@ class SessionSpec:
 
     raw_path: Path | str
     name: str | None = None
-    target_structure: str = "neuron"
+    target_structure: str = "soma"
     nchannels: int | None = None
     functional_chan: int | None = None
     denoise: int | None = None
@@ -184,9 +162,9 @@ class SessionSpec:
         raw_path = Path(self.raw_path).expanduser().resolve()
         if not raw_path.is_dir():
             raise FileNotFoundError(f"Raw session directory does not exist: {raw_path}")
-        target_structure = normalize_qc_target(self.target_structure)
-        if target_structure not in QC_PRESETS:
-            raise ValueError(f"target_structure must be one of {sorted(QC_PRESETS)}")
+        target_structure = normalize_target_structure(self.target_structure)
+        if target_structure not in TARGET_STRUCTURES:
+            raise ValueError(f"target_structure must be one of {list(TARGET_STRUCTURES)}")
         detected = _detect_imaging_channels(raw_path)
         nchannels = self.nchannels if self.nchannels is not None else detected["nchannels"]
         functional_chan = (
@@ -204,7 +182,7 @@ class SessionSpec:
         name = (self.name or raw_path.name).rstrip()
         if not name:
             raise ValueError(f"Cannot derive an output session name from {raw_path}")
-        run_label = self.run_label if self.run_label is not None else nchannels == 2
+        run_label = bool(self.run_label) if self.run_label is not None else False
         run_oasis = bool(self.run_oasis) if self.run_oasis is not None else False
         run_roi_model_scores = bool(self.run_roi_model_scores) if self.run_roi_model_scores is not None else False
         stages = _normalize_stages(
@@ -298,7 +276,7 @@ class PipelineConfig:
             if self.postprocess_root
             else _default_postprocess_root()
         )
-        if (postprocess / "modules" / "QualControlDataIO.py").exists():
+        if (postprocess / "modules" / "LabelExcInh.py").exists():
             postprocess = postprocess / "modules"
         configured_python = self.python_bin or os.environ.get("TWO_P_PYTHON")
         if configured_python:
@@ -339,7 +317,6 @@ class PipelineConfig:
             processing / "config_neuron.json",
             processing / "config_neuron_1chan.json",
             processing / "config_dendrite.json",
-            postprocess / "QualControlDataIO.py",
             postprocess / "LabelExcInh.py",
         ):
             if not required.exists():
@@ -435,7 +412,7 @@ def _normalize_stages(
     if len(set(requested)) != len(requested):
         raise ValueError("Each processing stage may be selected only once")
     if "label" in requested and not run_label:
-        raise ValueError("The label stage requires a two-channel session unless run_label=True is specified")
+        raise ValueError("The label stage requires --run-label")
     if "roi_model_scores" in requested and not run_roi_model_scores:
         raise ValueError("The roi_model_scores stage requires --run-roi-model-scores")
     return tuple(stage for stage in STAGE_ORDER if stage in requested)
@@ -517,7 +494,7 @@ def _sbatch_text(
             f"mkdir -p {_quote(run_dir / 'logs')} {_quote(run_dir / 'home')} {_quote(config.numba_cache_dir)} {_quote(matplotlib_cache_dir)}",
             f"cd {_quote(run_dir)}",
             (
-                f"{_quote(config.python_bin)} -m utils_2p.preprocessing_qc_pipeline run-stage "
+                f"{_quote(config.python_bin)} -m utils_2p.processing_pipeline run-stage "
                 f"--manifest {_quote(manifest)} --index \"${{SESSION_INDEX}}\" --stage {stage}"
             ),
             "",
@@ -552,7 +529,7 @@ def _write_submit_script(
     return tuple(commands)
 
 
-def generate_preprocessing_qc_jobs(
+def generate_processing_jobs(
     sessions: Sequence[SessionSpec | Path | str],
     output_root: Path | str,
     *,
@@ -577,8 +554,13 @@ def generate_preprocessing_qc_jobs(
     )
     settings = (config or PipelineConfig()).normalized(output)
     requested = resources or SlurmResources()
-    run_label = run_name or datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_dir = output / ".preprocessing_qc_jobs" / f"{run_label}_{settings.username}"
+    if run_name:
+        run_label = run_name
+    elif len(normalized_sessions) == 1:
+        run_label = f"{normalized_sessions[0].name}_processing"
+    else:
+        run_label = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = output / ".processing_jobs" / f"{run_label}_{settings.username}"
     run_dir.mkdir(parents=True, exist_ok=False)
     (run_dir / "logs").mkdir()
 
@@ -587,7 +569,6 @@ def generate_preprocessing_qc_jobs(
         record = _jsonable(asdict(session))
         record["output_path"] = str(output / (session.name or "session"))
         record["stages"] = list(_stage_sequence(session))
-        record["qc_parameters"] = QC_PRESETS[session.target_structure]
         session_records.append(record)
     manifest_data = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
@@ -611,7 +592,22 @@ def generate_preprocessing_qc_jobs(
     return GeneratedRun(run_dir, manifest, submit_script, stage_scripts, commands)
 
 
-def submit_preprocessing_qc_jobs(
+def generate_preprocessing_qc_jobs(
+    sessions: Sequence[SessionSpec | Path | str],
+    output_root: Path | str,
+    *,
+    config: PipelineConfig | None = None,
+    resources: SlurmResources | None = None,
+    run_name: str | None = None,
+) -> GeneratedRun:
+    """Compatibility alias for :func:`generate_processing_jobs`."""
+
+    return generate_processing_jobs(
+        sessions, output_root, config=config, resources=resources, run_name=run_name
+    )
+
+
+def submit_processing_jobs(
     sessions: Sequence[SessionSpec | Path | str],
     output_root: Path | str,
     *,
@@ -621,7 +617,7 @@ def submit_preprocessing_qc_jobs(
 ) -> dict[str, dict[str, str]]:
     """Generate and immediately submit isolated dependency chains per session."""
 
-    generated = generate_preprocessing_qc_jobs(
+    generated = generate_processing_jobs(
         sessions, output_root, config=config, resources=resources, run_name=run_name
     )
     manifest_data = json.loads(generated.manifest.read_text(encoding="ascii"))
@@ -641,6 +637,21 @@ def submit_preprocessing_qc_jobs(
     submission_record = generated.run_dir / "submitted_jobs.json"
     submission_record.write_text(json.dumps(submitted, indent=2) + "\n", encoding="ascii")
     return submitted
+
+
+def submit_preprocessing_qc_jobs(
+    sessions: Sequence[SessionSpec | Path | str],
+    output_root: Path | str,
+    *,
+    config: PipelineConfig | None = None,
+    resources: SlurmResources | None = None,
+    run_name: str | None = None,
+) -> dict[str, dict[str, str]]:
+    """Compatibility alias for :func:`submit_processing_jobs`."""
+
+    return submit_processing_jobs(
+        sessions, output_root, config=config, resources=resources, run_name=run_name
+    )
 
 
 def _load_module(name: str, path: Path):
@@ -1042,7 +1053,7 @@ def _run_prep(data: dict[str, Any], session: dict[str, Any]) -> None:
         print(f"Copied Bpod file from {bpod_source}")
     else:
         print("No unambiguous Bpod .mat file found; continuing without bpod_session_data.mat")
-    provenance = output / "preprocessing_pipeline_parameters.json"
+    provenance = output / "processing_pipeline_parameters.json"
     provenance.write_text(json.dumps(session, indent=2) + "\n", encoding="ascii")
 
 
@@ -1085,27 +1096,6 @@ def _run_suite2p(data: dict[str, Any], session: dict[str, Any]) -> None:
             print(f"Suite2p logger setup skipped: {error}")
         settings, new_db = _suite2p_v1_settings_db(ops, db)
         run_s2p(db=new_db, settings=settings)
-
-
-def _run_qc(data: dict[str, Any], session: dict[str, Any]) -> None:
-    import numpy as np
-
-    ops = _read_ops(session)
-    qc = _load_module(
-        "quality_control",
-        _postprocess_module_path(data["pipeline"]["postprocess_root"], "QualControlDataIO.py"),
-    )
-    params = session["qc_parameters"]
-    qc.run(
-        ops,
-        np.asarray(params["range_skew"], dtype="float32"),
-        np.asarray(params["max_connect"], dtype="float32"),
-        np.asarray(params["range_aspect"], dtype="float32"),
-        np.asarray(params["range_compact"], dtype="float32"),
-        np.asarray(params["range_footprint"], dtype="float32"),
-    )
-    path = Path(session["output_path"]) / "qc_results" / "qc_parameters.json"
-    path.write_text(json.dumps(params, indent=2) + "\n", encoding="ascii")
 
 
 def _run_roi_model_scores(data: dict[str, Any], session: dict[str, Any]) -> None:
@@ -1167,7 +1157,7 @@ def _run_label(data: dict[str, Any], session: dict[str, Any]) -> None:
         return cellpose_constructor(*args, **kwargs)
 
     label.models.Cellpose = gpu_cellpose
-    label.run(ops, int(session["qc_parameters"]["diameter"]))
+    label.run(ops, LABEL_DIAMETER)
 
 
 def _run_dff(data: dict[str, Any], session: dict[str, Any]) -> None:
@@ -1190,9 +1180,9 @@ def _run_spikes(data: dict[str, Any], session: dict[str, Any]) -> None:
 
 
 def _run_summary(data: dict[str, Any], session: dict[str, Any]) -> None:
-    from utils_2p import preprocessing_summary as summary
+    from utils_2p import processing_summary as summary
 
-    pdf, html = summary.create_preprocessing_summary(
+    pdf, html = summary.create_processing_summary(
         session["output_path"],
         input_layout=str(data["pipeline"].get("summary_input_layout", "suite2p")),
         initialize_labels_from_roi_model_scores=bool(
@@ -1202,7 +1192,7 @@ def _run_summary(data: dict[str, Any], session: dict[str, Any]) -> None:
             )
         ),
     )
-    print(f"Saved preprocessing PDF: {pdf}")
+    print(f"Saved processing PDF: {pdf}")
     print(f"Saved interactive HTML: {html}")
 
 
@@ -1221,7 +1211,6 @@ def run_stage(manifest: Path | str, index: int, stage: str) -> None:
     handlers = {
         "prep": _run_prep,
         "suite2p": _run_suite2p,
-        "qc": _run_qc,
         "roi_model_scores": _run_roi_model_scores,
         "label": _run_label,
         "dff": _run_dff,
@@ -1247,7 +1236,7 @@ def _specs_from_args(args: argparse.Namespace) -> list[SessionSpec]:
             functional_chan=args.functional_chan,
             denoise=args.denoise,
             spatial_scale=args.spatial_scale,
-            run_label=False if args.no_label else None,
+            run_label=bool(args.run_label) and not args.no_label,
             run_oasis=args.run_oasis,
             run_roi_model_scores=args.run_roi_model_scores,
             stages=args.stages,
@@ -1302,8 +1291,12 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--target-structure",
         default="soma",
-        metavar="TARGET",
-        help=f"Anatomical target / QC preset. Supported targets: {', '.join(sorted(QC_PRESETS))}.",
+        choices=TARGET_STRUCTURES,
+        help=(
+            "Suite2p target preset. Supported targets: soma, dendrite. "
+            "Channel settings are inferred from the raw session files unless "
+            "--nchannels or --functional-chan is supplied."
+        ),
     )
     parser.add_argument(
         "--nchannels",
@@ -1330,11 +1323,26 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Override Suite2p spatial scale. Default: preserve target config value.",
     )
-    parser.add_argument("--no-label", action="store_true", help="Skip anatomical Cellpose labeling stage.")
+    parser.add_argument(
+        "--run-label",
+        action="store_true",
+        help=(
+            "Add the optional anatomical Cellpose labeling stage. This is disabled "
+            "by default for new sessions."
+        ),
+    )
+    parser.add_argument(
+        "--no-label",
+        action="store_true",
+        help="Deprecated no-op for the default path; labeling is disabled unless --run-label is passed.",
+    )
     parser.add_argument(
         "--stages",
         default=None,
-        help="Comma-separated stages to submit in dependency order. Default: full pipeline.",
+        help=(
+            "Comma-separated stages to submit in dependency order. Default: "
+            "prep,suite2p,dff,summary plus explicitly enabled optional stages."
+        ),
     )
     parser.add_argument("--run-name", default=None)
     parser.add_argument("--repo-root", default=None)
@@ -1342,7 +1350,7 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--postprocess-root", default=None)
     parser.add_argument(
         "--suite2p-version",
-        choices=sorted(SUITE2P_VERSIONED_PYTHONS),
+        choices=sorted(SUITE2P_VERSIONED_PYTHON_CANDIDATES),
         default="1.x",
         help="Default Suite2p environment to use when --python-bin is not supplied.",
     )
@@ -1421,7 +1429,7 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
         dest="run_roi_model_scores",
         action="store_true",
         help=(
-            "Add the optional trained ROI model scoring stage after qc. "
+            "Add the optional trained ROI model scoring stage after Suite2p. "
             "This writes roi_model_scores.h5 and updates ROI_label.h5. "
             "The currently available trained model is intended for cerebellar dendrite ROIs only."
         ),
@@ -1513,7 +1521,8 @@ def _add_generation_args(parser: argparse.ArgumentParser) -> None:
         default="suite2p",
         help=(
             "ROI/trace layout used by generated summary stages. Default: suite2p, "
-            "which embeds all original Suite2p ROIs instead of the post-QC subset."
+            "which embeds all original Suite2p ROIs. qc_results and manual_qc_results "
+            "are deprecated legacy layouts for older sessions."
         ),
     )
     parser.add_argument(
@@ -1550,13 +1559,13 @@ def main() -> None:
         parser.error("Supply --session at least once or use --sessions-file")
     config = _pipeline_config_from_args(args)
     if args.command == "generate":
-        generated = generate_preprocessing_qc_jobs(
+        generated = generate_processing_jobs(
             specs, args.output_root, config=config, run_name=args.run_name
         )
         print(f"Generated job directory: {generated.run_dir}")
         print(f"Submit with: bash {generated.submit_script}")
     else:
-        jobs = submit_preprocessing_qc_jobs(
+        jobs = submit_processing_jobs(
             specs, args.output_root, config=config, run_name=args.run_name
         )
         print(json.dumps(jobs, indent=2))

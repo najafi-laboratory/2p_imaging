@@ -23,6 +23,7 @@ exclude = [
 
 [tool.setuptools.package-data]
 utils_2p = [
+  "environment-processing-suite2p-*.yml",
   "environment-preprocessing-qc-suite2p-*.yml",
   "resources/suite2p_configs/*.json",
   "resources/postprocess_modules/*.py",

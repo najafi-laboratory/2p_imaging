@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from utils_2p.preprocessing_qc_pipeline import (
+from utils_2p.processing_pipeline import (
     _default_postprocess_root,
     _default_processing_root,
     _current_python_bin,
@@ -385,9 +385,12 @@ def _session_matches_processed_output(session: dict[str, Any], processed_session
 def _find_existing_manifest(processed_session: Path, output_root: Path | None) -> tuple[Path, int] | None:
     search_roots: list[Path] = []
     if output_root is not None:
+        search_roots.append(output_root / ".processing_jobs")
         search_roots.append(output_root / ".preprocessing_qc_jobs")
     search_roots.extend(
         [
+            processed_session / ".processing_jobs",
+            processed_session.parent / ".processing_jobs",
             processed_session / ".preprocessing_qc_jobs",
             processed_session.parent / ".preprocessing_qc_jobs",
         ]

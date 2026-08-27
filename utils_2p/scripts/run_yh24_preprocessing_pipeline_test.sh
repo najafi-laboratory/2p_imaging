@@ -6,7 +6,7 @@ set -euo pipefail
 
 RAW_SESSION="${RAW_SESSION:-/storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/YH24LG_Processed/YH24LG_CRBL_lobulev_20250609_EBC-442}"
 OUTPUT_ROOT="${OUTPUT_ROOT:-/storage/scratch1/3/${USER}/2p_pipeline_tests/yh24_preprocessing}"
-PYTHON_BIN="${TWO_P_PYTHON:-/storage/project/r-fnajafi3-0/shared/shared_envs/2p_preprocessing_qc_suite2p_1x/bin/python}"
+PYTHON_BIN="${TWO_P_PYTHON:-/storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x/bin/python}"
 ACCOUNT="${TWO_P_SLURM_ACCOUNT:-gts-fnajafi3}"
 QOS="${TWO_P_SLURM_QOS:-embers}"
 RUN_NAME="${RUN_NAME:-yh24_lobulev_20250609_pipeline_test}"
@@ -30,7 +30,7 @@ Default test session:
 
 This session is treated as a functional-only YH24LG cerebellar dendrite/EBC
 recording, so the full chain is:
-  prep -> suite2p -> qc -> dff -> summary
+  prep -> suite2p -> dff -> summary
 
 The anatomical label stage is skipped because this default session has only one
 functional imaging channel present.
@@ -76,7 +76,7 @@ echo "Python: ${PYTHON_BIN}"
 echo "Slurm account: ${ACCOUNT}"
 echo "Slurm QOS: ${QOS}"
 
-"${PYTHON_BIN}" -m utils_2p.preprocessing_qc_pipeline "${MODE}" \
+"${PYTHON_BIN}" -m utils_2p.processing_pipeline "${MODE}" \
     --session "${RAW_SESSION}" \
     --output-root "${OUTPUT_ROOT}" \
     --run-name "${RUN_NAME}" \
@@ -84,7 +84,7 @@ echo "Slurm QOS: ${QOS}"
     --nchannels 1 \
     --functional-chan 1 \
     --no-label \
-    --stages prep,suite2p,qc,dff,summary \
+    --stages prep,suite2p,dff,summary \
     --python-bin "${PYTHON_BIN}" \
     --account "${ACCOUNT}" \
     --qos "${QOS}"

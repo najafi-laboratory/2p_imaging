@@ -37,11 +37,30 @@ def run_cellpose(
         diams=diameter)
     return masks_anat
 
+# build a Suite2p-style integer mask image from stat.npy.
+def _masks_from_suite2p_stat(ops):
+    stat_path = os.path.join(ops['save_path0'], 'suite2p', 'plane0', 'stat.npy')
+    stat = np.load(stat_path, allow_pickle=True)
+    masks = np.zeros_like(ops['meanImg'], dtype=np.int32)
+    for roi_index, roi in enumerate(stat, start=1):
+        ypix = np.asarray(roi['ypix'], dtype=np.int64)
+        xpix = np.asarray(roi['xpix'], dtype=np.int64)
+        valid = (
+            (ypix >= 0)
+            & (ypix < masks.shape[0])
+            & (xpix >= 0)
+            & (xpix < masks.shape[1])
+        )
+        masks[ypix[valid], xpix[valid]] = roi_index
+    return masks
+
 # read and cut mask in ops.
 def get_mask(ops):
-    masks_npy = np.load(
-        os.path.join(ops['save_path0'], 'qc_results', 'masks.npy'),
-        allow_pickle=True)
+    legacy_masks = os.path.join(ops['save_path0'], 'qc_results', 'masks.npy')
+    if os.path.exists(legacy_masks):
+        masks_npy = np.load(legacy_masks, allow_pickle=True)
+    else:
+        masks_npy = _masks_from_suite2p_stat(ops)
     x1 = ops['xrange'][0]
     x2 = ops['xrange'][1]
     y1 = ops['yrange'][0]
