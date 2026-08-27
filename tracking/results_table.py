@@ -22,6 +22,7 @@ Use :func:`cs_sil_by_ucid` to get a properly UCID-indexed array.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import numpy as np
@@ -76,18 +77,31 @@ def _optional_per_roi(quality_metrics, key, n_roi) -> np.ndarray:
 # --- session naming ---
 
 
-def session_labels_from_paths(paths_stat) -> tuple[list[str], list[str]]:
-    """Derive (session_name, date) from suite2p stat.npy paths.
+def session_dir(stat_path) -> Path:
+    """Session folder for a stat.npy path.
 
-    Assumes the lab layout ``.../<session_folder>/suite2p/plane0/stat.npy``,
-    where the session folder looks like ``SA11_20250806``.  Falls back to the
-    folder name itself when it doesn't split on '_'.
+    Handles both layouts on the drive: ``<session>/qc_results/stat.npy`` and
+    ``<session>/suite2p/plane0/stat.npy``.
+    """
+    for d in Path(stat_path).parents:
+        if (d / "bpod_session_data.mat").exists():
+            return d
+    return Path(stat_path).parents[1]
+
+
+def session_labels_from_paths(paths_stat) -> tuple[list[str], list[str]]:
+    """Derive (session_name, date) from stat.npy paths.
+
+    The session name is the session folder (``SA11_20250806``,
+    ``VTYH03_PPC_20250106_3331Random``).  The date is the first 8-digit run in
+    that name, falling back to the last underscore-separated field.
     """
     names, dates = [], []
     for p in paths_stat:
-        name = Path(p).parts[-3]
+        name = session_dir(p).name
         names.append(name)
-        dates.append(name.split("_")[-1] if "_" in name else name)
+        m = re.search(r"\d{8}", name)
+        dates.append(m.group(0) if m else name.split("_")[-1])
     return names, dates
 
 
@@ -283,6 +297,12 @@ def build_match_matrix(df, value="roi_idx", session_key="session_name") -> pd.Da
         vals = list(x)
         return vals[0] if len(vals) == 1 else ", ".join(str(v) for v in vals)
 
+    # A non-unique session_key would silently merge sessions into one column.
+    per_session = df.drop_duplicates("session_idx")
+    if per_session[session_key].duplicated().any():
+        df = df.copy()
+        df[session_key] = df[session_key] + "#" + df["session_idx"].astype(str)
+
     wide = df.pivot_table(
         index="ucid", columns=session_key, values=value, aggfunc=_join
     )
@@ -296,6 +316,165 @@ def build_match_matrix(df, value="roi_idx", session_key="session_name") -> pd.Da
         if col in meta.columns:
             wide.insert(0, col, meta[col])
     return wide.sort_index()
+
+
+# --- manual ROI review labels ---
+
+LABEL_NAMES = {0.0: "bad", 1.0: "good", 2.0: "unsure"}
+
+
+def load_manual_labels(stat_path) -> np.ndarray | None:
+    """Manual ROI-review labels for one session, or None when it has none.
+
+    The reviewer writes ``roi_manual_labels.npy`` as a 1-D float array with one
+    entry per **original suite2p ROI, in stat.npy order**: NaN not labeled,
+    0 bad, 1 good, 2 unsure.  That is the same indexing ROICaT uses, so the
+    array lines up element-for-element with ``roi_idx`` in the ROI table.
+
+    Looks next to stat.npy first (the canonical suite2p/plane0 location), then
+    at the session root.
+    """
+    sess = session_dir(stat_path)
+    for cand in (
+        Path(stat_path).parent / "roi_manual_labels.npy",
+        sess / "suite2p" / "plane0" / "roi_manual_labels.npy",
+        sess / "roi_manual_labels.npy",
+    ):
+        if cand.exists():
+            return np.load(cand, allow_pickle=False).astype(float).ravel()
+    return None
+
+
+def n_roi_from_stat(stat_path) -> int:
+    """Number of ROIs in a stat.npy (loads it; prefer passing counts you have)."""
+    return len(np.load(stat_path, allow_pickle=True))
+
+
+def attach_manual_labels(
+    df, paths_stat, n_roi_bySession=None, verbose=True
+) -> pd.DataFrame:
+    """Join manual review labels onto the ROI table.
+
+    Adds per-ROI ``manual_label`` (float, NaN when unlabeled or the session has
+    no label file) and ``manual_label_str``, plus per-UCID rollups
+    ``n_good`` / ``n_bad`` / ``n_unsure`` / ``n_labeled`` and a ``ucid_label``
+    consensus across every session in the cluster:
+
+        good      at least one good, no bad
+        bad       at least one bad, no good
+        conflict  both good and bad — the tracking or the review disagrees
+        unsure    only unsure labels
+        unlabeled no labeled ROI anywhere in the cluster
+
+    ``paths_stat`` must be the post-filter list the table was built from
+    (``results_all['input_data']['paths_stat']``), so ``session_idx`` indexes it.
+
+    ``n_roi_bySession`` is the ROI count ROICaT saw per session — pass
+    ``[len(x) for x in results_all['clusters']['labels_bySession']]``.  It is
+    only used to verify alignment; when omitted each stat.npy is loaded to count.
+
+    Order does not matter: ``roi_manual_labels.npy`` is indexed by **original
+    suite2p ROI**, and those indices never change, so you can review sessions
+    long after the tracking run and just re-run this join.  What must match is
+    the stat.npy ROICaT was tracked on — running the tracking on a QC-filtered
+    stat (``qc_results`` / ``manual_qc_results``, which hold ROI *subsets*)
+    breaks the correspondence, and that is what the length check below catches.
+    """
+    df = df.copy()
+    labels = np.full(len(df), np.nan)
+    found = []
+    for s, p in enumerate(paths_stat):
+        lab = load_manual_labels(p)
+        if lab is None:
+            continue
+        # Strict equality, not a bounds check: a QC-filtered stat.npy holds a
+        # subset of the suite2p ROIs, so every subset index is in range for the
+        # full-length label array and a bounds check would join silently wrong.
+        n_roi = (
+            n_roi_bySession[s] if n_roi_bySession is not None else n_roi_from_stat(p)
+        )
+        if len(lab) != n_roi:
+            raise ValueError(
+                f"session {s} ({session_dir(p).name}): ROICaT tracked "
+                f"{n_roi} ROIs from {Path(p).parent.name}/stat.npy but "
+                f"roi_manual_labels.npy has {len(lab)} entries. Labels are "
+                f"indexed by original suite2p ROI, so the tracking must be run "
+                f"on suite2p/plane0/stat.npy (set STAT_SOURCE='suite2p/plane0') "
+                f"for the two to line up."
+            )
+        mask = df["session_idx"].to_numpy() == s
+        idx = df.loc[mask, "roi_idx"].to_numpy()
+        labels[mask] = lab[idx]
+        found.append(session_dir(p).name)
+
+    df["manual_label"] = labels
+    df["manual_label_str"] = (
+        pd.Series(labels, index=df.index).map(LABEL_NAMES).fillna("unlabeled")
+    )
+
+    grp = df.groupby("ucid")["manual_label"]
+    df["n_good"] = grp.transform(lambda x: (x == 1).sum()).astype(int)
+    df["n_bad"] = grp.transform(lambda x: (x == 0).sum()).astype(int)
+    df["n_unsure"] = grp.transform(lambda x: (x == 2).sum()).astype(int)
+    df["n_labeled"] = df["n_good"] + df["n_bad"] + df["n_unsure"]
+
+    consensus = np.select(
+        [
+            (df["n_good"] > 0) & (df["n_bad"] > 0),
+            df["n_good"] > 0,
+            df["n_bad"] > 0,
+            df["n_unsure"] > 0,
+        ],
+        ["conflict", "good", "bad", "unsure"],
+        default="unlabeled",
+    )
+    df["ucid_label"] = consensus
+
+    if verbose:
+        n_sess = len(paths_stat)
+        print(
+            f"manual labels found for {len(found)}/{n_sess} session(s): "
+            f"{', '.join(found) if found else 'none'}"
+        )
+        counts = df.drop_duplicates("ucid")["ucid_label"].value_counts()
+        print(
+            "UCIDs by consensus label: "
+            + ", ".join(f"{k}={v}" for k, v in counts.items())
+        )
+    return df
+
+
+def filter_by_manual_label(df, policy="good", scope="cluster") -> pd.DataFrame:
+    """Filter the labeled ROI table.
+
+    policy : 'good' | 'good_or_unsure' | 'not_bad'
+        Which per-ROI labels pass.  'not_bad' also passes unlabeled ROIs.
+    scope : 'cluster' | 'roi'
+        'cluster' keeps every ROI of a UCID whose consensus passes — this is
+        what you want when only some sessions were reviewed, since the point of
+        tracking is to carry one session's judgement to the others.
+        'roi' drops individual ROIs on their own label, leaving clusters partial.
+
+    Requires :func:`attach_manual_labels` to have run.
+    """
+    if "manual_label" not in df.columns:
+        raise ValueError("run attach_manual_labels() first")
+
+    passing = {
+        "good": {"good"},
+        "good_or_unsure": {"good", "unsure"},
+        "not_bad": {"good", "unsure", "unlabeled"},
+    }
+    if policy not in passing:
+        raise ValueError(f"policy must be one of {sorted(passing)}")
+    ok = passing[policy]
+
+    if scope == "roi":
+        return df[df["manual_label_str"].isin(ok)].reset_index(drop=True)
+    if scope == "cluster":
+        # 'conflict' never passes: it means the cluster is not trustworthy.
+        return df[df["ucid_label"].isin(ok)].reset_index(drop=True)
+    raise ValueError("scope must be 'cluster' or 'roi'")
 
 
 # --- export ---

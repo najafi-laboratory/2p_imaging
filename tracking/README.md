@@ -17,7 +17,7 @@ This module tracks the same neurons across imaging sessions. It takes the Suite2
 | `interactive_tracking.ipynb` | The pipeline itself. Step-by-step, parameter-tunable, with a visualization after nearly every step. This is what you run. |
 | `pipeline.py` | `filter_sessions_by_overlap()` — screens sessions for co-registerability before the real run, so poorly-overlapping sessions never enter the pipeline. |
 | `roi_tracking_qc.py` | Per-UCID cross-session QC figures, exportable as a multipage PDF or a self-contained HTML viewer with a UCID picker. |
-| `results_table.py` | Flattens the nested label lists and quality-metric arrays into two pandas tables: one row per tracked ROI, and a UCID × session match matrix. |
+| `results_table.py` | Flattens the nested label lists and quality-metric arrays into two pandas tables: one row per tracked ROI, and a UCID × session match matrix. Also joins manual ROI-review labels onto the tracking output. |
 
 ## Why the session-overlap filter exists
 
@@ -59,15 +59,46 @@ Run the notebook from inside this directory — `import pipeline` and `import ro
 
 ### 1. Paths and session discovery
 
-Point `dir_allOuterFolders` at the batch directory, e.g.
+Point `dir_allOuterFolders` at the mouse or batch directory, e.g.
 
 ```
-/Volumes/Elements/Najafi/2P_Imaging/SA11_LG/batches/sessions_01-10
+/Volumes/Elements/Najafi/2P_Imaging/SA11_LG
 ```
 
-The notebook globs for `stat.npy` at depth ≤ 10, drops anything under `EXCLUDE_DIRS` (`suite2p`, `qc_results` — the latter contains copies that would otherwise be treated as extra sessions), derives each `ops.npy` as `stat.npy`'s grandparent sibling, and asserts both files exist before handing anything to ROICaT.
+The notebook globs for `stat.npy` at depth ≤ 10 and then has to decide which of the hits are actually sessions. A processed session can hold **three** copies of `stat.npy` — `suite2p/plane0/`, `qc_results/`, and `manual_qc_results/` — and the QC folders hold ROI *subsets*, not the full segmentation. On `SA11_LG`, 12 of 33 sessions carry all three, so a naive glob returns 114 paths for 33 sessions and hands ROICaT the same session up to three times.
 
-A helper cell reads `bpod_session_data.mat` next to each session and tags it `VG` / `ST` / `unknown` from `SessionData.TrialSettings[0].GUI.SelfTimedMode`. These tags are cosmetic — they only feed panel titles in the QC figures and contact sheets — but they make it obvious at a glance when a batch mixes task types.
+Discovery therefore groups every hit by session folder and keeps exactly one per session, chosen by `STAT_SOURCE`:
+
+```python
+STAT_SOURCE = 'suite2p/plane0'   # the only source present in every session
+EXCLUDE_DIRS = {'batches', 'results', 'memmap'}
+```
+
+**Leave `STAT_SOURCE` on `suite2p/plane0` unless you have a specific reason not to.** It is the only source present in every session, and it is the indexing that `roi_manual_labels.npy` is written against — see [Joining manual ROI review labels](#joining-manual-roi-review-labels).
+
+`ops.npy` is resolved separately, because the QC folders contain `stat.npy` but no `ops.npy`: the notebook looks beside the chosen `stat.npy`, then at `<session>/suite2p/plane0/ops.npy`, then at `<session>/ops.npy`, and prints which fallback it used. Sessions with no usable source are collected and reported by name rather than tripping an assert, so one malformed session no longer stops the cell:
+
+```
+33 sessions found (from 114 stat files, source: suite2p/plane0)
+  SA11_20250806
+  ...
+2 session(s) skipped:
+  SA11_20250923: no suite2p/plane0 (has: manual_qc_results, qc_results)
+```
+
+A duplicate-path assert still fires if two sessions somehow resolve to the same file — a repeated session silently corrupts the clustering, so that one stays fatal.
+
+Session folders are located by walking up from `stat.npy` to the directory containing `bpod_session_data.mat`, which handles both layouts on the drive (`<session>/qc_results/stat.npy` and `<session>/suite2p/plane0/stat.npy`).
+
+A helper cell then reads that `bpod_session_data.mat` and tags each session by stimulus type:
+
+| dataset | tag | read from |
+| --- | --- | --- |
+| joystick | `VG` / `ST` | `SessionData.TrialSettings[0].GUI.SelfTimedMode` |
+| passive | `random` / `fix_jitter_odd` | `SessionData.RandomTypes` / `OddballTypes` |
+| neither | `unknown` | no `bpod_session_data.mat`, or no recognized fields |
+
+A passive `3331Random` session flags every trial random with no oddballs; `4131FixJitterOdd` interleaves ~950 oddball trials over a fix/jitter split and still carries ~100 random trials, so the discriminator is `all(RandomTypes == 1)`, not `any`. These tags are cosmetic — they only feed panel titles in the QC figures and contact sheets — but they make it obvious at a glance when a batch mixes protocols.
 
 `um_per_pixel` is the one genuinely important parameter at this stage: a scalar, or a per-session list if resolution differs.
 
@@ -138,8 +169,8 @@ roi_table = rt.build_roi_table(
 | --- | --- |
 | `ucid` | cluster ID, stable across sessions |
 | `session_idx` | 0-based index in *filtered* (post-overlap-screen) session order |
-| `session_name`, `date` | e.g. `SA11_20250811`, `20250811` — derived from `paths_stat` |
-| `stim_type` | `VG` / `ST` / `unknown`, when passed in |
+| `session_name`, `date` | e.g. `SA11_20250811`, `20250811` — the session folder name, and the first 8-digit run within it |
+| `stim_type` | `VG` / `ST` / `random` / `fix_jitter_odd` / `unknown`, when passed in |
 | `roi_idx` | **index into that session's `stat.npy`** — the join key for dF/F |
 | `roi_idx_global` | index into the session-concatenated ROI vector, which is how `sample_silhouette` and `sample_probabilities` are indexed |
 | `n_sessions_present` | distinct sessions this UCID appears in |
@@ -177,11 +208,70 @@ rt.export_tables(roi_table, str(Path(dir_save) / name_save))
 
 These are distinct from the pre-existing `*.matched_neurons_*.csv` and `*.quality_metrics_summary.csv` in the results folder, which are aggregate counts and metric distributions with no per-ROI rows.
 
+## Joining manual ROI review labels
+
+The [interactive ROI reviewer](https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/) writes `roi_manual_labels.npy`: a 1-D float array with one entry per **original Suite2p ROI**, in `stat.npy` order — `NaN` not labeled, `0` bad, `1` good, `2` unsure. That is the same indexing ROICaT uses, so the array lines up element-for-element with `roi_idx` in the ROI table and no matching step is needed.
+
+**Order does not matter.** Those indices never change, so tracking and review can happen in either order. Track first and review months later; re-running the join cell picks up whatever labels exist at that moment. Nothing needs re-clustering.
+
+```python
+roi_table = rt.attach_manual_labels(
+    roi_table,
+    _results_all['input_data']['paths_stat'],
+    n_roi_bySession=[len(x) for x in _results_all['clusters']['labels_bySession']],
+)
+```
+
+Sessions with no label file come back as `unlabeled`; the call prints which sessions were found and the resulting consensus breakdown. Added columns:
+
+| column | meaning |
+| --- | --- |
+| `manual_label` | `NaN` / `0` / `1` / `2` for this ROI |
+| `manual_label_str` | `unlabeled` / `bad` / `good` / `unsure` |
+| `n_good`, `n_bad`, `n_unsure`, `n_labeled` | counts across every session in this UCID |
+| `ucid_label` | consensus: `good`, `bad`, `unsure`, `conflict`, or `unlabeled` |
+
+`conflict` means the cluster has a good label in one session and a bad one in another. With a single reviewed session it is unreachable; once two sessions are reviewed it becomes an independent check on the tracking, and it never passes any filter policy.
+
+```python
+good = rt.filter_by_manual_label(roi_table, policy='good', scope='cluster')
+```
+
+- `policy` — `'good'`, `'good_or_unsure'`, or `'not_bad'` (which also passes unlabeled ROIs).
+- `scope='cluster'` keeps every session's ROI for a passing UCID. **This is the point of the whole exercise**: one session's review propagates to the others through the tracking. On the 7-session `YH03VT` run with one reviewed session, that turns 41 good UCIDs into 147 ROIs spanning all seven sessions.
+- `scope='roi'` judges each ROI on its own label instead, leaving clusters partial — 41 rows for the same run.
+
+### The label-alignment check
+
+`attach_manual_labels` requires the label array length to **equal** the ROI count ROICaT tracked for that session, and raises otherwise. This is deliberately stricter than a bounds check: `manual_qc_results/stat.npy` holds 208 ROIs where `suite2p/plane0` holds 990, so if the tracking were run on the QC subset, every subset index would be trivially in range for the full-length label array and the join would silently pick the wrong neurons. There is no stored index mapping between the two, so the only correct answer is to refuse:
+
+```
+session 0 (SA11_20250806): ROICaT tracked 208 ROIs from manual_qc_results/stat.npy
+but roi_manual_labels.npy has 990 entries. Labels are indexed by original suite2p
+ROI, so the tracking must be run on suite2p/plane0/stat.npy
+(set STAT_SOURCE='suite2p/plane0') for the two to line up.
+```
+
+Pass `n_roi_bySession` (free, from `labels_bySession`) or let it load each `stat.npy` to count.
+
+The one case the check cannot catch is re-running **Suite2p** after labeling: ROI indices change, and if the ROI count happens to stay the same the lengths still match. Re-review after any Suite2p re-run.
+
 ### The cs_sil off-by-one
 
 `quality_metrics['cluster_silhouette']` is aligned with `quality_metrics['cluster_labels_unique']`, and **that label array starts at −1**. So `cluster_silhouette[u]` is the score for cluster `u − 1`, not for UCID `u`, and position 0 holds the unclustered pseudo-cluster's score (near −1.0, so UCID 0 spuriously sorts to the front of a worst-first list).
 
 `rt.cs_sil_by_ucid(quality_metrics)` returns a properly UCID-indexed array (NaN where unavailable). `roi_tracking_qc` now accepts either that array *or* the whole `quality_metrics` dict, and re-indexes internally — **pass the dict**. The notebook does. Earlier QC exports were built with the raw array and are shifted by one; regenerate them if you relied on the displayed `cs_sil` values or on the worst-first ordering.
+
+### The session_name collapse
+
+`session_labels_from_paths()` used to take the session name from `Path(stat_path).parts[-3]`. That is correct for `<session>/qc_results/stat.npy` but returns the literal string `suite2p` for `<session>/suite2p/plane0/stat.npy` — so on any run tracked from the Suite2p output, **every session was named `suite2p`**. The long table merely looked odd; the match matrix was actively wrong, because `build_match_matrix` pivots on `session_name` and collapsed all sessions into a single repeated column:
+
+```
+ucid,cs_sil,n_rois_in_cluster,n_sessions_present,suite2p,suite2p,suite2p,...
+0,0.988,3,3,"392, 136, 125","392, 136, 125","392, 136, 125",...
+```
+
+Session names now come from the session folder, and dates from the first 8-digit run in that name (the old `name.split('_')[-1]` returned `3331Random` for the `VTYH03_PPC_20250106_3331Random` convention). `build_match_matrix` additionally suffixes `#<session_idx>` if names still collide, so a pivot can never silently merge sessions again. **Regenerate any `*.match_matrix.csv` produced before this fix** — the affected files have duplicate column headers, which is the tell.
 
 ## QC: `roi_tracking_qc.py`
 
@@ -259,8 +349,10 @@ It needs `paths_save`, `dir_save`, `name_save`, `dir_allOuterFolders`, and `get_
 
 - The overlap filter's screening pass and the notebook's real alignment run use the same parameters by default (`z_threshold=4.0`, `radius_in=4`, `radius_out=20`). If you tune the aligner in the notebook, tune the filter call to match, or the screen will be answering a different question than the run.
 - `keep` indexes the *original* path lists. Any per-session metadata gathered before filtering (`stim_types_all`, `paths_allOps`) must be indexed through `keep`; anything read off `data` afterwards is already in filtered order.
-- `EXCLUDE_DIRS` exists because QC output folders contain `stat.npy` copies. Adding a new output subfolder that contains Suite2p-shaped files means adding it here too.
+- `STAT_SOURCE` decides which of a session's `stat.npy` copies is tracked, and it must stay `suite2p/plane0` for manual labels to join. The QC folders hold ROI *subsets* with no stored index mapping back to the full segmentation, so pointing the tracking at one makes `roi_manual_labels.npy` unjoinable. `EXCLUDE_DIRS` is now only for non-session folders (`batches`, `results`, `memmap`).
+- Sessions missing `STAT_SOURCE` or any `ops.npy` are reported in the skipped list, not raised. Read that list — a silently absent session is a session missing from the tracking.
 - `um_per_pixel` is currently `1.0`, i.e. distances in the aligner's micrometer parameters are really pixels. Set it correctly if you want `radius_in`/`radius_out` to mean physical distance.
 - Silhouette-based ordering is only as meaningful as the mixing fit. If the pairwise-distance plot was not bimodal, `cs_sil` ranking is not a reliable guide to which clusters to inspect — page through the PDF instead.
 - `cluster_silhouette` is indexed by position in `cluster_labels_unique`, which starts at −1 — never index it by UCID directly. Use `rt.cs_sil_by_ucid()`, or pass the whole `quality_metrics` dict to the QC functions.
-- `roi_idx` in the tables is the index into that session's `stat.npy` — i.e. *all* Suite2p ROIs. The dF/F pipeline selects a subset, so joining tracking to dF/F means mapping through that subset's ROI indices, not against dF/F row order.
+- `roi_idx` in the tables is the index into that session's `stat.npy` — i.e. *all* Suite2p ROIs. The dF/F pipeline selects a subset, so joining tracking to dF/F means mapping through that subset's ROI indices, not against dF/F row order. `roi_manual_labels.npy` uses this same full-`stat.npy` indexing, which is why it joins to `roi_idx` directly.
+- Re-running Suite2p invalidates both the tracking and any manual labels for that session, and the label-length check only catches it if the ROI count also changed. Re-review and re-track after a re-segmentation.
