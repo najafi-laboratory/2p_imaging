@@ -129,20 +129,30 @@ Use each location for the job it is good at.
 | Location | Typical path | Purpose |
 |---|---|---|
 | Home | `/home/<user>` or `~` | Shell configuration, small scripts, small text files. Do not store imaging datasets here. |
-| CEDAR | `/storage/cedar/...` | Long-term, durable research data storage. Use this for original recordings and retained results that should not be purged. |
-| Project storage | `/storage/project/r-fnajafi3-0/...` | Shared lab/project storage for software, shared environments, and active shared outputs. Good for common resources that multiple users need. |
-| Scratch | `/storage/scratch1/3/<user>/...` | Short-term high-throughput job workspace. Use this for large temporary processing runs and staged raw sessions. Scratch may be purged, so it is not a backup. |
+| CEDAR | `/storage/cedar/...` | Long-term, durable research data storage. Use this for archived original recordings and retained results that should not be purged. It is not the preferred place to run initial high-throughput processing from. |
+| Project storage | `/storage/project/r-fnajafi3-0/...` | Shared lab/project storage for software, shared environments, active shared raw-session uploads, and active shared outputs. Good for common resources that multiple users need. |
+| Scratch | `~/scratch/...` | Short-term high-throughput job workspace. Use this for large temporary processing runs and staged raw sessions. Scratch may be purged, so it is not a backup. |
 
-For 2p preprocessing, a good default is:
+For 2p processing, the preferred workflow is to do active processing from
+project storage or scratch, then archive to CEDAR after the outputs have been
+validated. Avoid launching large initial processing batches that repeatedly
+read TIFF stacks directly from CEDAR when a working copy is available in
+project storage or can be staged to scratch.
 
-1. Keep original raw recordings on CEDAR or another durable lab storage area.
-2. Stage the sessions being processed to scratch when running large batches.
-3. Write temporary and intermediate outputs to scratch.
-4. Validate the final outputs.
-5. Copy retained processed sessions back to durable project or CEDAR storage.
+For a typical session:
 
-This avoids repeatedly reading large TIFF stacks from shared long-term storage
-while many jobs are running.
+1. Upload or keep the active raw session in shared project storage, or stage a
+   working copy to scratch for large batches.
+2. Run the processing pipeline using project storage or scratch as the input
+   location.
+3. Write temporary, intermediate, and first-pass processed outputs to scratch.
+4. Validate and QC the processed outputs.
+5. Copy retained raw data and final processed outputs to CEDAR for long-term
+   record keeping, and keep any active shared results in project storage as
+   needed.
+
+This keeps heavy read/write activity on filesystems intended for active
+compute work and reserves CEDAR for durable archival storage.
 
 ## Shared environments and Conda modules
 

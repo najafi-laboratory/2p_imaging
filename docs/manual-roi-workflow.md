@@ -191,11 +191,11 @@ This writes:
     from filling with large duplicate binaries while still letting Suite2p find
     `data.bin` next to the `stat.npy` you are editing.
 
-        ln -s /storage/scratch1/.../<session>/suite2p/plane0/data.bin \
+        ln -s ~/scratch/.../<session>/suite2p/plane0/data.bin \
           /path/to/gui/session/suite2p/plane0/data.bin
 
         # Two-channel sessions also need the second channel binary.
-        ln -s /storage/scratch1/.../<session>/suite2p/plane0/data_chan2.bin \
+        ln -s ~/scratch/.../<session>/suite2p/plane0/data_chan2.bin \
           /path/to/gui/session/suite2p/plane0/data_chan2.bin
 
 The current prebuild helper is intended for single-plane TIFF inputs. It
@@ -375,7 +375,7 @@ Common storage roots to check for hosted sessions include:
 /storage/project/r-fnajafi3-0/shared/2P_Imaging/
 
 # PACE scratch processing outputs, if the session has not yet been copied back
-/storage/scratch1/3/<username>/2p_processing_results/
+~/scratch/2p_processing_results/
 ```
 
 ![Opening the target stat.npy](images/manual-roi/manual-roi-open-statnpy.png)

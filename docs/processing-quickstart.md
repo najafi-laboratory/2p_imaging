@@ -25,7 +25,7 @@ conda activate /storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_su
 python -c "from importlib.metadata import version; import utils_2p; print('utils_2p:', utils_2p.__file__); print('suite2p:', version('suite2p'))"
 
 RAW_SESSION="/path/to/raw/session"
-OUTPUT_ROOT="$HOME/scratch/2p_processing_results"
+OUTPUT_ROOT=~/scratch/2p_processing_results
 TARGET_STRUCTURE="soma"  # soma or dendrite
 
 python -m utils_2p.processing_pipeline submit \
@@ -136,7 +136,7 @@ shared environment and asks the pipeline launcher to submit the real stage jobs.
 set -euo pipefail
 
 RAW_SESSION="/path/to/raw/session"
-OUTPUT_ROOT="${HOME}/scratch/2p_processing_results"
+OUTPUT_ROOT=~/scratch/2p_processing_results
 TARGET_STRUCTURE="soma"  # soma or dendrite
 RUN_NAME="$(basename "${RAW_SESSION}")_processing"
 
@@ -166,7 +166,7 @@ For multiple sessions, put one raw session path per line in a text file and use
 ```bash
 python -m utils_2p.processing_pipeline submit \
   --sessions-file soma_sessions.txt \
-  --output-root "$HOME/scratch/2p_processing_results" \
+  --output-root ~/scratch/2p_processing_results \
   --target-structure soma \
   --qos embers \
   --run-name soma_batch
@@ -295,8 +295,8 @@ globus task show <task-id>
 Create the scratch directories before processing:
 
 ```bash
-mkdir -p "$HOME/scratch/staged_raw_sessions"
-mkdir -p "$HOME/scratch/2p_processing_results"
+mkdir -p ~/scratch/staged_raw_sessions
+mkdir -p ~/scratch/2p_processing_results
 ```
 
 After validating the processed session, copy it to its durable destination:

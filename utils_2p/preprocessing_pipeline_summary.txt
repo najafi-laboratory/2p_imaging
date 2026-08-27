@@ -188,7 +188,7 @@ Important Implementation Detail
 
 The Slurm processing runner currently imports the scratch pipeline copy at:
 
-  /storage/scratch1/3/grubin6/2p_processing_pipeline_20250522
+  ~/scratch/2p_processing_pipeline_20250522
 
 not the repo copy under:
 

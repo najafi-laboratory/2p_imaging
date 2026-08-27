@@ -13,7 +13,6 @@ By default this only generates the Slurm scripts. Set MODE = "submit" or pass
 from __future__ import annotations
 
 import argparse
-import getpass
 from pathlib import Path
 
 
@@ -36,7 +35,7 @@ RAW_SESSION = Path(
     "YH24LG_Processed/YH24LG_CRBL_lobulev_20250609_EBC-442"
 )
 
-OUTPUT_ROOT = Path(f"/storage/scratch1/3/{getpass.getuser()}/2p_pipeline_tests/yh24_preprocessing")
+OUTPUT_ROOT = Path("~/scratch/2p_pipeline_tests/yh24_preprocessing").expanduser()
 
 PYTHON_BIN = Path(
     "/storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x/bin/python"

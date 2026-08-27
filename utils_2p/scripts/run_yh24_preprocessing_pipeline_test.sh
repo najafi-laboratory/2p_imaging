@@ -5,7 +5,8 @@ set -euo pipefail
 # Default mode generates the Slurm scripts without submitting them.
 
 RAW_SESSION="${RAW_SESSION:-/storage/cedar/cedar0/cedarp-fnajafi3-0/2p_imaging/YH24LG_Processed/YH24LG_CRBL_lobulev_20250609_EBC-442}"
-OUTPUT_ROOT="${OUTPUT_ROOT:-/storage/scratch1/3/${USER}/2p_pipeline_tests/yh24_preprocessing}"
+DEFAULT_OUTPUT_ROOT=~/scratch/2p_pipeline_tests/yh24_preprocessing
+OUTPUT_ROOT="${OUTPUT_ROOT:-${DEFAULT_OUTPUT_ROOT}}"
 PYTHON_BIN="${TWO_P_PYTHON:-/storage/project/r-fnajafi3-0/shared/shared_envs/2p_processing_suite2p_1x/bin/python}"
 ACCOUNT="${TWO_P_SLURM_ACCOUNT:-gts-fnajafi3}"
 QOS="${TWO_P_SLURM_QOS:-embers}"
