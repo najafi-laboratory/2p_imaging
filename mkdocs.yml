@@ -35,4 +35,5 @@ nav:
       - Closed Loop: closed-loop.md
       - Joystick: joystick.md
       - EBC: ebc.md
-      - DLC: DLC_Pipeline.md
+      - DLC Local Setup: DLC_Local_Setup.md
+      - DLC Pipeline: DLC_Pipeline.md
