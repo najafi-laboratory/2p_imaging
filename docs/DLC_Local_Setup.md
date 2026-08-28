@@ -21,7 +21,7 @@ Start-Process -FilePath ".\Anaconda3-Windows-x86_64.exe" -ArgumentList "/Install
 
 ### Mac OS/Linux
 ```bash
-curl -O [https://repo.anaconda.com/archive/Anaconda3-2024.06-1-MacOSX-arm64.sh](https://repo.anaconda.com/archive/Anaconda3-2024.06-1-MacOSX-arm64.sh)
+curl -O https://repo.anaconda.com/archive/Anaconda3-2024.06-1-MacOSX-arm64.sh
 
 bash Anaconda3-2024.06-1-MacOSX-arm64.sh
 
@@ -58,7 +58,7 @@ pip install "deeplabcut[gui,modelzoo]==3.0.0rc10" ipython ipykernel jupyter
 
 --- 
 
-## Step 4: Register Jupyter Kernel for VS Code
+## Step 4: Register your Conda environment as a Jupyter kernel (so it appears in Jupyter and VS Code) 
 ```shell
 python -m ipykernel install --user --name DeepLabCut --display-name "Python (DeepLabCut)"
 ```
@@ -71,4 +71,19 @@ python -m deeplabcut
 ```
 
 ## Step 6: Install Visual Studio (VS) Code
-1. Go to the VS Code Website and download: https://code.visualstudio.com/
+1. Go to the VS Code Website: https://code.visualstudio.com/
+2. Download VS Code: 
+    * Click the "Download for [Your Operating System]" button (e.g., Windows, macOS, Linux)
+3. Install VS Code: 
+    * Run the installer:
+        * On Windows, follow the on-screen instructions. Select "Add to PATH" and "Install Code extensions" options. 
+        * On macOS, drag the VS Code application to the Applications folder. 
+        * On Linux, follow the instructions provided for your specific distribution.
+4. Launch VS Code:
+    * Open VS Code:
+        * Windows/macOS: Search for "Visual Studio Code" in your system's search bar. 
+        * Linux: Run ```code``` from the terminal. 
+5. Install the Python Extension
+    * Open VS Code. 
+    * Click on the Extensions icon (on the left sidebar, looks like four squares). 
+    * Search for "Python" and click "Install" on the extension published by Microsoft. 
