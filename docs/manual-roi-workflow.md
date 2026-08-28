@@ -421,6 +421,80 @@ can change after extracting and saving a manual ROI include:
 It records the pre-edit `stat.npy` and is used by
 `remove_all_manual_rois()` to detect and remove manual additions later.
 
+Suite2p's manual ROI GUI prepends new manual ROIs before the original Suite2p
+ROIs when it saves `stat.npy`, `iscell.npy`, `F.npy`, `Fneu.npy`, and `spks.npy`.
+That means adding `N` manual ROIs shifts original Suite2p ROI `i` to row
+`i + N`. This is inconvenient for cross-session cell matching done before QC,
+because those matching outputs usually refer to the original Suite2p ROI rows.
+
+### Move manual ROIs after original Suite2p ROIs
+
+Use this after saving manual ROIs in the Suite2p GUI when you want to keep the
+manual additions but restore stable original Suite2p indexing for downstream QC
+and cell matching.
+
+Preview the reorder:
+
+```bash
+python - <<'PY'
+from utils_2p.manual_rois import move_manual_rois_to_end
+
+result = move_manual_rois_to_end(
+    "/path/to/session/suite2p/plane0/stat_orig.npy",
+    "/path/to/session/suite2p/plane0/stat.npy",
+    dry_run=True,
+)
+print(result)
+PY
+```
+
+Apply the reorder with backups:
+
+```bash
+python - <<'PY'
+from utils_2p.manual_rois import move_manual_rois_to_end
+
+result = move_manual_rois_to_end(
+    "/path/to/session/suite2p/plane0/stat_orig.npy",
+    "/path/to/session/suite2p/plane0/stat.npy",
+)
+print(result)
+PY
+```
+
+After this step, ROI-indexed Suite2p arrays are ordered as:
+
+```text
+rows 0..N_original-1       original Suite2p ROIs, original row index preserved
+rows N_original..end       manual-added ROIs
+```
+
+The helper updates row-aligned arrays in the same folder when present:
+
+- `stat.npy`
+- `iscell.npy`
+- `F.npy`
+- `Fneu.npy`
+- `spks.npy`
+- `F_chan2.npy`
+- `Fneu_chan2.npy`
+- `redcell.npy`
+
+It also writes `suite2p_roi_index_mapping.csv` with these columns:
+
+| Column | Meaning |
+|---|---|
+| `current_row` | Row after reordering; this is the row used by the current `stat.npy`, `F.npy`, `Fneu.npy`, and other row-aligned arrays. |
+| `roi_origin` | `suite2p_detected` for original Suite2p ROIs or `manual_added` for ROIs drawn in the Suite2p GUI. |
+| `suite2p_original_index` | Original Suite2p ROI index for pre-QC matching. Blank for manual-added ROIs. |
+| `manual_roi_index` | Manual ROI index in draw/save order. Blank for original Suite2p ROIs. |
+| `previous_row` | Row before reordering, useful for auditing what Suite2p GUI wrote. |
+
+For downstream QC and Gary-style cell matching, join pre-QC matching outputs to
+QC labels or traces using `suite2p_original_index`. Use `current_row` only when
+indexing into the current reordered arrays. Manual-added ROIs do not have a
+pre-QC Suite2p match unless a separate manual matching workflow assigns one.
+
 ### Export a temporary workspace back to QC names
 
 After adding, extracting, and saving the manual ROI in the GUI, export the
@@ -520,6 +594,7 @@ utils_2p/manual_rois.py
 Public functions:
 
 - `remove_all_manual_rois(stat_orig_path, stat_path, ...)`
+- `move_manual_rois_to_end(stat_orig_path, stat_path, ...)`
 - `create_manual_roi_workspace(qc_dir, suite2p_plane_dir, workspace_dir, ...)`
 - `export_manual_roi_workspace(workspace_dir, qc_dir, ...)`
 

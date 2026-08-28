@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+import csv
 from pathlib import Path
 
 import numpy as np
@@ -9,6 +10,7 @@ import numpy as np
 from utils_2p.manual_rois import (
     create_manual_roi_workspace,
     export_manual_roi_workspace,
+    move_manual_rois_to_end,
     remove_all_manual_rois,
 )
 
@@ -24,6 +26,42 @@ def _stat_entry(index, *, manual=0):
 
 
 class ManualRoisTest(unittest.TestCase):
+    def test_move_manual_rois_to_end_preserves_original_suite2p_indices(self):
+        with tempfile.TemporaryDirectory() as directory:
+            plane = Path(directory)
+            stat_orig = np.asarray([_stat_entry(10), _stat_entry(20), _stat_entry(30)], dtype=object)
+            stat = np.asarray([_stat_entry(1, manual=1), *stat_orig, _stat_entry(2, manual=1)], dtype=object)
+
+            np.save(plane / "stat_orig.npy", stat_orig)
+            np.save(plane / "stat.npy", stat)
+            np.save(
+                plane / "iscell.npy",
+                np.asarray([[1, 1.0], [1, 0.9], [0, 0.2], [1, 0.8], [1, 1.0]]),
+            )
+            traces = np.arange(20, dtype=np.float32).reshape(5, 4)
+            np.save(plane / "F.npy", traces)
+
+            result = move_manual_rois_to_end(plane / "stat_orig.npy", plane / "stat.npy", backup=False)
+
+            self.assertEqual(result["manual_indices"], [0, 4])
+            self.assertEqual(result["original_indices"], [1, 2, 3])
+            self.assertEqual(result["new_order"], [1, 2, 3, 0, 4])
+            reordered_stat = np.load(plane / "stat.npy", allow_pickle=True)
+            self.assertEqual([entry.get("manual", 0) for entry in reordered_stat], [0, 0, 0, 1, 1])
+            np.testing.assert_array_equal(np.load(plane / "F.npy"), traces[[1, 2, 3, 0, 4]])
+            np.testing.assert_array_equal(
+                np.load(plane / "iscell.npy"),
+                [[1, 0.9], [0, 0.2], [1, 0.8], [1, 1.0], [1, 1.0]],
+            )
+            with (plane / "suite2p_roi_index_mapping.csv").open("r", newline="", encoding="ascii") as handle:
+                rows = list(csv.DictReader(handle))
+            self.assertEqual(rows[0]["roi_origin"], "suite2p_detected")
+            self.assertEqual(rows[0]["suite2p_original_index"], "0")
+            self.assertEqual(rows[0]["previous_row"], "1")
+            self.assertEqual(rows[3]["roi_origin"], "manual_added")
+            self.assertEqual(rows[3]["manual_roi_index"], "0")
+            self.assertEqual(rows[3]["previous_row"], "0")
+
     def test_remove_all_manual_rois_restores_row_aligned_files(self):
         with tempfile.TemporaryDirectory() as directory:
             plane = Path(directory)

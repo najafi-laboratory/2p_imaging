@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import csv
 import shutil
 from collections import Counter
 from datetime import datetime
@@ -316,6 +317,124 @@ def remove_all_manual_rois(
         "stat": str(stat_path.resolve()),
         "removed_indices": remove_indices.tolist(),
         "kept_indices": keep_indices.tolist(),
+        "changed_files": changed_files,
+        "backups": backups,
+        "dry_run": dry_run,
+    }
+
+
+def move_manual_rois_to_end(
+    stat_orig_path: str | Path,
+    stat_path: str | Path,
+    *,
+    row_aligned_files: Sequence[str] = ROW_ALIGNED_FILES,
+    mapping_name: str = "suite2p_roi_index_mapping.csv",
+    backup: bool = True,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    """Move Suite2p GUI-added manual ROI rows after original Suite2p rows.
+
+    Suite2p's manual ROI GUI prepends newly drawn ROIs to ``stat.npy`` and all
+    row-aligned arrays. This helper restores the more useful downstream order:
+    original Suite2p ROIs first, manual-added ROIs last. It also writes a CSV
+    mapping so pre-QC cell matching outputs can join back to original Suite2p
+    ROI indices.
+
+    The mapping columns are ``current_row``, ``roi_origin``,
+    ``suite2p_original_index``, ``manual_roi_index``, and ``previous_row``.
+    Original Suite2p ROIs have ``roi_origin=suite2p_detected`` and preserve
+    ``suite2p_original_index``. Manual ROIs have ``roi_origin=manual_added`` and
+    a separate ``manual_roi_index`` namespace.
+    """
+
+    stat_orig_path = Path(stat_orig_path)
+    stat_path = Path(stat_path)
+    plane_dir = stat_path.parent
+
+    stat_orig = np.load(stat_orig_path, allow_pickle=True)
+    stat = np.load(stat_path, allow_pickle=True)
+    manual_indices, original_indices = _detect_manual_roi_rows(stat_orig, stat)
+    new_order = np.concatenate((original_indices, manual_indices)).astype(np.int64, copy=False)
+
+    mapping_rows: list[dict[str, int | str]] = []
+    for current_row, previous_row in enumerate(original_indices.tolist()):
+        mapping_rows.append(
+            {
+                "current_row": int(current_row),
+                "roi_origin": "suite2p_detected",
+                "suite2p_original_index": int(current_row),
+                "manual_roi_index": "",
+                "previous_row": int(previous_row),
+            }
+        )
+    offset = len(original_indices)
+    for manual_roi_index, previous_row in enumerate(manual_indices.tolist()):
+        mapping_rows.append(
+            {
+                "current_row": int(offset + manual_roi_index),
+                "roi_origin": "manual_added",
+                "suite2p_original_index": "",
+                "manual_roi_index": int(manual_roi_index),
+                "previous_row": int(previous_row),
+            }
+        )
+
+    row_files: list[Path] = []
+    files_to_update: list[Path] = [stat_path]
+    for name in row_aligned_files:
+        path = plane_dir / name
+        if path.exists():
+            arr = np.load(path, allow_pickle=True, mmap_mode="r")
+            if arr.shape[0] != len(stat):
+                raise ValueError(
+                    f"{path} has {arr.shape[0]} rows, expected {len(stat)} to match {stat_path}"
+                )
+            row_files.append(path)
+            files_to_update.append(path)
+
+    mapping_path = plane_dir / mapping_name
+    if mapping_path.exists():
+        files_to_update.append(mapping_path)
+
+    backups: dict[str, str] = {}
+    changed_files: list[str] = []
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if not dry_run and backup:
+        for path in files_to_update:
+            backup_file = _backup_path(path, timestamp)
+            shutil.copy2(path, backup_file)
+            backups[str(path)] = str(backup_file)
+
+    if not dry_run:
+        np.save(stat_path, stat[new_order])
+        changed_files.append(str(stat_path))
+        for path in row_files:
+            arr = np.load(path, allow_pickle=True)
+            np.save(path, arr[new_order])
+            changed_files.append(str(path))
+        with mapping_path.open("w", newline="", encoding="ascii") as handle:
+            writer = csv.DictWriter(
+                handle,
+                fieldnames=[
+                    "current_row",
+                    "roi_origin",
+                    "suite2p_original_index",
+                    "manual_roi_index",
+                    "previous_row",
+                ],
+            )
+            writer.writeheader()
+            writer.writerows(mapping_rows)
+        changed_files.append(str(mapping_path))
+
+    return {
+        "stat_orig": str(stat_orig_path.resolve()),
+        "stat": str(stat_path.resolve()),
+        "manual_indices": manual_indices.tolist(),
+        "original_indices": original_indices.tolist(),
+        "new_order": new_order.tolist(),
+        "mapping_path": str(mapping_path.resolve()),
+        "mapping_rows": mapping_rows,
         "changed_files": changed_files,
         "backups": backups,
         "dry_run": dry_run,
