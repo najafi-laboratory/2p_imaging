@@ -8,19 +8,19 @@ This guide walks through setting up Anaconda, Python 3.10, DeepLabCut (v3.0.0rc1
 
 ### Windows
 Open PowerShell and run:
-```
-curl.exe -L -o Anaconda3-Windows-x86_64.exe [https://repo.anaconda.com/archive/Anaconda3-2024.06-1-Windows-x86_64.exe](https://repo.anaconda.com/archive/Anaconda3-2024.06-1-Windows-x86_64.exe)
+```powershell
+curl.exe -L -o Anaconda3-Windows-x86_64.exe https://repo.anaconda.com/archive/Anaconda3-2024.06-1-Windows-x86_64.exe
 
 Start-Process -FilePath ".\Anaconda3-Windows-x86_64.exe" -ArgumentList "/InstallationType=JustMe /RegisterPython=0 /S /D=$env:USERPROFILE\anaconda3" -Wait
 
-& "$env:USERPROFILE\anaconda3\Scripts\conda.exe" "init" "powershell"
+& "$env:USERPROFILE\anaconda3\Scripts\conda.exe" "init" "powershell" 
 ```
 
->Close and reopen PowerShell to activate Conda.
+>Close PowerShell and reopen it. You should now see (base) before your command prompt: ```(base) PS C:\Users\xyz ```
 
 
 ### Mac OS/Linux
-```
+```bash
 curl -O [https://repo.anaconda.com/archive/Anaconda3-2024.06-1-MacOSX-arm64.sh](https://repo.anaconda.com/archive/Anaconda3-2024.06-1-MacOSX-arm64.sh)
 
 bash Anaconda3-2024.06-1-MacOSX-arm64.sh
@@ -32,7 +32,7 @@ source ~/.bashrc
 
 ## Step 2: Create Conda Environment
 Run in terminal/Powershell:
-```
+```shell
 conda create --name DeepLabCut python=3.10
 conda activate DeepLabCut
 ```
@@ -40,32 +40,35 @@ conda activate DeepLabCut
 
 ---
 
-## Step 3: Install DeepLabCut & Dependencies
+## Step 3: Install DeepLabCut & Dependencies (DLC, ipython, ipykernel, jupyter)
 
 ### Windows (Tested Dependency Pins) 
 
 To prevent PyTorch DLL initialization failures, NumPy 2.x breaking changes, and PySide6/Napari GUI crashes, use the pinned versions below:
-```
+```powershell
 conda install -y -c conda-forge mkl intel-openmp
 
-pip install "deeplabcut[gui,modelzoo]==3.0.0rc10" ipython ipykernel jupyter "numpy<2.0.0" "torch==2.3.1" "torchvision==0.18.1" --index-url [https://download.pytorch.org/whl/cpu](https://download.pytorch.org/whl/cpu) "pyside6==6.5.3" "shiboken6==6.5.3" "napari==0.5.4" "app-model==0.3.0" "vispy==0.14.3" appdirs numpydoc jsonschema magicgui "napari-svg" "napari-plugin-engine>=0.1.9"
+pip install "deeplabcut[gui,modelzoo]==3.0.0rc10" ipython ipykernel jupyter "numpy<2.0.0" "torch==2.3.1" "torchvision==0.18.1" --index-url https://download.pytorch.org/whl/cpu "pyside6==6.5.3" "shiboken6==6.5.3" "napari==0.5.4" "app-model==0.3.0" "vispy==0.14.3" appdirs numpydoc jsonschema magicgui "napari-svg" "napari-plugin-engine>=0.1.9" 
 ```
 
 ### MacOS/Linux
-```
+```bash
 pip install "deeplabcut[gui,modelzoo]==3.0.0rc10" ipython ipykernel jupyter
 ```
 
 --- 
 
 ## Step 4: Register Jupyter Kernel for VS Code
-```
+```shell
 python -m ipykernel install --user --name DeepLabCut --display-name "Python (DeepLabCut)"
 ```
 
 --- 
 
 ## Step 5: Test GUI
-```
+```shell
 python -m deeplabcut
 ```
+
+## Step 6: Install Visual Studio (VS) Code
+1. Go to the VS Code Website and download: https://code.visualstudio.com/
