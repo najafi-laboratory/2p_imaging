@@ -26,6 +26,12 @@ prep -> suite2p -> roi_model_scores -> label -> dff -> spikes -> summary
 checkpoint is only for cerebellar dendrite ROIs, so this stage should not be
 treated as a general-purpose soma or non-cerebellar classifier yet.
 
+Use `--roi-model-path /path/to/model.pt` to run a single frozen ROI model
+checkpoint. For target-specific model selection, use repeated
+`--roi-target-model target=/path/model.pt` entries or pass a JSON registry with
+`--roi-model-registry`. The selected checkpoint and target are recorded in
+`roi_model_scores.h5` and displayed in the interactive reviewer.
+
 Morphology threshold filtering is not applied as a pipeline stage. New sessions
 should keep the Suite2p ROI set and use the interactive HTML reviewer for
 filtering. If morphology filtering is added back later, it should happen in the
@@ -83,7 +89,7 @@ Mermaid source is stored beside it at
 |---|---|---|---|
 | `prep` | Default | Standardizes non-imaging session inputs and writes session metadata. | `raw_voltages.h5`, `bpod_session_data.mat` when available, `processing_pipeline_parameters.json` |
 | `suite2p` | Default | Runs Suite2p registration, ROI detection, and fluorescence extraction. | `suite2p/plane0/ops.npy`, `stat.npy`, `F.npy`, `Fneu.npy`, `iscell.npy`, `spks.npy` |
-| `roi_model_scores` | Must be specified with `--run-roi-model-scores`; currently available only for cerebellar dendrite ROIs | Applies a trained ROI classifier and records probability/state metadata. | `roi_model_scores.h5`, and `ROI_label.h5` when labels are generated |
+| `roi_model_scores` | Must be specified with `--run-roi-model-scores`; currently available only for cerebellar dendrite ROIs unless another checkpoint is supplied | Applies a trained ROI classifier selected by `--roi-model-path`, `--roi-target-model`, or `--roi-model-registry` and records probability/state metadata. | `roi_model_scores.h5`, and `ROI_label.h5` when labels are generated |
 | `label` | Must be specified with `--run-label` | Runs anatomical/functional cell-type labeling through `LabelExcInh`. | `masks.h5` |
 | `dff` | Default after `suite2p` | Computes raw non-z-scored dF/F from native Suite2p fluorescence and neuropil traces. | `dff.h5` |
 | `spikes` | Must be specified with `--run-oasis` | Runs OASIS/Suite2p inferred spike generation. | `spikes.h5` |

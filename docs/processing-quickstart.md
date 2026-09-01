@@ -477,6 +477,73 @@ Python, session, and output paths are accessible to the compute nodes.
 | `--initialize-summary-labels-from-roi-model-scores` | Initialize reviewer labels from `ROI_label.h5` / `roi_model_scores.h5`. Without this, model outputs are available as metrics but the reviewer starts with ROIs not manually labeled. |
 | `--summary-input-layout` | Select the summary input layout: `suite2p`, `qc_results`, `manual_qc_results`, `external_rois`, or `auto`. The pipeline default is `suite2p`; `qc_results` and `manual_qc_results` are deprecated legacy layouts. |
 
+### Use a Trained ROI Model Checkpoint
+
+The `roi_model_scores` stage is optional and runs after Suite2p ROI detection.
+It scores each original Suite2p ROI and writes `roi_model_scores.h5`; the HTML
+reviewer then loads those probabilities as a filter/sort metric. By default,
+the reviewer still opens with ROIs **not labeled** unless
+`--initialize-summary-labels-from-roi-model-scores` is supplied.
+
+The currently available trained checkpoint is intended for cerebellar dendrite
+ROIs only. Do not use it as a general soma, PPC, or non-cerebellar classifier
+unless a model has been trained and validated for that target.
+
+For one frozen checkpoint, point directly at the model file:
+
+```bash
+python -m utils_2p.processing_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure dendrite \
+  --run-roi-model-scores \
+  --roi-model-path /path/to/frozen_cerebellar_dendrite_model.pt
+```
+
+For multiple trained models, register a model per target structure on the
+command line:
+
+```bash
+python -m utils_2p.processing_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure dendrite \
+  --run-roi-model-scores \
+  --roi-target-model dendrite=/path/to/frozen_cerebellar_dendrite_model.pt \
+  --roi-target-model soma=/path/to/frozen_soma_model.pt
+```
+
+Or keep the mapping in a JSON registry:
+
+```json
+{
+  "models": {
+    "dendrite": "/path/to/frozen_cerebellar_dendrite_model.pt",
+    "soma": "/path/to/frozen_soma_model.pt"
+  }
+}
+```
+
+Then pass the registry path:
+
+```bash
+python -m utils_2p.processing_pipeline submit \
+  --session /path/to/raw/session \
+  --output-root /path/to/processed_outputs \
+  --target-structure dendrite \
+  --run-roi-model-scores \
+  --roi-model-registry /path/to/roi_model_registry.json
+```
+
+Model lookup order is: explicit `--roi-model-path`, repeated
+`--roi-target-model target=/path/model.pt` entries, `--roi-model-registry` or
+`TWO_P_ROI_MODEL_REGISTRY`, target-specific environment variables such as
+`TWO_P_ROI_MODEL_DENDRITE`, then the fallback `TWO_P_ROI_MODEL_PATH`.
+
+The model is reused when `roi_model_scores.h5` already exists. Add
+`--force-roi-model-scores` only when the checkpoint, thresholds, or prediction
+code changed and scores should be regenerated.
+
 Suite2p's temporary binary movie is deleted when processing completes. Keeping
 it in node-local `$TMPDIR` avoids writing a large intermediate file to project
 or Cedar storage.
