@@ -1,0 +1,2 @@
+source_start_row,source_stop_row_exclusive,source_timestamp_start,source_timestamp_end,rows_compared,max_abs_phase_error
+38533,50053,867.7648591,1126.2306022,11520,8.881784197001252e-16
