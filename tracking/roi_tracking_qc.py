@@ -32,6 +32,7 @@ Two exporters share the same figure builder:
 import base64
 import io
 import json
+import textwrap
 
 import matplotlib
 
@@ -286,7 +287,57 @@ def _draw(
     ax.tick_params(labelsize=6)
 
     if title:
-        ax.set_title(title, fontsize=8)
+        # Wrapped to fit by _fit_titles() once the layout is known.
+        ax.set_title(title, fontsize=7.5, linespacing=1.15)
+
+
+# --- titles ---
+
+# Panel width in inches; figsize below is (n + 1) panels of this width.
+_PANEL_W_IN = 2.0
+
+
+def _fit_titles(fig, fontsize, max_lines=2):
+    """Wrap every axes title to the width of its own panel.
+
+    Matplotlib neither wraps nor shrinks titles, so a long session name runs
+    straight into its neighbours — with 8 sessions the column headers overlap
+    into an unreadable band. Character-width estimates are unreliable here
+    (digits and capitals in the session names run well above an average
+    advance), so measure the rendered text instead and shrink the wrap budget
+    until it actually fits.
+
+    Call after a layout pass, then lay out again — wrapping changes title
+    height.
+    """
+    renderer = fig.canvas.get_renderer()
+    for ax in fig.axes:
+        text = ax.get_title()
+        if not text:
+            continue
+        avail = ax.get_window_extent(renderer).width
+        title = ax.title
+        if title.get_window_extent(renderer).width <= avail:
+            continue
+
+        flat = " ".join(text.split())
+        # Average advance measured from this exact string, not assumed.
+        per_char = title.get_window_extent(renderer).width / max(1, len(flat))
+        budget = max(6, int(avail / per_char))
+
+        for _ in range(24):  # bounded; each pass drops one character
+            lines = textwrap.wrap(
+                flat, budget, break_long_words=True, break_on_hyphens=False
+            ) or [flat]
+            if len(lines) > max_lines:
+                lines = lines[:max_lines]
+                lines[-1] = lines[-1][: max(1, budget - 1)].rstrip() + "\u2026"
+            ax.set_title("\n".join(lines), fontsize=fontsize, linespacing=1.15)
+            if ax.title.get_window_extent(renderer).width <= avail:
+                break
+            budget -= 1
+            if budget <= 6:
+                break
 
 
 # --- core figure builder ---
@@ -398,7 +449,7 @@ def build_ucid_figure(
     fig, axes = plt.subplots(
         n_rows,
         n + 1,
-        figsize=(2.0 * (n + 1), 2.1 * n_rows),
+        figsize=(_PANEL_W_IN * (n + 1), 2.1 * n_rows),
         dpi=dpi,
     )
     if n == 0:
@@ -415,7 +466,7 @@ def build_ucid_figure(
             None,
             roi_color,
             True,
-            "superimposed - raw",
+            "superimposed",
         )
 
     _draw(
@@ -426,7 +477,7 @@ def build_ucid_figure(
         None,
         roi_color,
         fp_con.max() > 0,
-        "superimposed - aligned",
+        "superimposed" if r_aligned == 0 else None,
         zoom_box_hw=crop_halfwidth,
     )
 
@@ -438,7 +489,7 @@ def build_ucid_figure(
         crop_halfwidth,
         roi_color,
         fp_con.max() > 0,
-        "superimposed - zoom",
+        None,
     )
 
     # --- columns 1..n: per session ---
@@ -465,7 +516,7 @@ def build_ucid_figure(
                 None,
                 roi_color,
                 present[s],
-                f"{col_title} - raw",
+                col_title,
                 zoom_box_hw=crop_halfwidth if present[s] else None,
                 aligned_mask=aligned_masks[s],
             )
@@ -477,7 +528,7 @@ def build_ucid_figure(
             None,
             roi_color,
             present[s],
-            f"{col_title} - aligned",
+            col_title if r_aligned == 0 else None,
             zoom_box_hw=crop_halfwidth if present[s] else None,
         )
         _draw(
@@ -488,7 +539,7 @@ def build_ucid_figure(
             crop_halfwidth,
             roi_color,
             present[s],
-            f"{col_title} - zoom",
+            None,
         )
 
     # --- row labels (left-column y-axes) ---
@@ -519,6 +570,10 @@ def build_ucid_figure(
     if cs_sil_value is not None:
         parts.append(f"cs_sil = {cs_sil_value:.3f}")
     fig.suptitle("   |   ".join(parts), fontsize=10, y=0.995)
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    # Titles can only be fitted once the panels have their final widths, and
+    # wrapping changes their height, so lay out again afterwards.
+    _fit_titles(fig, fontsize=7.5)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     return fig
 

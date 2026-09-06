@@ -89,6 +89,30 @@ def session_dir(stat_path) -> Path:
     return Path(stat_path).parents[1]
 
 
+# Folders that group sessions but are not the mouse/dataset itself.
+_CONTAINER_DIRS = {"batches", "results", "memmap", "sessions", "processed", "data"}
+
+
+def mouse_name_from_paths(paths_stat) -> str:
+    """Mouse/dataset name, from the first non-container ancestor of the sessions.
+
+    Derived from the session paths rather than from the outer directory the
+    notebook was pointed at, because that can be either the mouse folder
+    (``.../SA11_LG``) or a grouping folder inside it (``.../SA11_LG/batches``),
+    and walking a fixed number of levels up is only ever right for one of them.
+    """
+    if not len(paths_stat):
+        return ""
+    for d in session_dir(paths_stat[0]).parents:
+        if not d.name:
+            break
+        low = d.name.lower()
+        if low in _CONTAINER_DIRS or low.startswith("sessions_"):
+            continue
+        return d.name
+    return ""
+
+
 def session_labels_from_paths(paths_stat) -> tuple[list[str], list[str]]:
     """Derive (session_name, date) from stat.npy paths.
 
