@@ -30,6 +30,14 @@ TARGET_ALIASES = {
 }
 
 
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _default_manual_qc_model_path() -> Path:
+    return _repository_root() / "Joystick" / "PostProcessing" / "manual_qc_model_advika" / "checkpoints" / "all" / "best_model.pt"
+
+
 @dataclass(frozen=True)
 class RoiModelScorePrediction:
     """One model prediction for an original Suite2p ROI row."""
@@ -217,12 +225,15 @@ def default_model_path() -> Path:
     """
 
     configured = os.environ.get(MODEL_PATH_ENV_VAR) or os.environ.get(LEGACY_MODEL_PATH_ENV_VAR)
-    if not configured:
-        raise FileNotFoundError(
-            "No ROI model score checkpoint was supplied. Pass --roi-model-path "
-            f"or set {MODEL_PATH_ENV_VAR}=/path/to/best_model.pt."
-        )
-    return Path(configured).expanduser().resolve()
+    if configured:
+        return Path(configured).expanduser().resolve()
+    candidate = _default_manual_qc_model_path()
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(
+        "No ROI model score checkpoint was supplied. Pass --roi-model-path "
+        f"or set {MODEL_PATH_ENV_VAR}=/path/to/best_model.pt."
+    )
 
 
 def _resolve_model_path(model_path: Path | str | None) -> Path:
@@ -278,56 +289,164 @@ def select_model(
     )
 
 
+def _normalize_signal(signal: np.ndarray) -> np.ndarray:
+    signal = np.asarray(signal, dtype=np.float32, copy=True)
+    if signal.ndim != 2 or signal.shape[0] != 2:
+        raise ValueError(f"Expected signal shape (2, T), got {signal.shape}")
+    normalized = signal.copy()
+    for channel in range(2):
+        x = normalized[channel]
+        median = float(np.median(x))
+        mad = float(np.median(np.abs(x - median)))
+        robust_std = 1.4826 * mad
+        if robust_std < 1e-6:
+            robust_std = float(np.std(x))
+        if robust_std < 1e-6:
+            robust_std = 1.0
+        normalized[channel] = (x - median) / robust_std
+    return normalized.astype(np.float32, copy=False)
+
+
+def _safe_corr(x: np.ndarray, y: np.ndarray) -> float:
+    x = np.asarray(x, dtype=np.float32)
+    y = np.asarray(y, dtype=np.float32)
+    if len(x) != len(y) or len(x) < 2:
+        return 0.0
+    sx = np.std(x)
+    sy = np.std(y)
+    if sx < 1e-8 or sy < 1e-8:
+        return 0.0
+    corr = np.corrcoef(x, y)[0, 1]
+    if not np.isfinite(corr):
+        return 0.0
+    return float(corr)
+
+
+def _compute_roi_metrics(stat_row: dict[str, Any], fluo_trace: np.ndarray, neuropil_trace: np.ndarray) -> np.ndarray:
+    fluo = np.asarray(fluo_trace, dtype=np.float32)
+    neuropil = np.asarray(neuropil_trace, dtype=np.float32)
+    trace_mean = float(np.mean(fluo))
+    trace_std = float(np.std(fluo))
+    centered = fluo - trace_mean
+    trace_skew = 0.0 if trace_std <= 1e-8 else float(np.mean(centered ** 3) / (trace_std ** 3))
+    p95 = float(np.percentile(fluo, 95))
+    p50 = float(np.percentile(fluo, 50))
+    p05 = float(np.percentile(fluo, 5))
+    snr_p95_p50 = (p95 - p50) / max(abs(p50), 1e-6)
+    snr_p95_p05 = (p95 - p50) / max(abs(p05), 1e-6)
+    trace_max = float(np.max(fluo))
+    trace_range = float(np.max(fluo) - np.min(fluo))
+    neuropil_mean = float(np.mean(neuropil))
+    neuropil_std = float(np.std(neuropil))
+    fluo_neuropil_corr = _safe_corr(fluo, neuropil)
+    metrics = np.array(
+        [
+            float(stat_row.get("footprint", 0.0)),
+            float(stat_row.get("compact", 0.0)),
+            float(stat_row.get("solidity", 0.0)),
+            float(stat_row.get("npix", 0.0)),
+            float(stat_row.get("npix_soma", 0.0)),
+            float(stat_row.get("radius", 0.0)),
+            float(stat_row.get("aspect_ratio", 0.0)),
+            float(stat_row.get("npix_norm_no_crop", 0.0)),
+            float(stat_row.get("npix_norm", 0.0)),
+            float(stat_row.get("skew", 0.0)),
+            float(stat_row.get("std", 0.0)),
+            trace_mean,
+            trace_std,
+            trace_skew,
+            p95,
+            p50,
+            p05,
+            snr_p95_p50,
+            snr_p95_p05,
+            trace_max,
+            trace_range,
+            neuropil_mean,
+            neuropil_std,
+            fluo_neuropil_corr,
+        ],
+        dtype=np.float32,
+    )
+    return np.nan_to_num(metrics, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _normalize_metrics(metrics: np.ndarray, *, metric_mean: np.ndarray | None = None, metric_std: np.ndarray | None = None) -> np.ndarray:
+    metrics = np.asarray(metrics, dtype=np.float32, copy=True)
+    if metric_mean is not None and metric_std is not None:
+        metric_mean = np.asarray(metric_mean, dtype=np.float32)
+        metric_std = np.asarray(metric_std, dtype=np.float32)
+        metric_std = np.maximum(metric_std, 1e-6)
+        metrics = (metrics - metric_mean) / metric_std
+    return np.nan_to_num(metrics, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+
+
 def _load_model(model_path: Path):
     import torch
-    import torch.nn as nn
-    import torchvision.models as models
+    from Joystick.PostProcessing.manual_qc_model_advika.model.cnn import ROICNN
 
     torch.set_num_threads(int(os.environ.get(TORCH_THREADS_ENV_VAR, os.environ.get(LEGACY_TORCH_THREADS_ENV_VAR, "1"))))
 
-    class ROICNN(nn.Module):
-        def __init__(self, in_channels: int = 2):
-            super().__init__()
-            self.backbone = models.resnet18(weights=None)
-            old_conv = self.backbone.conv1
-            self.backbone.conv1 = nn.Conv2d(
-                in_channels=in_channels,
-                out_channels=old_conv.out_channels,
-                kernel_size=old_conv.kernel_size,
-                stride=old_conv.stride,
-                padding=old_conv.padding,
-                bias=False,
-            )
-            self.backbone.fc = nn.Linear(self.backbone.fc.in_features, 1)
-
-        def forward(self, x):
-            return self.backbone(x)
-
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    model = ROICNN().to(device)
-    state = torch.load(model_path, map_location=device)
+
+    checkpoint = torch.load(model_path, map_location=device, weights_only=False)
+    if isinstance(checkpoint, dict) and "model_state" in checkpoint:
+        state = checkpoint["model_state"]
+        metric_mean = checkpoint.get("metric_mean")
+        metric_std = checkpoint.get("metric_std")
+        num_metrics = int(checkpoint.get("num_metrics", len(metric_mean) if metric_mean is not None else 0))
+    else:
+        state = checkpoint
+        metric_mean = None
+        metric_std = None
+        num_metrics = 0
+
+    model = ROICNN(
+        num_metrics=num_metrics if num_metrics > 0 else 23,
+        pretrained=False,
+        use_image=True,
+        use_signal=True,
+        use_metrics=True,
+    ).to(device)
+
     model.load_state_dict(state, strict=True)
     model.eval()
-    return model, device
+    return model, device, metric_mean, metric_std
 
 
-def _predict_probability(model: Any, device: str, patch: np.ndarray) -> float:
+def _predict_probability(model: Any, device: str, patch: np.ndarray, signal: np.ndarray, metrics: np.ndarray) -> float:
     import torch
 
     with torch.no_grad():
-        x = torch.tensor(patch / 255.0, dtype=torch.float32, device=device).unsqueeze(0)
-        logits = model(x)
+        image = torch.tensor(patch.astype(np.float32), dtype=torch.float32, device=device).unsqueeze(0)
+        signal_tensor = torch.tensor(_normalize_signal(signal).astype(np.float32), dtype=torch.float32, device=device).unsqueeze(0)
+        metrics_tensor = torch.tensor(np.asarray(metrics, dtype=np.float32), dtype=torch.float32, device=device).unsqueeze(0)
+        logits = model(image=image, signal=signal_tensor, metrics=metrics_tensor)
         return float(torch.sigmoid(logits)[0, 0].detach().cpu().numpy())
 
 
-def _predict_probabilities(model: Any, device: str, patches: np.ndarray, *, batch_size: int) -> np.ndarray:
+def _predict_probabilities(
+    model: Any,
+    device: str,
+    patches: np.ndarray,
+    signals: np.ndarray,
+    metrics: np.ndarray,
+    *,
+    batch_size: int,
+) -> np.ndarray:
     import torch
 
     probabilities = []
     with torch.no_grad():
         for start in range(0, len(patches), batch_size):
-            batch = torch.tensor(patches[start : start + batch_size] / 255.0, dtype=torch.float32, device=device)
-            logits = model(batch)
+            batch_patches = torch.tensor(patches[start : start + batch_size].astype(np.float32), dtype=torch.float32, device=device)
+            batch_signals = torch.tensor(
+                np.asarray([_normalize_signal(sig) for sig in signals[start : start + batch_size]], dtype=np.float32),
+                dtype=torch.float32,
+                device=device,
+            )
+            batch_metrics = torch.tensor(metrics[start : start + batch_size].astype(np.float32), dtype=torch.float32, device=device)
+            logits = model(image=batch_patches, signal=batch_signals, metrics=batch_metrics)
             probabilities.append(torch.sigmoid(logits).reshape(-1).detach().cpu().numpy())
     if not probabilities:
         return np.asarray([], dtype=np.float32)
@@ -342,18 +461,26 @@ def _prediction_state(probability: float, *, good_threshold: float, bad_threshol
     return "gray"
 
 
-def load_session_inputs(session_dir: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load Suite2p ``meanImg`` and original Suite2p ``stat.npy`` rows."""
+def load_session_inputs(session_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Load the Suite2p mean image, ROI stats, and fluorescence/neuropil traces."""
 
     ops_path = session_dir / "suite2p" / "plane0" / "ops.npy"
     stat_path = session_dir / "suite2p" / "plane0" / "stat.npy"
+    fluo_path = session_dir / "qc_results" / "fluo.npy"
+    neuropil_path = session_dir / "qc_results" / "neuropil.npy"
     if not ops_path.exists():
         raise FileNotFoundError(f"Missing Suite2p ops file: {ops_path}")
     if not stat_path.exists():
         raise FileNotFoundError(f"Missing Suite2p stat file: {stat_path}")
+    if not fluo_path.exists():
+        raise FileNotFoundError(f"Missing QC fluo file: {fluo_path}")
+    if not neuropil_path.exists():
+        raise FileNotFoundError(f"Missing QC neuropil file: {neuropil_path}")
     ops = np.load(ops_path, allow_pickle=True).item()
     stat = np.load(stat_path, allow_pickle=True)
-    return np.asarray(ops["meanImg"]), stat
+    fluo = np.load(fluo_path, allow_pickle=False)
+    neuropil = np.load(neuropil_path, allow_pickle=False)
+    return np.asarray(ops["meanImg"]), stat, np.asarray(fluo, dtype=np.float32), np.asarray(neuropil, dtype=np.float32)
 
 
 def predict_session(
@@ -368,7 +495,7 @@ def predict_session(
     good_threshold: float = DEFAULT_GOOD_THRESHOLD,
     bad_threshold: float = DEFAULT_BAD_THRESHOLD,
 ) -> list[RoiModelScorePrediction]:
-    """Score all original Suite2p ROIs in a processed session with a trained model."""
+    """Score all original Suite2p ROIs in a processed session with the multimodal trained model."""
 
     session_dir = Path(session_dir).expanduser().resolve()
     selection = select_model(
@@ -379,15 +506,29 @@ def predict_session(
     )
     if not selection.model_path.exists():
         raise FileNotFoundError(f"ROI model score checkpoint does not exist: {selection.model_path}")
-    mean_img, stat = load_session_inputs(session_dir)
-    model, device = _load_model(selection.model_path)
+    mean_img, stat, fluo, neuropil = load_session_inputs(session_dir)
+    model, device, metric_mean, metric_std = _load_model(selection.model_path)
     predictions: list[RoiModelScorePrediction] = []
     roi_ids = np.arange(len(stat), dtype=np.int64)
-    patches = np.stack(
-        [make_stat_two_channel_patch(mean_img, stat[int(roi_id)], patch_size=patch_size) for roi_id in roi_ids],
-        axis=0,
-    )
-    probabilities = _predict_probabilities(model, device, patches, batch_size=batch_size)
+    patches: list[np.ndarray] = []
+    signals: list[np.ndarray] = []
+    metrics: list[np.ndarray] = []
+    for roi_id in roi_ids:
+        stat_row = stat[int(roi_id)]
+        fluo_trace = np.asarray(fluo[int(roi_id)], dtype=np.float32)
+        neuropil_trace = np.asarray(neuropil[int(roi_id)], dtype=np.float32)
+        patch = make_stat_two_channel_patch(mean_img, stat_row, patch_size=patch_size)
+        signal = np.stack((fluo_trace, neuropil_trace), axis=0).astype(np.float32)
+        signal = _normalize_signal(signal)
+        metric = _compute_roi_metrics(stat_row, fluo_trace, neuropil_trace)
+        metric = _normalize_metrics(metric, metric_mean=metric_mean, metric_std=metric_std)
+        patches.append(patch)
+        signals.append(signal)
+        metrics.append(metric)
+    patches_array = np.stack(patches, axis=0)
+    signals_array = np.stack(signals, axis=0)
+    metrics_array = np.stack(metrics, axis=0)
+    probabilities = _predict_probabilities(model, device, patches_array, signals_array, metrics_array, batch_size=batch_size)
     for roi_id, probability in zip(roi_ids, probabilities):
         suite2p_roi = int(roi_id)
         predictions.append(
