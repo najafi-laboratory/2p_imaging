@@ -1,1 +1,14 @@
 Outputs/
+__pycache__/
+*.py[cod]
+Figures/
+alignment_validation/
+aligned_dff_behavior/
+task_vs_bonsai/
+interactive_dff_roi_viewer.html
+*.pdf
+*.png
+*.csv
+*.h5
+*.npy
+*.xml
