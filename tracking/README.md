@@ -26,7 +26,7 @@ ROICaT aligns every session to a common template. If one session's FOV barely ov
 The stock notebook handles this with a manual `keep = [...]` list: run the aligner, read the alignment-score plot, decide by eye which sessions to drop, then re-run the data-loading cell with a subset. `pipeline.filter_sessions_by_overlap()` replaces that loop with a single call:
 
 1. Load all sessions into a `Data_suite2p`.
-2. Run a **silent geometric-only screening pass** (DISK_LightGlue, affine, CPU) purely to obtain the all-to-all alignment matrix. Nothing from this pass is reused.
+2. Run a **silent geometric-only screening pass** (`method='RoMa'` by default, affine) purely to obtain the all-to-all alignment matrix. Nothing from this pass is reused.
 3. Symmetrize the boolean alignment matrix, take its connected components, and keep the **largest** co-registerable group.
 4. Rebuild `Data_suite2p` from only the kept sessions (skipped if nothing was dropped).
 
@@ -40,6 +40,17 @@ Session filter: 8/10 sessions kept
 ```
 
 The screening pass costs one extra geometric fit. `z_threshold` (default 4.0) is the knob: higher is more stringent and will drop more sessions.
+
+**The screen must use the same registration method as the real run.** Its entire job is to predict whether `aligner.fit_geometric` can co-register a group of sessions, so a screen running a *stronger* method green-lights sessions the real run then aligns badly, and a *weaker* one drops sessions the real run could have handled. `method` and `kwargs_method` are therefore parameters, and the notebook defines `ALIGN_METHOD` / `KWARGS_ALIGN_METHOD` once — in the **Alignment method** cell, above the screen — and passes the same pair to both calls. `pipeline.KWARGS_ALIGN_METHOD` is only the default for calling the function directly. A `method` missing from `kwargs_method` raises before any session is loaded, rather than as a bare `KeyError` from inside `fit_geometric` minutes later.
+
+Under the default `RoMa` that extra fit is not cheap, and the device matters. Measured on an M-series Mac with 512×512 FOVs (RoMa resamples to a fixed 560×560 / 864×864 internally, so input size barely moves this):
+
+| device | seconds per session pair |
+| --- | --- |
+| `cpu` | ~70 |
+| `mps` | ~29 |
+
+`template_method='sequential'` means N−1 pairs per fit, doubled across the screen and the real run — so a 7-session run is ~14 min on CPU against ~6 min on MPS, and more if `use_match_search` falls back to all-pairs on a failure. The notebook sets `DEVICE = roicat.helpers.set_device(use_GPU=True)`, which prefers cuda, then mps, then xpu.
 
 ## Running the notebook
 
@@ -375,7 +386,7 @@ It needs `paths_save`, `dir_save`, `name_save`, and `get_stim_type` in scope —
 
 ## Gotchas
 
-- The overlap filter's screening pass and the notebook's real alignment run use the same parameters by default (`z_threshold=4.0`, `radius_in=4`, `radius_out=20`). If you tune the aligner in the notebook, tune the filter call to match, or the screen will be answering a different question than the run.
+- The overlap filter's screening pass and the notebook's real alignment run use the same parameters by default (`z_threshold=4.0`, `radius_in=4`, `radius_out=20`). If you tune the aligner in the notebook, tune the filter call to match, or the screen will be answering a different question than the run. `method` and `kwargs_method` used to be hardcoded separately in each place and had silently diverged — the screen on `RoMa`, the real run on `DISK_LightGlue`. They are now passed from the single `ALIGN_METHOD` / `KWARGS_ALIGN_METHOD` definition in the notebook; keep it that way rather than editing the `fit_geometric` call directly.
 - `keep` indexes the *original* path lists. Any per-session metadata gathered before filtering (`stim_types_all`, `paths_allOps`) must be indexed through `keep`; anything read off `data` afterwards is already in filtered order.
 - `STAT_SOURCE` decides which of a session's `stat.npy` copies is tracked, and it must stay `suite2p/plane0` for manual labels to join. The QC folders hold ROI *subsets* with no stored index mapping back to the full segmentation, so pointing the tracking at one makes `roi_manual_labels.npy` unjoinable. `EXCLUDE_DIRS` is now only for non-session folders (`batches`, `results`, `memmap`).
 - Sessions missing `STAT_SOURCE` or any `ops.npy` are reported in the skipped list, not raised. Read that list — a silently absent session is a session missing from the tracking.

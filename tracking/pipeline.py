@@ -10,11 +10,44 @@ needs to re-run a cell.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import roicat
 from scipy.sparse.csgraph import connected_components
+
+from results_table import session_dir
+
+# Per-method parameters for ``Aligner.fit_geometric``.  Only the entry named by
+# ``method`` is read, but roicat wants the whole dict, so all options stay here
+# documented.  This is the default for a standalone call; the notebook defines
+# its own copy and passes the same one to both the screen and the real fit.
+KWARGS_ALIGN_METHOD = {
+    "RoMa": {  ## Accuracy: Best, Speed: Very slow (can be fast with a GPU).
+        "model_type": "outdoor",
+        "n_points": 10000,  ## Higher values mean more points are used for the registration. Useful for larger FOV_images. Larger means slower.
+        "batch_size": 1000,
+    },
+    "DISK_LightGlue": {  ## Accuracy: Good, Speed: Fast.
+        "num_features": 3000,  ## Number of features to extract and match. I've seen best results around 2048 despite higher values typically being better.
+        "threshold_confidence": 0.0,  ## Higher values means fewer but better matches.
+        "window_nms": 7,  ## Non-maximum suppression window size. Larger values mean fewer non-suppressed points.
+    },
+    "LoFTR": {  ## Accuracy: Okay. Speed: Medium.
+        "model_type": "indoor_new",
+        "threshold_confidence": 0.2,  ## Higher values means fewer but better matches.
+    },
+    "ECC_cv2": {  ## Accuracy: Okay. Speed: Medium.
+        "mode_transform": "euclidean",  ## Must be one of {'translation', 'affine', 'euclidean', 'homography'}. See cv2 documentation on findTransformECC for more details.
+        "n_iter": 200,
+        "termination_eps": 1e-09,  ## Termination criteria for the registration algorithm. See documentation for more details.
+        "gaussFiltSize": 1,  ## Size of the gaussian filter used to smooth the FOV_image before registration. Larger values mean more smoothing.
+        "auto_fix_gaussFilt_step": 10,  ## If the registration fails, then the gaussian filter size is reduced by this amount and the registration is tried again.
+    },
+    "PhaseCorrelation": {  ## Accuracy: Poor. Speed: Very fast. Notes: Only applicable for translations, not rotations or scaling.
+        "bandpass_freqs": [1, 30],
+        "order": 5,
+    },
+    "NullRegistration": {},  ## No registration, no warping.
+}
 
 
 def filter_sessions_by_overlap(
@@ -25,6 +58,8 @@ def filter_sessions_by_overlap(
     z_threshold: float = 4.0,
     radius_in: float = 4.0,
     radius_out: float = 20.0,
+    method: str = "RoMa",
+    kwargs_method: dict | None = None,
 ) -> tuple[roicat.data_importing.Data_suite2p, list[int]]:
     """Load all sessions, run a silent geometric-alignment screening pass, and
     return a Data_suite2p containing only the largest co-registerable group.
@@ -40,14 +75,31 @@ def filter_sessions_by_overlap(
     um_per_pixel:
         Scalar applied to all sessions, or a per-session list.
     device:
-        Torch device string (``'cpu'``, ``'cuda'``, …).  The screening pass
-        only uses DISK_LightGlue which runs on CPU regardless, so ``'cpu'``
-        is fine here even if you plan to use a GPU for ROInet later.
+        Torch device string (``'cpu'``, ``'cuda'``, ``'mps'``, …).  This is not
+        a free choice under the default ``method='RoMa'``: RoMa is the slow,
+        GPU-sensitive option, and the screen runs one registration per
+        consecutive session pair (more if the match search falls back to
+        all-pairs).  Measured on an M-series Mac at 512x512, ``'cpu'`` costs
+        roughly 70 s per pair against roughly 29 s on ``'mps'``.  Pass
+        ``roicat.helpers.set_device(use_GPU=True)``, which prefers cuda, then
+        mps, then xpu.
     z_threshold:
         Alignment z-score threshold.  Session pairs whose score falls below
         this are treated as unaligned.
     radius_in, radius_out:
         Aligner inner / outer radii in micrometers.
+    method:
+        Geometric registration method, passed to ``fit_geometric``.  **Keep this
+        equal to the method the notebook's real alignment run uses.** The screen
+        exists to predict whether that run can co-register a set of sessions, so
+        a screen using a stronger method green-lights sessions the run then
+        aligns badly, and a weaker one drops sessions the run could have
+        handled.  See ``KWARGS_ALIGN_METHOD`` for the options.
+    kwargs_method:
+        Per-method parameters.  Defaults to the module-level
+        ``KWARGS_ALIGN_METHOD``; pass the notebook's own dict to guarantee the
+        screen and the real fit are tuned identically.  Must contain ``method``
+        as a key.
 
     Returns
     -------
@@ -60,6 +112,18 @@ def filter_sessions_by_overlap(
     umpp = (
         [um_per_pixel] * n if not isinstance(um_per_pixel, list) else list(um_per_pixel)
     )
+
+    # Validated up front: loading every session takes minutes, and roicat
+    # indexes kwargs_method[method] directly, so a typo would otherwise surface
+    # as a bare KeyError from inside fit_geometric after all that work.
+    kwargs_method = (
+        KWARGS_ALIGN_METHOD if kwargs_method is None else dict(kwargs_method)
+    )
+    if method not in kwargs_method:
+        raise ValueError(
+            f"kwargs_method has no entry for method={method!r}; "
+            f"got keys {sorted(kwargs_method)}"
+        )
 
     # ── 1. Load all sessions ──────────────────────────────────────────────────
     data_all = roicat.data_importing.Data_suite2p(
@@ -97,14 +161,8 @@ def filter_sessions_by_overlap(
         ims_moving=fovs,
         template_method="sequential",
         mask_borders=(0, 0, 0, 0),
-        method="DISK_LightGlue",
-        kwargs_method={
-            "DISK_LightGlue": {
-                "num_features": 3000,
-                "threshold_confidence": 0.0,
-                "window_nms": 7,
-            }
-        },
+        method=method,
+        kwargs_method=kwargs_method,
         constraint="affine",
         kwargs_RANSAC={"inl_thresh": 3.0, "max_iter": 100, "confidence": 0.99},
         verbose=False,
@@ -119,11 +177,14 @@ def filter_sessions_by_overlap(
     keep = sorted(np.where(group_ids == np.argmax(np.bincount(group_ids)))[0].tolist())
     dropped = [i for i in range(n) if i not in keep]
 
+    # session_dir, not parts[-3]: under the suite2p/plane0 layout that index is
+    # the literal string "suite2p", which tells you nothing about which session
+    # was dropped — the only thing these lines exist to say.
     print(f"Session filter: {len(keep)}/{n} sessions kept")
     for i in keep:
-        print(f"  keep  [{i}]  {Path(paths_stat[i]).parts[-3]}")
+        print(f"  keep  [{i}]  {session_dir(paths_stat[i]).name}")
     for i in dropped:
-        print(f"  drop  [{i}]  {Path(paths_stat[i]).parts[-3]}  (poor overlap)")
+        print(f"  drop  [{i}]  {session_dir(paths_stat[i]).name}  (poor overlap)")
 
     # ── 4. Rebuild with only the kept sessions ────────────────────────────────
     if len(keep) == n:
