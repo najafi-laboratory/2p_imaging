@@ -12,9 +12,8 @@ from __future__ import annotations
 
 import numpy as np
 import roicat
-from scipy.sparse.csgraph import connected_components
-
 from results_table import session_dir
+from scipy.sparse.csgraph import connected_components
 
 # Per-method parameters for ``Aligner.fit_geometric``.  Only the entry named by
 # ``method`` is read, but roicat wants the whole dict, so all options stay here
