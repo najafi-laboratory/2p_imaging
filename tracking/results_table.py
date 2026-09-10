@@ -468,6 +468,53 @@ def attach_manual_labels(
     return df
 
 
+def ucid_label_display(df, session_key="date", max_names=3) -> dict[int, str]:
+    """Short per-UCID label string, for annotating the QC picker.
+
+    ``good`` / ``bad`` / ``unsure`` / ``unlabeled`` pass straight through: the
+    consensus is the whole story.  ``conflict`` is the one that needs detail —
+    it means one session called the cluster good and another called it bad, so
+    either the tracking merged two cells or the review was inconsistent, and
+    telling those apart means knowing *which* session dissented:
+
+        conflict: good@20250806,20250811 bad@20250903
+
+    Names beyond ``max_names`` per group collapse to ``+N``.  Requires
+    :func:`attach_manual_labels` to have run.
+
+    Returns
+    -------
+    dict of {ucid: str} — only UCIDs present in ``df``.
+    """
+    if "ucid_label" not in df.columns:
+        raise ValueError("run attach_manual_labels() first")
+    if session_key not in df.columns:
+        session_key = "session_idx"
+
+    # Two sessions can share a date (e.g. a VG and an ST block the same day),
+    # and a collapsed name would make "bad@20250806" point at either of them.
+    # Disambiguate the same way build_match_matrix does for session_name.
+    per_session = df.drop_duplicates("session_idx").sort_values("session_idx")
+    name_by_idx = dict(zip(per_session["session_idx"], per_session[session_key]))
+    if per_session[session_key].duplicated().any():
+        name_by_idx = {s: f"{n}#{s}" for s, n in name_by_idx.items()}
+
+    def _names(sub, value):
+        idxs = sub.loc[sub["manual_label"] == value, "session_idx"]
+        names = [str(name_by_idx[s]) for s in dict.fromkeys(idxs)]
+        if len(names) > max_names:
+            names = names[:max_names] + [f"+{len(names) - max_names}"]
+        return ",".join(names)
+
+    out = {}
+    for ucid, sub in df.groupby("ucid", sort=True):
+        label = sub["ucid_label"].iloc[0]
+        if label == "conflict":
+            label = f"conflict: good@{_names(sub, 1.0)} bad@{_names(sub, 0.0)}"
+        out[int(ucid)] = label
+    return out
+
+
 def filter_by_manual_label(df, policy="good", scope="cluster") -> pd.DataFrame:
     """Filter the labeled ROI table.
 

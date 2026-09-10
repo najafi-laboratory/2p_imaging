@@ -16,7 +16,7 @@ This module tracks the same neurons across imaging sessions. It takes the Suite2
 | --- | --- |
 | `interactive_tracking.ipynb` | The pipeline itself. Step-by-step, parameter-tunable, with a visualization after nearly every step. This is what you run. |
 | `pipeline.py` | `filter_sessions_by_overlap()` — screens sessions for co-registerability before the real run, so poorly-overlapping sessions never enter the pipeline. |
-| `roi_tracking_qc.py` | Per-UCID cross-session QC figures, exportable as a multipage PDF or a self-contained HTML viewer with a UCID picker. |
+| `roi_tracking_qc.py` | Per-UCID cross-session QC figures, exportable as a multipage PDF or a self-contained HTML viewer with a UCID picker that can be annotated with the manual review verdict. |
 | `results_table.py` | Flattens the nested label lists and quality-metric arrays into two pandas tables: one row per tracked ROI, and a UCID × session match matrix. Also joins manual ROI-review labels onto the tracking output. |
 
 ## Why the session-overlap filter exists
@@ -233,6 +233,15 @@ Sessions with no label file come back as `unlabeled`; the call prints which sess
 
 `conflict` means the cluster has a good label in one session and a bad one in another. With a single reviewed session it is unreachable; once two sessions are reviewed it becomes an independent check on the tracking, and it never passes any filter policy.
 
+`ucid_label_display(roi_table)` turns those verdicts into a short `{ucid: str}` mapping for the QC picker. Most labels pass straight through; `conflict` is expanded to name the sessions on each side, because telling a merged cluster from an inconsistent review means knowing *which* session dissented:
+
+```python
+rt.ucid_label_display(roi_table)
+# {0: 'good', 1: 'conflict: good@20250806,20250811 bad@20250903', 2: 'bad', ...}
+```
+
+Session names come from the `date` column (falling back to `session_idx` when absent), and each side collapses to `+N` past `max_names=3`. If two sessions share a date — a VG and an ST block the same day — the names are suffixed `#session_idx`, the same disambiguation `build_match_matrix` applies, since a collapsed `bad@20250806` would point at either one. Pass the result to `export_html(..., ucid_labels=...)` — see [Exporters](#exporters).
+
 ```python
 good = rt.filter_by_manual_label(roi_table, policy='good', scope='cluster')
 ```
@@ -314,6 +323,7 @@ qc.export_html(
     "out_tracking.html", order[:200],
     fovs_aligned, rois_aligned, labels_bySession, H, W,
     cs_sil=qm, crop_halfwidth=40,
+    ucid_labels=rt.ucid_label_display(roi_table),
     fovs_raw=fovs_raw, rois_raw=rois_raw,
     remapping_idxs=remapping_idxs,
     mouse_name=mouse_name, session_names=session_names,
@@ -323,6 +333,22 @@ qc.export_html(
 - `export_html(path, ...)` — one self-contained HTML file: a dropdown, prev/next buttons, and every figure pre-rendered and base64-embedded. No server, no dependencies; hand the file to anyone. Because every PNG is inlined, there is a `max_ucids=400` safety cap — pass a worst-first slice rather than all clusters.
 - `export_pdf(path, ...)` — one multipage PDF, one UCID per page. No cap, but no navigation either.
 - `order_ucids_by_quality(labels_bySession, quality_metrics, ascending=True)` — worst-first by silhouette score, so the first pages of the export are the clusters most likely to be wrong. Unclustered ROIs (label −1) are dropped by default; UCIDs with no score sort last.
+- `ucid_labels={ucid: str}` (HTML only) — shown in brackets after each picker entry, e.g. `UCID 412  (cs_sil 0.310)  [conflict: good@20250806 bad@20250903]`. Optional; omit it and the picker reads exactly as before.
+
+### Scoping QC to the clusters that matter
+
+Once manual labels exist, the worst-200-by-`cs_sil` slice is the wrong 200 pages. A low-scoring cluster the reviewer already labeled **bad** is not worth inspecting — whether tracking correctly linked a cell you are discarding changes nothing. The clusters where an error actually costs something are **good** (a bad link silently contaminates the analysis set) and **conflict** (tracking and review disagree, and someone has to adjudicate):
+
+```python
+order = qc.order_ucids_by_quality(labels_bySession, qm, ascending=True)
+
+REVIEW_LABELS = ('good', 'conflict')
+if REVIEW_LABELS and roi_table.ucid_label.ne('unlabeled').any():
+    keep = set(roi_table.loc[roi_table.ucid_label.isin(REVIEW_LABELS), 'ucid'])
+    order = [u for u in order if u in keep]
+```
+
+Same worst-first ordering, but every page is a cluster whose correctness matters, so the `max_ucids` budget goes much further. This is what the notebook's HTML cell does by default; set `REVIEW_LABELS = ()` to inspect every cluster. The `ne('unlabeled')` guard matters — with no label files on disk every UCID is `unlabeled` and an unguarded filter would render an empty page.
 
 Both exporters share `build_ucid_figure()`, so PDF and HTML pages are identical apart from DPI (110 vs. 90).
 
@@ -330,14 +356,16 @@ The module forces matplotlib's `Agg` backend at import, before `pyplot` is impor
 
 ### Running QC from saved results
 
-The QC cell near the end of the notebook reloads from the richfiles rather than reading live pipeline objects, so it works in a fresh kernel:
+The table cell near the end of the notebook reloads from the richfiles rather than reading live pipeline objects, so it works in a fresh kernel:
 
 ```python
 _results_all = roicat.util.RichFile_ROICaT(path=paths_save['results_all']).load()
 _run_data    = roicat.util.RichFile_ROICaT(path=paths_save['run_data']).load()
 ```
 
-It needs `paths_save`, `dir_save`, `name_save`, `dir_allOuterFolders`, and `get_stim_type` in scope — run the paths and save cells above it, or set those five by hand.
+It needs `paths_save`, `dir_save`, `name_save`, and `get_stim_type` in scope — run the paths and save cells above it, or set those four by hand.
+
+**The table cell runs before the HTML cell**, and the HTML cell depends on it: it reuses the loaded arrays (`labels_bySession`, `fovs_aligned`, `cs_sil`, …) and needs `roi_table` for the review-label filter and picker annotations. Running the HTML cell alone in a fresh kernel raises `NameError`.
 
 ### Other QC outputs
 

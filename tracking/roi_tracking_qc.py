@@ -705,7 +705,8 @@ DATA.forEach((d, i) => {
   const o = document.createElement('option');
   o.value = i;
   o.text = 'UCID ' + d.ucid +
-    (d.score != null ? '  (cs_sil ' + d.score.toFixed(3) + ')' : '');
+    (d.score != null ? '  (cs_sil ' + d.score.toFixed(3) + ')' : '') +
+    (d.label ? '  [' + d.label + ']' : '');
   pick.appendChild(o);
 });
 
@@ -734,6 +735,7 @@ def export_html(
     H,
     W,
     cs_sil=None,
+    ucid_labels=None,
     max_ucids=400,
     dpi=90,
     **fig_kwargs,
@@ -742,6 +744,11 @@ def export_html(
 
     Every figure is pre-rendered and base64-embedded.  For large runs, pass a
     cs_sil-sorted subset rather than all clusters — max_ucids is a safety cap.
+
+    ``ucid_labels`` is an optional ``{ucid: str}`` mapping shown in brackets
+    after each picker entry — pass ``results_table.ucid_label_display(roi_table)``
+    to carry the manual ROI review verdict into the page, so a cluster flagged
+    ``conflict`` says which session dissented without a trip back to the CSV.
     """
     if len(ucids) > max_ucids:
         raise ValueError(
@@ -764,7 +771,14 @@ def export_html(
             dpi=dpi,
             **fig_kwargs,
         )
-        records.append({"ucid": int(u), "score": score, "png": _fig_to_b64(fig)})
+        records.append(
+            {
+                "ucid": int(u),
+                "score": score,
+                "label": (ucid_labels or {}).get(int(u)),
+                "png": _fig_to_b64(fig),
+            }
+        )
     html = _HTML.replace("{data_json}", json.dumps(records))
     with open(path, "w") as f:
         f.write(html)
