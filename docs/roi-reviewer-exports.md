@@ -103,18 +103,20 @@ the currently selected preset and discards unsaved edits in the threshold
 fields. Custom saved threshold sets also appear in this dropdown under their
 saved names.
 
-The filter menu is organized into three main metric categories. **Morphology
+The filter menu is organized into four main metric categories. **Morphology
 metrics** describe ROI shape and mask quality, and are intended to identify
-implausible shapes, fragmented masks, unusually small or large footprints, or
+implausible shapes, fragmented masks, unusually small or large ROIs, or
 morphology values outside the chosen target-structure preset. **Fluorescence
 trace metrics** are computed from each ROI's dF/F trace and are intended to
 identify weak trace structure, trace-quality values outside the expected range,
 or fluorescence dynamics that do not fit the target ROI class. **Inferred spike
-metrics** are computed from OASIS-style inferred-spike outputs when available
+metrics** are computed from inferred-spike outputs when available
 and describe whether inferred events have reasonable amplitude, timing, and
 residual structure relative to the dF/F trace. If inferred-spike outputs are not
 available for a session, those controls may be disabled or marked as
-unavailable.
+unavailable. **Model derived metrics** are loaded from optional trained-model
+score files and should be interpreted only for the anatomical target structure
+the model was trained on.
 
 The **Read more** controls document where each metric category comes from and
 how the reviewer interprets the values. **Distribution** controls reveal
@@ -181,8 +183,6 @@ Example JSON matching the current built-in soma preset. In the code this preset 
     "maxConnect": 1,
     "aspectMin": 0.0,
     "aspectMax": 5.0,
-    "footprintMin": 1.0,
-    "footprintMax": 2.0,
     "compactMin": 0.0,
     "compactMax": 1.06
   }
@@ -542,7 +542,7 @@ Current exported fields:
 | `manual_label` | string | Current manual label: `good`, `bad`, `unsure`, or `not labeled`. |
 | `cell_type_label` | string | Optional cell-type or indicator label when available; otherwise unset/unknown. |
 | `cell_type_code` | nullable integer | Numeric cell-type code when available. Blank in the CSV when unavailable. |
-| `footprint` | float | Fluorescence footprint metric used by QC filters. |
+| `footprint` | float | Suite2p footprint metric when available. Exported for reference but not used by the current QC filter controls. |
 | `skew` | float | Fluorescence trace skew metric used by QC filters. |
 | `aspect_ratio` | float | Morphology aspect-ratio metric. |
 | `compact` | float | Morphology compactness metric. |
@@ -550,7 +550,7 @@ Current exported fields:
 | `roi_area_px` | float | ROI area in pixels. |
 | `snr_95_50` | float | Fluorescence trace SNR based on high-percentile versus median signal. |
 | `caiman_exceptional_event_snr` | float | CaImAn-style large-transient SNR metric. |
-| `autocorr_efold_time_seconds` | float | Fluorescence autocorrelation e-fold time in seconds. |
+| `autocorr_efold_time_seconds` | float | Fluorescence autocorrelation e-fold time in seconds when present. Exported for reference but not used by the current QC filter controls. |
 | `inferred_spike_snr` | nullable float | Event-triggered inferred-spike SNR when inferred spikes are available. |
 | `inferred_spike_rise_tau_seconds` | nullable float | Inferred-spike event rise time metric in seconds. |
 | `inferred_spike_decay_tau_seconds` | nullable float | Inferred-spike event decay/e-fold metric in seconds. |
@@ -629,6 +629,44 @@ the expected directory structure explicit. Use `suite2p` for new pipeline
 outputs; `qc_results` and `manual_qc_results` are legacy layouts. The command
 prints which layout it uses and the resolved paths for stat or ROI geometry,
 fluorescence, neuropil, optional `iscell.npy`, and inferred spikes.
+
+### Input files and expected shapes
+
+The reviewer has two supported input modes. The native Suite2p mode is the
+special case used by this pipeline. The external-ROI mode is the general case:
+any ROI source can be reviewed if ROI geometry and traces are supplied with
+matching row order.
+
+Native Suite2p inputs:
+
+| File | Required | Format | Expected dtype/shape | Notes |
+| --- | --- | --- | --- | --- |
+| `suite2p/plane0/ops.npy` | yes | NumPy dict | object scalar containing Suite2p ops | Must include image size and mean image metadata. |
+| `suite2p/plane0/stat.npy` | yes | NumPy object array | `(n_rois,)`; each row dict has `ypix`, `xpix`, optional `lam`, Suite2p fields | ROI row number is the original zero-based Suite2p index. |
+| `suite2p/plane0/F.npy` | yes | NumPy array | numeric `(n_rois, n_frames)` | Raw fluorescence. |
+| `suite2p/plane0/Fneu.npy` | yes | NumPy array | numeric `(n_rois, n_frames)` | Neuropil fluorescence used for dF/F. |
+| `suite2p/plane0/iscell.npy` | optional | NumPy array | numeric `(n_rois, 2)` | Used for provenance only; the reviewer opens with all ROIs available. |
+| `spikes.h5` or `suite2p/plane0/spikes.h5` | optional | HDF5 | dataset with numeric `(n_rois, n_frames)` inferred-spike amplitudes | Enables inferred-spike trace overlays and inferred-spike QC metrics. |
+| `masks.h5` or `roi_cell_type_labels.npy` | optional | HDF5 or NumPy array | one label per ROI | Enables cell-type/indicator labels. |
+| `roi_model_scores.h5` | optional | HDF5 | one model score per ROI | Enables model-derived metric filtering/sorting. Current packaged model is for cerebellar dendrite ROIs unless another model is supplied. |
+
+External-ROI inputs:
+
+| File | Required | Format | Expected dtype/shape | Notes |
+| --- | --- | --- | --- | --- |
+| `F.npy` or `fluo.npy` | yes | NumPy array | numeric `(n_rois, n_frames)` | Fluorescence trace row `i` must match ROI geometry row `i`. |
+| `Fneu.npy` or `neuropil.npy` | optional | NumPy array | numeric `(n_rois, n_frames)` | If omitted, neuropil is treated as zero. |
+| One ROI geometry file | yes | see below | one ROI set with `n_rois` rows/labels | Use exactly one of dense label mask, sparse spatial matrix, or Suite2p-like `stat.npy`. |
+| `mean_func.npy` or equivalent | recommended | NumPy array | numeric `(Ly, Lx)` | Functional background image for checking ROI alignment. |
+| `external_roi_metadata.json` | optional | JSON | object | Used mainly to provide `image_shape` and `flatten_order` for sparse matrices. |
+
+Supported external ROI geometry files:
+
+| File | Format | Expected dtype/shape |
+| --- | --- | --- |
+| `roi_mask.npy`, `roi_masks.npy`, `label_mask.npy`, or `masks.npy` | Dense integer label image | integer `(Ly, Lx)`; `0` background, positive values are ROI labels |
+| `spatial_components.npz`, `roi_spatial_components.npz`, or `A.npz` | SciPy sparse matrix | numeric `(pixels, n_rois)` or `(n_rois, pixels)` |
+| `stat.npy` | Suite2p-like object array | `(n_rois,)`; each row dict has `ypix`, `xpix`, optional `lam` |
 
 ### Direct input directories and layout detection
 
@@ -755,12 +793,13 @@ morphology-style fields that the reviewer uses for Suite2p ROIs:
 | `connectivity` | Number of 4-connected components in the ROI mask. |
 | `aspect_ratio` | Bounding-box elongation: longer side divided by shorter side. |
 | `compact` | Perimeter-based compactness: `perimeter² / (4π × area)`. |
-| `footprint` | Fraction of the ROI bounding box occupied by ROI pixels. |
+| `footprint` | Fraction of the ROI bounding box occupied by ROI pixels. Exported for reference; not used as a default QC filter. |
 | `skew` | Skewness of the corresponding raw fluorescence trace row. |
 
 These fallback values make non-Suite2p ROIs sortable and filterable in the same
-viewer menus. They are compatible review metrics, not exact reproductions of
-Suite2p's internal definitions for fields such as `compact` or `footprint`.
+viewer menus, except for `footprint`, which is retained as reference metadata.
+They are compatible review metrics, not exact reproductions of Suite2p's
+internal definitions for fields such as `compact` or `footprint`.
 When a real `stat.npy` already contains Suite2p-derived values, those values
 are preserved.
 
@@ -834,7 +873,7 @@ indexed to `qc_results/stat.npy`, the summary tries to map them back to the
 original Suite2p ROI order.
 
 Cell-type labels can also be loaded after the HTML is open by using the
-**Upload cell-type labels** control in the ROI QC filters menu. The upload file
+**Load cell-type file** control near the top of the side menu. The upload file
 can be CSV, TSV, or plain text with a delimited table. It must contain a header
 row and these columns:
 

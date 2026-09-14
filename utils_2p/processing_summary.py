@@ -643,16 +643,12 @@ def _all_rois_filter() -> dict[str, float | int | None]:
         "maxConnect": None,
         "aspectMin": None,
         "aspectMax": None,
-        "footprintMin": None,
-        "footprintMax": None,
         "compactMin": None,
         "compactMax": None,
         "eventSnrMin": None,
         "andreaPostdocSnrMin": None,
         "roiAreaMin": None,
         "roiAreaMax": None,
-        "autocorrEfoldMin": None,
-        "autocorrEfoldMax": None,
         "oasisEventSnrMin": None,
         "oasisRiseTauMin": None,
         "oasisRiseTauMax": None,
@@ -674,16 +670,12 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
             "maxConnect": values["max_connect"],
             "aspectMin": values["range_aspect"][0],
             "aspectMax": values["range_aspect"][1],
-            "footprintMin": values["range_footprint"][0],
-            "footprintMax": values["range_footprint"][1],
             "compactMin": values["range_compact"][0],
             "compactMax": values["range_compact"][1],
             "eventSnrMin": None,
             "andreaPostdocSnrMin": None,
             "roiAreaMin": None,
             "roiAreaMax": None,
-            "autocorrEfoldMin": None,
-            "autocorrEfoldMax": None,
             "oasisEventSnrMin": None,
             "oasisRiseTauMin": None,
             "oasisRiseTauMax": None,
@@ -1893,7 +1885,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <p><strong>Cell type / indicator:</strong> no numeric threshold is suggested; choose a categorical label if cell-type labels are loaded or uploaded.</p>
         <p><strong>SNR: 95/50 percentile:</strong> suggested min is the mean SNR value across ROIs.</p>
         <p><strong>SNR: CaImAn:</strong> suggested min is the mean large-transient score across ROIs.</p>
-        <p><strong>Autocorrelation e-fold time:</strong> suggested min/max are the 25th and 75th percentiles across ROIs.</p>
         <p><strong>Inferred spike metrics:</strong> suggested SNR min is the mean value, suggested rise/decay tau min/max are the 25th and 75th percentiles, and suggested residual Gaussian-fit max is the 75th percentile.</p>
       </div>
       <div class="filter-controls">
@@ -1916,15 +1907,18 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       </div>
       <div id="cellTypeMetricSources" class="info-box" hidden>
         <p>Cell-type labels are loaded from pipeline outputs when available. Codes are <code>-1</code> excitatory/non-red, <code>0</code> unsure, and <code>1</code> inhibitory/red.</p>
-        <p>To override or add labels, upload a CSV/TSV file with one row per original Suite2p ROI and columns <code>cell_type_code</code> and <code>cell_type_label</code>. If a <code>suite2p_index</code>, <code>roi</code>, or <code>index</code> column is present, rows are mapped by that Suite2p index; otherwise row order is used.</p>
-        <p>ROI model score probability is the trained classifier output for <code>p(good ROI)</code>, loaded from <code>roi_model_scores.h5</code> when available.</p>
-        <p>The currently registered trained model is intended for cerebellar dendrite ROIs only; use it as a target-specific suggestion, not a general ROI quality score for other structures.</p>
-        <p>By default, these scores are suggestions for filtering/sorting and do not label ROIs on page load. If the summary was generated with label initialization enabled, probability greater than or equal to the good threshold opens as <strong>Good</strong>, probability less than or equal to the bad threshold opens as <strong>Bad</strong>, and probabilities between those thresholds open as <strong>Unsure</strong>.</p>
       </div>
       <div class="filter-controls">
         <label>Cell type <select id="cellTypeFilter"><option value="">Not Used</option><option value="1">inhibitory/red</option><option value="-1">excitatory/non-red</option><option value="0">unsure</option><option value="not_loaded">not loaded</option></select></label>
-        <input id="cellTypeFile" type="file" accept=".csv,.tsv,.txt" style="display:none;">
-        <button id="loadCellTypeFile" type="button">Load cell-type file</button>
+      </div>
+      <div class="filter-subsection-title source-heading">
+        <span>Model Derived Metrics</span>
+        <button class="info-button" type="button" data-info-target="modelDerivedMetricSources" aria-expanded="false">Read more</button>
+      </div>
+      <div id="modelDerivedMetricSources" class="info-box" hidden>
+        <p>ROI model score probability is the trained classifier output for <code>p(good ROI)</code>, loaded from <code>roi_model_scores.h5</code> when available.</p>
+        <p>The currently registered trained model is intended for cerebellar dendrite ROIs only; use it as a target-specific suggestion, not a general ROI quality score for other structures.</p>
+        <p>By default, these scores are suggestions for filtering/sorting and do not label ROIs on page load. If the summary was generated with label initialization enabled, probability greater than or equal to the good threshold opens as <strong>Good</strong>, probability less than or equal to the bad threshold opens as <strong>Bad</strong>, and probabilities between those thresholds open as <strong>Unsure</strong>.</p>
       </div>
       <div class="filter-controls">
         <label>ROI model score probability min <span class="threshold-default" id="roiModelScoreProbabilityMinDefault"></span><input id="roiModelScoreProbabilityMin" type="number" min="0" max="1" step="0.01" placeholder="Not Used"></label>
@@ -1936,27 +1930,20 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <button class="info-button" type="button" data-info-target="fluorescenceMetricSources" aria-expanded="false">Read more</button>
       </div>
       <div id="fluorescenceMetricSources" class="info-box" hidden>
-        <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>: <code>skew</code> and <code>footprint</code> are Suite2p activity/detection fields, not ROI shape-only fields.</p>
+        <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>: <code>skew</code> is a Suite2p trace activity field, not an ROI shape-only field.</p>
         <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a>: robust transient amplitude, <code>P95 - P50</code>, divided by residual noise.</p>
         <p><a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a>: exceptional-event score where larger values indicate stronger large-transient structure.</p>
-        <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a>: dF/F persistence time where autocorrelation drops to <code>1/e</code>; not a fitted calcium decay constant.</p>
       </div>
       <div class="filter-controls">
         <label>Skew min <input id="skewMin" type="number" step="0.01" placeholder="Not Used"></label>
         <label>Skew max <input id="skewMax" type="number" step="0.01" placeholder="Not Used"></label>
         <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="skew" data-min="skewMin" data-max="skewMax" aria-label="Skew distribution"></canvas></details>
-        <label>Footprint min <input id="footprintMin" type="number" step="0.01" placeholder="Not Used"></label>
-        <label>Footprint max <input id="footprintMax" type="number" step="0.01" placeholder="Not Used"></label>
-        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="footprint" data-min="footprintMin" data-max="footprintMax" aria-label="Footprint distribution"></canvas></details>
         <label>SNR: 95/50 percentile min <span class="threshold-default" id="eventSnrDefault"></span><input id="eventSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
         <span></span>
         <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="snr_95_50" data-min="eventSnrMin" aria-label="SNR 95/50 percentile distribution"></canvas></details>
         <label>SNR: CaImAn (large-transient score) min <span class="threshold-default" id="andreaPostdocSnrDefault"></span><input id="andreaPostdocSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
         <span></span>
         <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="andrea_postdoc_snr" data-min="andreaPostdocSnrMin" aria-label="CaImAn SNR distribution"></canvas></details>
-        <label>Autocorrelation e-fold time min (s) <span class="threshold-default" id="autocorrEfoldMinDefault"></span><input id="autocorrEfoldMin" type="number" step="0.01" placeholder="Not Used"></label>
-        <label>Autocorrelation e-fold time max (s) <span class="threshold-default" id="autocorrEfoldMaxDefault"></span><input id="autocorrEfoldMax" type="number" step="0.01" placeholder="Not Used"></label>
-        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="autocorr_efold_time_seconds" data-min="autocorrEfoldMin" data-max="autocorrEfoldMax" aria-label="Autocorrelation e-fold time distribution"></canvas></details>
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Inferred Spike Metrics</span>
@@ -1965,6 +1952,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <div id="inferredSpikeMetricSources" class="info-box" hidden>
         <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/processing_summary.py#L470-L556" target="_blank" rel="noopener noreferrer">Inferred spike metric calculation code</a>: metrics are calculated from dF/F windows around thresholded inferred spike amplitudes.</p>
         <p>The current pipeline can generate inferred spike amplitudes with Suite2p/OASIS, but these reviewer metrics only require an ROI-by-frame inferred-spike amplitude array in the expected format.</p>
+        <p>For each ROI, the default inferred-spike threshold is selected from the configured stage threshold plus the 50th, 60th, 70th, 80th, 90th, and 95th percentiles of positive inferred-spike amplitudes. The selected threshold is the candidate that minimizes the Gaussian-fit KS distance of residuals from frames within ±3 frames of thresholded inferred spikes.</p>
       </div>
       <div class="filter-controls">
         <label>Inferred spike SNR min <span class="threshold-default" id="oasisEventSnrDefault"></span><input id="oasisEventSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
@@ -2016,8 +2004,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <p>Cell-type code comes from loaded anatomical-channel label outputs or an uploaded table: <code>-1</code> excitatory/non-red, <code>0</code> unsure, <code>1</code> inhibitory/red.</p>
       <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L122-L158" target="_blank" rel="noopener noreferrer">SNR: 95/50 percentile calculation code</a></p>
       <p><a class="docs-link" href="https://github.com/farznaj/imaging_decisionMaking_exc_inh/blob/master/imaging/evaluate_components.py" target="_blank" rel="noopener noreferrer">CaImAn-style large-transient score source code</a></p>
-      <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L251-L291" target="_blank" rel="noopener noreferrer">Autocorrelation e-fold time calculation code</a></p>
       <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/processing_summary.py#L470-L556" target="_blank" rel="noopener noreferrer">Inferred spike metric calculation code</a>: metrics are calculated from thresholded inferred-spike amplitude windows.</p>
+      <p>ROI model score probability is loaded from <code>roi_model_scores.h5</code> when available; the currently registered model is intended for cerebellar dendrite ROIs only unless another checkpoint is supplied.</p>
     </div>
     <div class="trace-sort">
       <div>
@@ -2031,18 +2019,17 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <label><input type="checkbox" name="sortMetric" value="connectivity"> Connectivity</label>
           <div class="sort-metric-group">Cell Type / Indicator Metrics</div>
           <label><input type="checkbox" name="sortMetric" value="cell_type_code"> Cell type code</label>
-          <label><input type="checkbox" name="sortMetric" value="roi_model_score_probability"> ROI model score probability</label>
           <div class="sort-metric-group">Fluorescence Trace Metrics</div>
-          <label><input type="checkbox" name="sortMetric" value="footprint"> Footprint</label>
           <label><input type="checkbox" name="sortMetric" value="skew"> Skew</label>
           <label><input type="checkbox" name="sortMetric" value="snr_95_50"> SNR: 95/50 percentile</label>
           <label><input type="checkbox" name="sortMetric" value="andrea_postdoc_snr"> SNR: CaImAn (large-transient score)</label>
-          <label><input type="checkbox" name="sortMetric" value="autocorr_efold_time_seconds"> Autocorrelation e-fold time</label>
           <div class="sort-metric-group">Inferred Spike Metrics</div>
           <label><input type="checkbox" name="sortMetric" value="oasis_event_snr"> Inferred spike SNR</label>
           <label><input type="checkbox" name="sortMetric" value="oasis_rise_tau_seconds"> Inferred spike rise tau</label>
           <label><input type="checkbox" name="sortMetric" value="oasis_decay_tau_seconds"> Inferred spike decay tau</label>
           <label><input type="checkbox" name="sortMetric" value="oasis_event_residual_ks"> Inferred spike residual Gaussian-fit distance</label>
+          <div class="sort-metric-group">Model Derived Metrics</div>
+          <label><input type="checkbox" name="sortMetric" value="roi_model_score_probability"> ROI model score probability</label>
         </div>
       </div>
       <div class="sort-actions">
@@ -2143,6 +2130,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <p>Inferred spikes are loaded as an ROI-by-frame amplitude array. The current pipeline can produce that array with Suite2p's OASIS deconvolution, but the viewer only requires the same array shape and semantics.</p>
           <p>The underlying values are inferred spike amplitudes, not spike probabilities. Larger values mean the inference method assigned a stronger spike-like transient at that frame.</p>
           <p>The amplitude threshold is a viewer-side cutoff: frames with inferred spike amplitude above the selected threshold are drawn as red dots on the dF/F trace. The default per ROI is the precomputed threshold whose inferred-spike-window residuals had the smallest distance to a fitted Gaussian among tested candidate thresholds.</p>
+          <p>Those candidate thresholds are the configured spike-inference stage threshold plus the 50th, 60th, 70th, 80th, 90th, and 95th percentiles of positive inferred-spike amplitudes for the selected ROI.</p>
           <p>The sortable residual Gaussian-fit metric is that minimized distance. Lower values mean the inferred-spike-window residuals were closer to Gaussian under the best tested threshold.</p>
           <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/deconvolution/" target="_blank" rel="noopener noreferrer">Suite2p spike deconvolution / OASIS documentation</a></p>
           <p><a class="docs-link" href="https://doi.org/10.1371/journal.pcbi.1005423" target="_blank" rel="noopener noreferrer">Original OASIS deconvolution paper</a></p>
@@ -2166,6 +2154,15 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
     <aside class="side-menu">
       <button id="toggleSideMenu" class="side-menu-toggle" type="button" aria-expanded="true">Hide menu</button>
       <div class="control-column">
+          <details class="panel label-controls menu-card" open>
+            <summary>Cell Type Labels</summary>
+            <div class="menu-card-content">
+              <div class="note" id="cellTypeLabelStatus"></div>
+              <input id="cellTypeFile" type="file" accept=".csv,.tsv,.txt" style="display:none;">
+              <button id="loadCellTypeFile" type="button">Load cell-type file</button>
+              <div class="note">CSV/TSV format: one row per original Suite2p ROI with <code>cell_type_code</code> and <code>cell_type_label</code>. Optional <code>suite2p_index</code>, <code>roi</code>, or <code>index</code> maps rows by Suite2p index.</div>
+            </div>
+          </details>
           <details class="panel morphology-card menu-card" open>
             <summary>Filter</summary>
             <div class="menu-card-content">
@@ -2192,7 +2189,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
               <summary id="roiDetailsSummary">Selected ROI Details</summary>
               <div id="readout"></div>
             </details>
-            <div class="note" id="cellTypeLabelStatus"></div>
             <div class="button-row">
               <button id="markGood" class="good">Good (G)</button>
               <button id="markBad" class="bad">Bad (B)</button>
@@ -2564,7 +2560,6 @@ function dffMetricValue(metrics, key, fallbackKey = null) {{
 function metricValue(roi, metric) {{
   if (metric === "snr_95_50" || metric === "event_snr") return dffMetric(roi, "snr_95_50", "event_snr");
   if (metric === "andrea_postdoc_snr") return dffMetric(roi, "andrea_postdoc_snr");
-  if (metric === "autocorr_efold_time_seconds") return dffMetric(roi, "autocorr_efold_time_seconds", "decay_tau_seconds");
   if (metric === "oasis_event_residual_ks") return dffMetric(roi, "oasis_event_residual_ks");
   if (metric === "oasis_event_snr") return dffMetric(roi, "oasis_event_snr");
   if (metric === "oasis_rise_tau_seconds") return dffMetric(roi, "oasis_rise_tau_seconds");
@@ -2576,14 +2571,12 @@ function metricValue(roi, metric) {{
   if (metric === "skew") return data.morphology[roi].skew;
   if (metric === "aspect") return data.morphology[roi].aspect;
   if (metric === "compact") return data.morphology[roi].compact;
-  if (metric === "footprint") return data.morphology[roi].footprint;
   if (metric === "original" || metric === "suite2p_index") return data.suite2pIndices[roi];
   return roi;
 }}
 function metricLabel(metric) {{
   if (metric === "snr_95_50" || metric === "event_snr") return "SNR: 95/50 percentile";
   if (metric === "andrea_postdoc_snr") return "SNR: CaImAn (large-transient score)";
-  if (metric === "autocorr_efold_time_seconds") return "Autocorrelation e-fold time";
   if (metric === "oasis_event_residual_ks") return "inferred spike residual Gaussian-fit distance";
   if (metric === "oasis_event_snr") return "inferred spike SNR";
   if (metric === "oasis_rise_tau_seconds") return "inferred spike rise tau";
@@ -2595,7 +2588,6 @@ function metricLabel(metric) {{
   if (metric === "skew") return "Skew";
   if (metric === "aspect") return "Aspect ratio";
   if (metric === "compact") return "Compactness";
-  if (metric === "footprint") return "Footprint";
   if (metric === "original" || metric === "suite2p_index") return "original Suite2p index";
   return metric.replace("_", " ");
 }}
@@ -2631,13 +2623,11 @@ function setSuggestedThreshold(inputId, value) {{
 function updateMetricDefaults() {{
   const skew = finiteMetricValues("skew");
   const aspect = finiteMetricValues("aspect");
-  const footprint = finiteMetricValues("footprint");
   const compact = finiteMetricValues("compact");
   const connect = finiteMetricValues("connectivity");
   const roiArea = finiteMetricValues("roi_area");
   const snr9550 = finiteMetricValues("snr_95_50");
   const caiman = finiteMetricValues("andrea_postdoc_snr");
-  const efold = finiteMetricValues("autocorr_efold_time_seconds");
   const oasisSnr = finiteMetricValues("oasis_event_snr");
   const oasisRiseTau = finiteMetricValues("oasis_rise_tau_seconds");
   const oasisDecayTau = finiteMetricValues("oasis_decay_tau_seconds");
@@ -2648,8 +2638,6 @@ function updateMetricDefaults() {{
   setSuggestedThreshold("skewMax", selectedPreset.skewMax ?? mean(skew));
   setSuggestedThreshold("aspectMin", selectedPreset.aspectMin ?? mean(aspect));
   setSuggestedThreshold("aspectMax", selectedPreset.aspectMax ?? mean(aspect));
-  setSuggestedThreshold("footprintMin", selectedPreset.footprintMin ?? mean(footprint));
-  setSuggestedThreshold("footprintMax", selectedPreset.footprintMax ?? mean(footprint));
   setSuggestedThreshold("compactMin", selectedPreset.compactMin ?? mean(compact));
   setSuggestedThreshold("compactMax", selectedPreset.compactMax ?? mean(compact));
   setSuggestedThreshold("maxConnect", percentile(connect, 0.75));
@@ -2657,8 +2645,6 @@ function updateMetricDefaults() {{
   setSuggestedThreshold("roiAreaMax", percentile(roiArea, 0.75));
   setSuggestedThreshold("eventSnrMin", mean(snr9550));
   setSuggestedThreshold("andreaPostdocSnrMin", mean(caiman));
-  setSuggestedThreshold("autocorrEfoldMin", percentile(efold, 0.25));
-  setSuggestedThreshold("autocorrEfoldMax", percentile(efold, 0.75));
   setSuggestedThreshold("oasisEventSnrMin", mean(oasisSnr));
   setSuggestedThreshold("oasisRiseTauMin", percentile(oasisRiseTau, 0.25));
   setSuggestedThreshold("oasisRiseTauMax", percentile(oasisRiseTau, 0.75));
@@ -2672,8 +2658,6 @@ function updateMetricDefaults() {{
   document.getElementById("roiAreaMaxDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.roiAreaMax)}})`;
   document.getElementById("eventSnrDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.eventSnrMin)}})`;
   document.getElementById("andreaPostdocSnrDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.andreaPostdocSnrMin)}})`;
-  document.getElementById("autocorrEfoldMinDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.autocorrEfoldMin)}})`;
-  document.getElementById("autocorrEfoldMaxDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.autocorrEfoldMax)}})`;
   document.getElementById("oasisEventSnrDefault").textContent = oasisSnr.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisEventSnrMin)}})` : "";
   document.getElementById("oasisRiseTauMinDefault").textContent = oasisRiseTau.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisRiseTauMin)}})` : "";
   document.getElementById("oasisRiseTauMaxDefault").textContent = oasisRiseTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisRiseTauMax)}})` : "";
@@ -2708,12 +2692,10 @@ function updateSuite2pSuggestedThresholds(filter) {{
     skewMax: mean(finiteMetricValues("skew")),
     aspectMin: mean(finiteMetricValues("aspect")),
     aspectMax: mean(finiteMetricValues("aspect")),
-    footprintMin: mean(finiteMetricValues("footprint")),
-    footprintMax: mean(finiteMetricValues("footprint")),
     compactMin: mean(finiteMetricValues("compact")),
     compactMax: mean(finiteMetricValues("compact")),
   }};
-  for (const id of ["skewMin","skewMax","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"]) {{
+  for (const id of ["skewMin","skewMax","aspectMin","aspectMax","compactMin","compactMax"]) {{
     setSuggestedThreshold(id, filter && filter[id] !== null && filter[id] !== undefined ? filter[id] : fallback[id]);
   }}
 }}
@@ -2920,7 +2902,7 @@ function setSelected(roi) {{
   if (data.oasisAvailable) setOasisThreshold(selectedOasisDefaultThreshold(), false);
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `cell type ${{cellType}}${{roiModelText}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} footprint ${{fmt(metrics.footprint)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} s | inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
+  document.getElementById("readout").textContent = `cell type ${{cellType}}${{roiModelText}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
   document.getElementById("traceTitle").textContent = `Selected ROI - Suite2p Original Index ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -3033,12 +3015,10 @@ function readFilter() {{
     skewMin: filterValue("skewMin"), skewMax: filterValue("skewMax"),
     maxConnect: filterValue("maxConnect"),
     aspectMin: filterValue("aspectMin"), aspectMax: filterValue("aspectMax"),
-    footprintMin: filterValue("footprintMin"), footprintMax: filterValue("footprintMax"),
     compactMin: filterValue("compactMin"), compactMax: filterValue("compactMax"),
     roiAreaMin: filterValue("roiAreaMin"), roiAreaMax: filterValue("roiAreaMax"),
     eventSnrMin: filterValue("eventSnrMin"),
     andreaPostdocSnrMin: filterValue("andreaPostdocSnrMin"),
-    autocorrEfoldMin: filterValue("autocorrEfoldMin"), autocorrEfoldMax: filterValue("autocorrEfoldMax"),
     oasisEventSnrMin: filterValue("oasisEventSnrMin"),
     oasisRiseTauMin: filterValue("oasisRiseTauMin"), oasisRiseTauMax: filterValue("oasisRiseTauMax"),
     oasisDecayTauMin: filterValue("oasisDecayTauMin"), oasisDecayTauMax: filterValue("oasisDecayTauMax"),
@@ -3049,10 +3029,8 @@ function readFilter() {{
   }};
 }}
 function normalizeFilter(filter) {{
-  if (filter.decayTauMin !== undefined && filter.autocorrEfoldMin === undefined) filter.autocorrEfoldMin = filter.decayTauMin;
-  if (filter.decayTauMax !== undefined && filter.autocorrEfoldMax === undefined) filter.autocorrEfoldMax = filter.decayTauMax;
   const normalized = {{}};
-  for (const key of ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax"]) {{
+  for (const key of ["skewMin","skewMax","maxConnect","aspectMin","aspectMax","compactMin","compactMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -3060,7 +3038,7 @@ function normalizeFilter(filter) {{
     const value = Number(filter[key]);
     normalized[key] = Number.isFinite(value) ? value : null;
   }}
-  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"]) {{
+  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -3132,7 +3110,6 @@ function passesFilter(roi, metrics, filter) {{
     cellTypeFilter === "not_loaded" ? (cellTypeValue === null || cellTypeValue === undefined) : Number(cellTypeValue) === Number(cellTypeFilter)
   );
   return (
-    passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax) &&
     passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax) &&
     passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax) &&
     passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax) &&
@@ -3141,8 +3118,6 @@ function passesFilter(roi, metrics, filter) {{
     passesUpper(dffMetrics.roi_area, filter.roiAreaMax) &&
     passesLower(snr9550, filter.eventSnrMin) &&
     passesLower(postdocSnr, filter.andreaPostdocSnrMin) &&
-    passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin) &&
-    passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax) &&
     passesLower(oasisEventSnr, filter.oasisEventSnrMin) &&
     passesLower(oasisRiseTau, filter.oasisRiseTauMin) &&
     passesUpper(oasisRiseTau, filter.oasisRiseTauMax) &&
@@ -3165,8 +3140,6 @@ function morphologyReasons(metrics, dffMetrics, filter, roi = null) {{
   const roiModelProbability = metricValue(roi, "roi_model_score_probability");
   const cellTypeFilter = filter.cellTypeFilter;
   if (roi === null || roi === undefined) roi = data.dffMetrics.indexOf(dffMetrics);
-  if (!passesLower(metrics.footprint, filter.footprintMin)) reasons.push(`footprint ${{fmt(metrics.footprint)}} below ${{filter.footprintMin}}`);
-  if (!passesUpper(metrics.footprint, filter.footprintMax)) reasons.push(`footprint ${{fmt(metrics.footprint)}} above ${{filter.footprintMax}}`);
   if (!passesLower(metrics.skew, filter.skewMin)) reasons.push(`skew ${{fmt(metrics.skew)}} below ${{filter.skewMin}}`);
   if (!passesUpper(metrics.skew, filter.skewMax)) reasons.push(`skew ${{fmt(metrics.skew)}} above ${{filter.skewMax}}`);
   if (!passesLower(metrics.aspect, filter.aspectMin)) reasons.push(`aspect_ratio ${{fmt(metrics.aspect)}} below ${{filter.aspectMin}}`);
@@ -3178,8 +3151,6 @@ function morphologyReasons(metrics, dffMetrics, filter, roi = null) {{
   if (!passesUpper(dffMetrics.roi_area, filter.roiAreaMax)) reasons.push(`ROI area ${{fmt(dffMetrics.roi_area)}} above ${{filter.roiAreaMax}}`);
   if (!passesLower(snr9550, filter.eventSnrMin)) reasons.push(`SNR: 95/50 percentile ${{fmt(snr9550)}} below ${{filter.eventSnrMin}}`);
   if (!passesLower(postdocSnr, filter.andreaPostdocSnrMin)) reasons.push(`SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} below ${{filter.andreaPostdocSnrMin}}`);
-  if (!passesLower(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMin)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} below ${{filter.autocorrEfoldMin}}`);
-  if (!passesUpper(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"), filter.autocorrEfoldMax)) reasons.push(`autocorrelation e-fold time ${{fmt(dffMetricValue(dffMetrics, "autocorr_efold_time_seconds", "decay_tau_seconds"))}} above ${{filter.autocorrEfoldMax}}`);
   if (!passesLower(oasisEventSnr, filter.oasisEventSnrMin)) reasons.push(`inferred spike SNR ${{fmt(oasisEventSnr)}} below ${{filter.oasisEventSnrMin}}`);
   if (!passesLower(oasisRiseTau, filter.oasisRiseTauMin)) reasons.push(`inferred spike rise tau ${{fmt(oasisRiseTau)}} below ${{filter.oasisRiseTauMin}}`);
   if (!passesUpper(oasisRiseTau, filter.oasisRiseTauMax)) reasons.push(`inferred spike rise tau ${{fmt(oasisRiseTau)}} above ${{filter.oasisRiseTauMax}}`);
@@ -4173,7 +4144,6 @@ function metricSpreadsheetRows() {{
       oasisDecayTau,
       oasisResidualKs,
       fail: {{
-        footprint: !(passesLower(metrics.footprint, filter.footprintMin) && passesUpper(metrics.footprint, filter.footprintMax)),
         skew: !(passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax)),
         aspect: !(passesLower(metrics.aspect, filter.aspectMin) && passesUpper(metrics.aspect, filter.aspectMax)),
         compact: !(passesLower(metrics.compact, filter.compactMin) && passesUpper(metrics.compact, filter.compactMax)),
@@ -4181,7 +4151,6 @@ function metricSpreadsheetRows() {{
         roiArea: !(passesLower(dffMetrics.roi_area, filter.roiAreaMin) && passesUpper(dffMetrics.roi_area, filter.roiAreaMax)),
         snr9550: !passesLower(snr9550, filter.eventSnrMin),
         postdocSnr: !passesLower(postdocSnr, filter.andreaPostdocSnrMin),
-        autocorrEfold: !(passesLower(autocorrEfold, filter.autocorrEfoldMin) && passesUpper(autocorrEfold, filter.autocorrEfoldMax)),
         oasisEventSnr: !passesLower(oasisEventSnr, filter.oasisEventSnrMin),
         oasisRiseTau: !(passesLower(oasisRiseTau, filter.oasisRiseTauMin) && passesUpper(oasisRiseTau, filter.oasisRiseTauMax)),
         oasisDecayTau: !(passesLower(oasisDecayTau, filter.oasisDecayTauMin) && passesUpper(oasisDecayTau, filter.oasisDecayTauMax)),
@@ -4432,9 +4401,11 @@ if (oasisDiagnosticsPanel && toggleOasisDiagnostics) {{
     requestAnimationFrame(draw);
   }});
 }}
-["skewMin","skewMax","maxConnect","aspectMin","aspectMax","footprintMin","footprintMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","autocorrEfoldMin","autocorrEfoldMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","cellTypeFilter","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"].forEach(id => {{
-  document.getElementById(id).addEventListener("change", evaluateFilter);
-  document.getElementById(id).addEventListener("input", drawMetricHistograms);
+["skewMin","skewMax","maxConnect","aspectMin","aspectMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","cellTypeFilter","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"].forEach(id => {{
+  const element = document.getElementById(id);
+  if (!element) return;
+  element.addEventListener("change", evaluateFilter);
+  element.addEventListener("input", drawMetricHistograms);
 }});
 document.querySelectorAll(".metric-histogram-panel").forEach(panel => {{
   panel.addEventListener("toggle", () => {{
