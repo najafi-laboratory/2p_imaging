@@ -20,6 +20,11 @@ Visual conventions
   Gaussian smoothing (σ = 1.5 px) is applied before contouring to merge the
   small disconnected fragments that arise from sparse suite2p masks after
   nonrigid warping.
+- Nearest neighbouring ROI: thin dashed orange contour in the zoomed row,
+  drawn for the nearest other ROI of that session whose centroid falls inside
+  the crop box.  On a session with no detection this shows whether a plausible
+  cell sits under the box (cluster likely incomplete) or the crop is genuinely
+  empty (the ROI was never segmented).
 - Sessions with no detection for this UCID are left blank (no marker).
 - Crop box: a thin dashed yellow rectangle drawn on full-FOV rows (raw and
   aligned) to show where the zoomed row sits spatially.
@@ -191,6 +196,82 @@ def _session_roi_index(labels_bySession, session, ucid):
     return int(hits[0]) if len(hits) else None
 
 
+# Contour style for the nearest neighbouring ROI: subordinate to the tracked
+# ROI (thinner, dashed, different hue) so it reads as context, not as the cell.
+_NEIGHBOR_COLOR = "#ff9f40"
+
+# {id(container): (container, per-session centroids)}.  The container itself is
+# kept in the value so it cannot be garbage-collected and have its id() reused
+# by a different object while the entry is live.
+_CENTROID_CACHE: dict = {}
+
+
+def _centroids_of_block(block, H, W):
+    """(n_roi, 2) array of (row, col) centroids for every ROI in one session.
+
+    One vectorised pass: the flat pixel index carries the row and column, so
+    the weighted sums are a single matrix-vector product each.  ROIs with no
+    mass get NaN, which the neighbour search filters out.
+    """
+    idx = np.arange(H * W)
+    idx_row, idx_col = idx // W, idx % W
+    if sp.issparse(block):
+        M = sp.csr_matrix(block)
+        total = np.asarray(M.sum(1)).ravel()
+        rows = np.asarray(M @ idx_row).ravel()
+        cols = np.asarray(M @ idx_col).ravel()
+    else:
+        flat = np.asarray(block, dtype=float)
+        flat = flat.reshape(flat.shape[0], -1)
+        total = flat.sum(1)
+        rows = flat @ idx_row
+        cols = flat @ idx_col
+    safe = np.where(total > 0, total, 1.0)
+    cen = np.stack([rows / safe, cols / safe], 1)
+    cen[total <= 0] = np.nan
+    return cen
+
+
+def _all_roi_centroids(rois_aligned, session, H, W):
+    """Cached per-session ROI centroids.
+
+    The exporters build one figure per UCID off the same ROI container, so an
+    uncached rescan of every ROI would make the neighbour lookup dominate the
+    run.  Computed lazily, once per session.
+    """
+    key = id(rois_aligned)
+    entry = _CENTROID_CACHE.get(key)
+    if entry is None or entry[0] is not rois_aligned:
+        entry = (rois_aligned, [None] * len(rois_aligned))
+        _CENTROID_CACHE[key] = entry
+    per_session = entry[1]
+    if per_session[session] is None:
+        per_session[session] = _centroids_of_block(rois_aligned[session], H, W)
+    return per_session[session]
+
+
+def _neighbor_roi_indices(centroids, centroid, crop_hw, exclude, n_neighbors):
+    """Indices of the ROIs nearest `centroid` that fall inside the crop box.
+
+    `exclude` is the tracked ROI's own index (or None when this session has no
+    detection), so the tracked cell is never returned as its own neighbour.
+    """
+    if centroids is None or n_neighbors < 1 or len(centroids) == 0:
+        return []
+    r, c = centroid
+    dr = centroids[:, 0] - r
+    dc = centroids[:, 1] - c
+    inside = (np.abs(dr) <= crop_hw) & (np.abs(dc) <= crop_hw)
+    inside &= np.isfinite(dr) & np.isfinite(dc)
+    if exclude is not None:
+        inside[exclude] = False
+    cand = np.where(inside)[0]
+    if len(cand) == 0:
+        return []
+    order = np.argsort(np.hypot(dr[cand], dc[cand]))
+    return [int(i) for i in cand[order[:n_neighbors]]]
+
+
 def _draw(
     ax,
     bg,
@@ -203,6 +284,7 @@ def _draw(
     zoom_box_hw=None,
     zoom_box_centroids=None,
     aligned_mask=None,
+    neighbor_fps=None,
 ):
     """Render one panel of the QC figure.
 
@@ -222,6 +304,9 @@ def _draw(
     zoom_box_centroids : list of (row, col) or None
         Centres for each yellow box.  When None, a single box is drawn at
         `centroid`.  Pass a per-session list to draw one box per session.
+    neighbor_fps : list of (H, W) arrays or None
+        Footprints of neighbouring ROIs, drawn as thin dashed orange contours
+        beneath the tracked ROI's own contour.
     aligned_mask : (H_raw, W_raw) bool array or None
         When supplied, draw a cyan contour showing the valid tissue boundary of
         the raw FOV (True = tissue, False = uniform fill / background).
@@ -230,6 +315,19 @@ def _draw(
     fH, fW = bg.shape
     ax.imshow(bg, cmap="gray", vmin=0, vmax=1, interpolation="nearest")
     r, c = centroid
+
+    for nfp in neighbor_fps or []:
+        if nfp is None or nfp.max() <= 0:
+            continue
+        nfp_s = gaussian_filter(nfp.astype(float), sigma=1.5)
+        if nfp_s.max() > 0:
+            ax.contour(
+                nfp_s,
+                levels=[nfp_s.max() * 0.5],
+                colors=[_NEIGHBOR_COLOR],
+                linewidths=0.7,
+                linestyles="--",
+            )
 
     if present and fp is not None and fp.max() > 0:
         # Gaussian smoothing merges the small disconnected fragments that arise
@@ -355,6 +453,7 @@ def build_ucid_figure(
     remapping_idxs=None,
     mouse_name=None,
     crop_halfwidth=40,
+    n_neighbors=1,
     superimpose="mean",
     roi_color="red",
     cs_sil_value=None,
@@ -374,6 +473,10 @@ def build_ucid_figure(
         Pre-alignment ROI footprints.  When supplied alongside fovs_raw, the
         raw-FOV row uses these footprints (and their centroid) so that the ROI
         contour and yellow crop-box reflect the true pre-alignment position.
+    n_neighbors : int
+        How many of the session's other ROIs to outline in the zoomed row —
+        the nearest ones whose centroid lands inside the crop box.  0 disables
+        it; raising it past 1 gets busy fast in a dense field.
     mouse_name : str or None
         E.g. "SA11_LG".  Prepended to the figure suptitle.
     session_names : list of str or None
@@ -412,6 +515,22 @@ def build_ucid_figure(
     present_fps = [f for f, p in zip(fps, present) if p and f is not None]
     fp_con = np.sum(present_fps, 0) if present_fps else np.zeros((H, W))
     centroid = _weighted_centroid(fp_con)
+
+    # --- nearest neighbouring ROIs, for the zoomed row only ---
+    # Full-FOV rows are far too coarse for these to read as anything but noise.
+    neighbor_fps: list[list[np.ndarray]] = [[] for _ in range(n)]
+    if n_neighbors:
+        for s in range(n):
+            for j in _neighbor_roi_indices(
+                _all_roi_centroids(rois_aligned, s, H, W),
+                centroid,
+                crop_halfwidth,
+                idxs[s],
+                n_neighbors,
+            ):
+                fp_j = _footprint_image(rois_aligned, s, j, H, W)
+                if fp_j is not None:
+                    neighbor_fps[s].append(fp_j)
 
     # Per-session tissue masks placed in raw-image coordinates for the cyan outline
     aligned_masks: list[np.ndarray] = []
@@ -540,6 +659,7 @@ def build_ucid_figure(
             roi_color,
             present[s],
             None,
+            neighbor_fps=neighbor_fps[s],
         )
 
     # --- row labels (left-column y-axes) ---
