@@ -20,7 +20,7 @@ Visual conventions
   Gaussian smoothing (σ = 1.5 px) is applied before contouring to merge the
   small disconnected fragments that arise from sparse suite2p masks after
   nonrigid warping.
-- Nearest neighbouring ROI: thin dashed orange contour in the zoomed row,
+- Nearest neighbouring ROI: thin dashed green contour in the zoomed row,
   drawn for the nearest other ROI of that session whose centroid falls inside
   the crop box.  On a session with no detection this shows whether a plausible
   cell sits under the box (cluster likely incomplete) or the crop is genuinely
@@ -198,7 +198,9 @@ def _session_roi_index(labels_bySession, session, ucid):
 
 # Contour style for the nearest neighbouring ROI: subordinate to the tracked
 # ROI (thinner, dashed, different hue) so it reads as context, not as the cell.
-_NEIGHBOR_COLOR = "#ff9f40"
+# Green sits far from the red tracked contour in hue and clear of the cyan used
+# for the raw-row tissue boundary.
+_NEIGHBOR_COLOR = "#3ddc84"
 
 # {id(container): (container, per-session centroids)}.  The container itself is
 # kept in the value so it cannot be garbage-collected and have its id() reused
@@ -305,7 +307,7 @@ def _draw(
         Centres for each yellow box.  When None, a single box is drawn at
         `centroid`.  Pass a per-session list to draw one box per session.
     neighbor_fps : list of (H, W) arrays or None
-        Footprints of neighbouring ROIs, drawn as thin dashed orange contours
+        Footprints of neighbouring ROIs, drawn as thin dashed green contours
         beneath the tracked ROI's own contour.
     aligned_mask : (H_raw, W_raw) bool array or None
         When supplied, draw a cyan contour showing the valid tissue boundary of
