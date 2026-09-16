@@ -38,4 +38,5 @@ nav:
       - EBC: ebc.md
       - DLC Local Setup: DLC_Local_Setup.md
       - DLC Pipeline: DLC_Pipeline.md
+      - motion energy: MOTION_ENERGY.md
       
