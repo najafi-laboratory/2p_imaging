@@ -26,6 +26,7 @@ nav:
           - Preprocessing: preprocessing.md
           - Postprocessing: postprocessing.md
       - Adding Manual ROIs: manual-roi-workflow.md
+      - Extra steps for manual ROI labeling: manual_roi_labeling_updated.md
       - Interactive ROI Labeling: roi-reviewer-exports.md
   - Cross-Session Analysis:
       - ROI Tracking: roi-tracking.md
@@ -37,3 +38,4 @@ nav:
       - EBC: ebc.md
       - DLC Local Setup: DLC_Local_Setup.md
       - DLC Pipeline: DLC_Pipeline.md
+      
