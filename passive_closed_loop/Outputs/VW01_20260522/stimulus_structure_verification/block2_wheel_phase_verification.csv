@@ -1,0 +1,2 @@
+standard_updates,wheel_samples,valid_update_pairs,correlation,r_squared,gain_rad_per_wheel_degree,gain_phase_degrees_per_wheel_degree,median_abs_residual_rad,p95_abs_residual_rad,residual_rmse_rad,status
+45321,88828,45234,0.9917248248985874,0.9835037040097098,0.03288723952267282,1.8843000244849886,0.0004434257779161316,0.012523423893479017,0.006923079632323598,PASS

@@ -1,0 +1,8 @@
+Block,Label,Expected rows,Recorded rows,Type counts match,Stim timing,Semantic/order check,Note
+1,Control block 1.1,544,544,True,PASS,PASS,all semantic fields and row order match
+2,Sensory-motor mismatch block,45461,45461,True,PASS,PASS,planned wheel phase replaced by recorded numeric phase
+3,Control block 1.2,544,544,True,PASS,PASS,all semantic fields and row order match
+4,Control block 2,1120,1120,True,PASS,PASS,all semantic fields and row order match
+5,Control block 3,556,556,True,PASS,PASS,all semantic fields and row order match
+6,Control block 4,11520,11520,True,PASS,PASS,all semantic fields and row order match
+7,Trippy,2,1,False,PASS,FAIL,"row count differs (2 expected, 1 recorded)"
