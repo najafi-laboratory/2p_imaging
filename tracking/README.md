@@ -66,7 +66,7 @@ ROICaT (`roicat[all]`) comes in via pip in that environment file. The ROInet wei
 
 Run the notebook from inside this directory — `import pipeline` and `import roi_tracking_qc` both resolve relative to the notebook's location.
 
-**macOS note.** The first code cell sets `NUMBA_THREADING_LAYER=workqueue`, single-threaded `OMP`/`MKL`, and `KMP_DUPLICATE_LIB_OK=TRUE` *before* numpy/numba/roicat are imported, to avoid an Intel OpenMP crash. Keep that cell first and don't import anything above it.
+**macOS note.** The environment cell — the one directly above the import cell, headed *"Environment settings applied before importing roicat/numba/numpy"* — sets `NUMBA_THREADING_LAYER=workqueue`, single-threaded `NUMBA`/`OMP`/`MKL`, and `KMP_DUPLICATE_LIB_OK=TRUE` to avoid an Intel OpenMP crash. Those have to be set *before* numpy/numba/roicat are imported, so keep that cell above the imports and don't import any of them earlier. (The notebook-width cell above it touches only `IPython.display`, which is harmless.)
 
 ### 1. Paths and session discovery
 
@@ -109,7 +109,7 @@ A helper cell then reads that `bpod_session_data.mat` and tags each session by s
 | passive | `random` / `fix_jitter_odd` | `SessionData.RandomTypes` / `OddballTypes` |
 | neither | `unknown` | no `bpod_session_data.mat`, or no recognized fields |
 
-A passive `3331Random` session flags every trial random with no oddballs; `4131FixJitterOdd` interleaves ~950 oddball trials over a fix/jitter split and still carries ~100 random trials, so the discriminator is `all(RandomTypes == 1)`, not `any`. These tags are cosmetic — they only feed panel titles in the QC figures and contact sheets — but they make it obvious at a glance when a batch mixes protocols.
+A passive `3331Random` session flags every trial random with no oddballs; `4131FixJitterOdd` interleaves ~950 oddball trials over a fix/jitter split and still carries ~100 random trials, so the discriminator is `all(RandomTypes == 1)` **and** no oddballs, not `any`. These tags are cosmetic — they only feed panel titles in the QC figures and contact sheets — but they make it obvious at a glance when a batch mixes protocols.
 
 `um_per_pixel` is the one genuinely important parameter at this stage: a scalar, or a per-session list if resolution differs.
 
@@ -118,7 +118,7 @@ A passive `3331Random` session flags every trial random with no oddballs; `4131F
 The most important step, and the one worth stopping at. Four sub-steps:
 
 1. **FOV augmentation** — blends the mean FOV with the ROI max-projection (`roi_FOV_mixing_factor=0.5`) and applies CLAHE. Turn CLAHE off for poor-quality or badly-drifting data.
-2. **Geometric fit** — `DISK_LightGlue`, `constraint='affine'`, sequential templating (good for data that drifts across sessions). `RoMa` is more accurate but very slow on CPU; `LoFTR` and `ECC_cv2` sit in between. Check `plot_alignment_results_geometric()` before moving on.
+2. **Geometric fit** — `ALIGN_METHOD` (`RoMa` by default), `constraint='affine'`, sequential templating (good for data that drifts across sessions). `RoMa` is the most accurate and by far the slowest on CPU; `DISK_LightGlue` is the fast fallback, with `LoFTR` and `ECC_cv2` in between. Set the method in the **Alignment method** cell, not here, so the overlap screen used the same one. Check `plot_alignment_results_geometric()` before moving on.
 3. **Non-rigid fit** — `DeepFlow` on top of the geometrically registered images, aligned to a single template image. Good in the middle of the FOV, weaker at the edges.
 4. **Transform ROIs** — warps the spatial footprints through `remappingIdx_nonrigid`.
 
@@ -217,11 +217,22 @@ rt.export_tables(roi_table, str(Path(dir_save) / name_save))
 # -> {name}.roi_table.csv, {name}.match_matrix.csv
 ```
 
+The notebook calls this twice — once for the full table and once for the `policy='good', scope='cluster'` subset — so a run leaves **four** CSVs in `dir_save`:
+
+| file | contents |
+| --- | --- |
+| `{name}.roi_table.csv` / `{name}.match_matrix.csv` | every tracked ROI |
+| `{name}_good.roi_table.csv` / `{name}_good.match_matrix.csv` | only UCIDs whose manual-review consensus is `good`, every session of each |
+
+With no label files on disk the `_good` pair comes out empty — `unlabeled` does not pass `policy='good'`. Pass `matrix=False` to skip the wide table.
+
 These are distinct from the pre-existing `*.matched_neurons_*.csv` and `*.quality_metrics_summary.csv` in the results folder, which are aggregate counts and metric distributions with no per-ROI rows.
 
 ## Joining manual ROI review labels
 
 The [interactive ROI reviewer](https://najafi-laboratory.github.io/2p_imaging/roi-reviewer-exports/) writes `roi_manual_labels.npy`: a 1-D float array with one entry per **original Suite2p ROI**, in `stat.npy` order — `NaN` not labeled, `0` bad, `1` good, `2` unsure. That is the same indexing ROICaT uses, so the array lines up element-for-element with `roi_idx` in the ROI table and no matching step is needed.
+
+`load_manual_labels()` looks in three places per session, in order: beside the tracked `stat.npy`, then `<session>/suite2p/plane0/`, then the session root. A session whose labels live anywhere else reads as `unlabeled` without complaint, so check the "manual labels found for k/n session(s)" line the join prints.
 
 **Order does not matter.** Those indices never change, so tracking and review can happen in either order. Track first and review months later; re-running the join cell picks up whatever labels exist at that moment. Nothing needs re-clustering.
 
@@ -305,7 +316,7 @@ Rows, top to bottom:
 | --- | --- |
 | raw FOV | unregistered FOV per session (only when `fovs_raw` is supplied) |
 | aligned FOV | non-rigidly registered FOV per session |
-| zoom | ±`crop_halfwidth` px crop around the consensus centroid |
+| zoom | ±`crop_halfwidth` px crop around the consensus centroid, with the nearest neighbouring ROI outlined |
 
 Columns, left to right: a superimposed projection across all sessions (`mean` or `max`), then one panel per session.
 
@@ -314,12 +325,22 @@ Columns, left to right: a superimposed projection across all sessions (`mean` or
 - **Red contour** — the ROI footprint, drawn at half-max on a σ = 1.5 px Gaussian-smoothed copy. The smoothing is deliberate: non-rigid warping of sparse Suite2p masks leaves small disconnected fragments, and contouring them raw produces a scatter of disjoint segments instead of one closed outline.
 - **Dashed yellow box** — where the zoom row sits, drawn on both full-FOV rows. On the raw row each session gets its own box at that session's *pre-alignment* centroid, so you can see how far the ROI moved before registration.
 - **Cyan contour** (raw row) — the boundary of valid tissue, i.e. where this session's aligned frame actually lands in raw coordinates. Computed by detecting tissue in the aligned image via local variance (robust to the uniform gray that `cv2.remap` fills out-of-bounds pixels with), pushing every tissue pixel through `remappingIdx_nonrigid` into raw coordinates, then consolidating the result — dilate, close, fill holes, keep the largest connected component — so the outline is one clean perimeter rather than speckle. Falls back to a centered mask when `remapping_idxs` isn't supplied.
-- **`n/d`** — this session has no ROI for this UCID. Nothing is drawn.
+- **Dashed green contour** (zoom row) — the nearest *other* ROI of that session whose centroid falls inside the crop box, drawn thinner and dashed so it reads as context rather than as the tracked cell. Green is used because it is far from the red tracked contour in hue and clear of the raw row's cyan. Only the zoom row gets these; at full-FOV scale they are indistinguishable from noise. `n_neighbors` controls how many are drawn (default 1, `0` disables them); past 1 a dense field gets busy fast.
+- **`n/d`** — this session has no ROI for this UCID. Nothing is drawn for the tracked ROI, but the green neighbour contour still is — see [What to look for](#what-to-look-for).
 - Suptitle carries mouse name, UCID, `detected k/n sessions`, and `cs_sil`.
 
 ### What to look for
 
 A good UCID has its red contour landing on the same cell body in every session, with consistent size and shape, and detection in most or all sessions. Warning signs: contour drifting onto a neighboring soma between sessions; wildly varying footprint size; a contour sitting outside the cyan tissue boundary on the raw row (that session's ROI is in a region the alignment couldn't validate); low `detected k/n` on a cluster you expected to be stable.
+
+**The green neighbour contour is there to make `n/d` sessions readable.** A blank zoom panel is ambiguous on its own — the cluster could be genuinely incomplete, or the cell could simply never have been segmented in that session. The neighbour outline separates the two cases:
+
+| what the `n/d` panel shows | reading |
+| --- | --- |
+| a green contour sitting on the same soma the other sessions outline in red | Suite2p *did* segment the cell and tracking failed to link it — the cluster is incomplete |
+| a green contour on a clearly different cell, or no contour at all | nothing plausible under the box; the ROI was never segmented here, and the cluster is as complete as it can be |
+
+On sessions that *were* detected, the same contour shows how much room the tracking had: a green outline pressed right up against the red one is a cluster that could plausibly have latched onto the wrong soma, and is worth more scrutiny than one sitting alone in the crop.
 
 ### Exporters
 
@@ -345,6 +366,7 @@ qc.export_html(
 - `export_pdf(path, ...)` — one multipage PDF, one UCID per page. No cap, but no navigation either.
 - `order_ucids_by_quality(labels_bySession, quality_metrics, ascending=True)` — worst-first by silhouette score, so the first pages of the export are the clusters most likely to be wrong. Unclustered ROIs (label −1) are dropped by default; UCIDs with no score sort last.
 - `ucid_labels={ucid: str}` (HTML only) — shown in brackets after each picker entry, e.g. `UCID 412  (cs_sil 0.310)  [conflict: good@20250806 bad@20250903]`. Optional; omit it and the picker reads exactly as before.
+- Both exporters forward any extra keyword through to `build_ucid_figure()`, so figure-level knobs like `crop_halfwidth` and `n_neighbors` are set at the export call (`n_neighbors=0` to drop the green contours, `n_neighbors=2` for a second one).
 
 ### Scoping QC to the clusters that matter
 
@@ -381,8 +403,10 @@ It needs `paths_save`, `dir_save`, `name_save`, and `get_stim_type` in scope —
 ### Other QC outputs
 
 - **`{name}_FOVs_for_matching.png`** — one-row contact sheet of the raw mean FOV for each session that survived the overlap filter, titled with date and stim type.
-- **All-sessions contact sheet** — the same idea over the *pre-filter* session list, with dropped sessions dimmed to 35% alpha. This is the fastest way to see *why* a session was dropped.
-- **`FOV_clusters_highQuality.gif`** — the color-coded cluster FOV animated across sessions (`compute_colored_FOV`, one random color per cluster). Stable colors in the same locations across frames means the tracking held.
+- **`{name}_all_sessions_pre_filter.png`** — the same idea over the *pre-filter* session list: kept sessions get a green border at full brightness, dropped ones a red border at 35% alpha. This is the fastest way to see *why* a session was dropped.
+- **`visualization/FOV_clusters_highQuality.gif`** — the color-coded cluster FOV animated across sessions (`compute_colored_FOV`, one random color per cluster). Stable colors in the same locations across frames means the tracking held. Note the `visualization/` subfolder; the other outputs sit directly in `dir_save`.
+
+**All three need a live kernel, unlike the QC exports above them.** The contact sheets read `data`, `keep`, `stim_types_all` and `paths_allOps` from the pipeline run, plus `mouse_name` from the HTML cell above them; the GIF needs `FOV_clusters` from the colored-FOV cell, which builds off the in-memory `results_all`. None of the three reload from the richfiles, so they are cells to skip rather than adapt when reopening a finished run.
 
 ## Gotchas
 
