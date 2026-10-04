@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import os
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ DEFAULT_GOOD_THRESHOLD = 0.8
 DEFAULT_BAD_THRESHOLD = 0.2
 DEFAULT_PATCH_SIZE = 64
 DEFAULT_BATCH_SIZE = 128
+TRACE_LENGTH = 2048
+V2_NUM_METRICS = 24
 TORCH_THREADS_ENV_VAR = "TWO_P_ROI_MODEL_TORCH_THREADS"
 LEGACY_TORCH_THREADS_ENV_VAR = "TWO_P_ROI_QC_TORCH_THREADS"
 TARGET_ALIASES = {
@@ -285,6 +288,93 @@ def _load_model(model_path: Path):
 
     torch.set_num_threads(int(os.environ.get(TORCH_THREADS_ENV_VAR, os.environ.get(LEGACY_TORCH_THREADS_ENV_VAR, "1"))))
 
+    class ImageEncoder(nn.Module):
+        def __init__(self, in_channels: int = 2, embedding_dim: int = 256):
+            super().__init__()
+            backbone = models.resnet18(weights=None)
+            old_conv = backbone.conv1
+            backbone.conv1 = nn.Conv2d(
+                in_channels=in_channels,
+                out_channels=old_conv.out_channels,
+                kernel_size=old_conv.kernel_size,
+                stride=old_conv.stride,
+                padding=old_conv.padding,
+                bias=False,
+            )
+            resnet_features = backbone.fc.in_features
+            backbone.fc = nn.Identity()
+            self.backbone = backbone
+            self.projection = nn.Sequential(nn.Linear(resnet_features, embedding_dim), nn.ReLU(), nn.Dropout(0.3))
+
+        def forward(self, x):
+            return self.projection(self.backbone(x))
+
+    class SignalEncoder(nn.Module):
+        def __init__(self, in_channels: int = 2, embedding_dim: int = 128):
+            super().__init__()
+            self.features = nn.Sequential(
+                nn.Conv1d(in_channels, 32, kernel_size=7, padding=3),
+                nn.BatchNorm1d(32),
+                nn.ReLU(),
+                nn.MaxPool1d(kernel_size=2),
+                nn.Conv1d(32, 64, kernel_size=5, padding=2),
+                nn.BatchNorm1d(64),
+                nn.ReLU(),
+                nn.MaxPool1d(kernel_size=2),
+                nn.Conv1d(64, 128, kernel_size=5, padding=2),
+                nn.BatchNorm1d(128),
+                nn.ReLU(),
+                nn.AdaptiveAvgPool1d(1),
+            )
+            self.projection = nn.Sequential(nn.Flatten(), nn.Linear(128, embedding_dim), nn.ReLU(), nn.Dropout(0.3))
+
+        def forward(self, x):
+            return self.projection(self.features(x))
+
+    class MetricsEncoder(nn.Module):
+        def __init__(self, num_metrics: int, embedding_dim: int = 64):
+            super().__init__()
+            self.network = nn.Sequential(
+                nn.Linear(num_metrics, 128),
+                nn.ReLU(),
+                nn.BatchNorm1d(128),
+                nn.Dropout(0.2),
+                nn.Linear(128, embedding_dim),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+            )
+
+        def forward(self, x):
+            return self.network(x)
+
+    class MultimodalROICNN(nn.Module):
+        def __init__(self, num_metrics: int = V2_NUM_METRICS):
+            super().__init__()
+            self.image_encoder = ImageEncoder(in_channels=2, embedding_dim=256)
+            self.signal_encoder = SignalEncoder(in_channels=2, embedding_dim=128)
+            self.metrics_encoder = MetricsEncoder(num_metrics=num_metrics, embedding_dim=64)
+            self.classifier = nn.Sequential(
+                nn.Linear(256 + 128 + 64, 256),
+                nn.ReLU(),
+                nn.Dropout(0.3),
+                nn.Linear(256, 64),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(64, 1),
+            )
+
+        def forward(self, image=None, signal=None, metrics=None):
+            return self.classifier(
+                torch.cat(
+                    (
+                        self.image_encoder(image),
+                        self.signal_encoder(signal),
+                        self.metrics_encoder(metrics),
+                    ),
+                    dim=1,
+                )
+            )
+
     class ROICNN(nn.Module):
         def __init__(self, in_channels: int = 2):
             super().__init__()
@@ -304,11 +394,25 @@ def _load_model(model_path: Path):
             return self.backbone(x)
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    state = torch.load(model_path, map_location=device, weights_only=False)
+    if isinstance(state, dict) and "model_state" in state:
+        model = MultimodalROICNN(num_metrics=V2_NUM_METRICS).to(device)
+        model.load_state_dict(state["model_state"], strict=True)
+        model.eval()
+        metric_mean = np.asarray(state.get("metric_mean", np.zeros(V2_NUM_METRICS)), dtype=np.float32)
+        metric_std = np.asarray(state.get("metric_std", np.ones(V2_NUM_METRICS)), dtype=np.float32)
+        metric_std = np.where(np.abs(metric_std) < 1e-8, 1.0, metric_std)
+        return {
+            "kind": "multimodal_v2",
+            "model": model,
+            "device": device,
+            "metric_mean": metric_mean,
+            "metric_std": metric_std,
+        }
     model = ROICNN().to(device)
-    state = torch.load(model_path, map_location=device)
     model.load_state_dict(state, strict=True)
     model.eval()
-    return model, device
+    return {"kind": "image_v1", "model": model, "device": device}
 
 
 def _predict_probability(model: Any, device: str, patch: np.ndarray) -> float:
@@ -320,7 +424,7 @@ def _predict_probability(model: Any, device: str, patch: np.ndarray) -> float:
         return float(torch.sigmoid(logits)[0, 0].detach().cpu().numpy())
 
 
-def _predict_probabilities(model: Any, device: str, patches: np.ndarray, *, batch_size: int) -> np.ndarray:
+def _predict_image_probabilities(model: Any, device: str, patches: np.ndarray, *, batch_size: int) -> np.ndarray:
     import torch
 
     probabilities = []
@@ -328,6 +432,110 @@ def _predict_probabilities(model: Any, device: str, patches: np.ndarray, *, batc
         for start in range(0, len(patches), batch_size):
             batch = torch.tensor(patches[start : start + batch_size] / 255.0, dtype=torch.float32, device=device)
             logits = model(batch)
+            probabilities.append(torch.sigmoid(logits).reshape(-1).detach().cpu().numpy())
+    if not probabilities:
+        return np.asarray([], dtype=np.float32)
+    return np.concatenate(probabilities).astype(np.float32, copy=False)
+
+
+def _downsample_trace(trace: np.ndarray, target_length: int = TRACE_LENGTH) -> np.ndarray:
+    trace = np.asarray(trace, dtype=np.float32)
+    if trace.size == target_length:
+        return trace.astype(np.float32, copy=False)
+    old_x = np.linspace(0, 1, trace.size, dtype=np.float32)
+    new_x = np.linspace(0, 1, target_length, dtype=np.float32)
+    return np.interp(new_x, old_x, trace).astype(np.float32)
+
+
+def _robust_normalize_trace(trace: np.ndarray) -> np.ndarray:
+    trace = np.asarray(trace, dtype=np.float32)
+    median = float(np.median(trace))
+    mad = float(np.median(np.abs(trace - median)))
+    robust_std = 1.4826 * mad
+    if robust_std < 1e-6:
+        robust_std = float(np.std(trace))
+    if robust_std < 1e-6:
+        robust_std = 1.0
+    return ((trace - median) / robust_std).astype(np.float32)
+
+
+def _safe_corr(x: np.ndarray, y: np.ndarray) -> float:
+    x = np.asarray(x, dtype=np.float32)
+    y = np.asarray(y, dtype=np.float32)
+    if x.size != y.size or x.size < 2:
+        return 0.0
+    sx = float(np.std(x))
+    sy = float(np.std(y))
+    if sx < 1e-8 or sy < 1e-8:
+        return 0.0
+    corr = float(np.corrcoef(x, y)[0, 1])
+    return corr if np.isfinite(corr) else 0.0
+
+
+def _compute_v2_metrics(stat_row: dict[str, Any], fluo: np.ndarray, neuropil: np.ndarray) -> np.ndarray:
+    fluo = np.asarray(fluo, dtype=np.float32)
+    neuropil = np.asarray(neuropil, dtype=np.float32)
+    trace_mean = float(np.mean(fluo))
+    trace_std = float(np.std(fluo))
+    centered = fluo - trace_mean
+    trace_skew = float(np.mean(centered**3) / (trace_std**3)) if trace_std > 1e-8 else 0.0
+    p95 = float(np.percentile(fluo, 95))
+    p50 = float(np.percentile(fluo, 50))
+    p05 = float(np.percentile(fluo, 5))
+    snr_p95_p50 = (p95 - p50) / max(abs(p50), 1e-6)
+    snr_p95_p05 = (p95 - p50) / max(abs(p05), 1e-6)
+    metrics = np.array(
+        [
+            float(stat_row.get("footprint", 0.0)),
+            float(stat_row.get("compact", 0.0)),
+            float(stat_row.get("solidity", 0.0)),
+            float(stat_row.get("npix", 0.0)),
+            float(stat_row.get("npix_soma", 0.0)),
+            float(stat_row.get("radius", 0.0)),
+            float(stat_row.get("aspect_ratio", 0.0)),
+            float(stat_row.get("npix_norm_no_crop", 0.0)),
+            float(stat_row.get("npix_norm", 0.0)),
+            float(stat_row.get("skew", 0.0)),
+            float(stat_row.get("std", 0.0)),
+            trace_mean,
+            trace_std,
+            trace_skew,
+            p95,
+            p50,
+            p05,
+            snr_p95_p50,
+            snr_p95_p05,
+            float(np.max(fluo)),
+            float(np.max(fluo) - np.min(fluo)),
+            float(np.mean(neuropil)),
+            float(np.std(neuropil)),
+            _safe_corr(fluo, neuropil),
+        ],
+        dtype=np.float32,
+    )
+    return np.nan_to_num(metrics, nan=0.0, posinf=0.0, neginf=0.0)
+
+
+def _predict_multimodal_probabilities(
+    model_info: dict[str, Any],
+    patches: np.ndarray,
+    signals: np.ndarray,
+    metrics: np.ndarray,
+    *,
+    batch_size: int,
+) -> np.ndarray:
+    import torch
+
+    model = model_info["model"]
+    device = model_info["device"]
+    probabilities = []
+    with torch.no_grad():
+        for start in range(0, len(patches), batch_size):
+            stop = start + batch_size
+            image_batch = torch.tensor(patches[start:stop] / 255.0, dtype=torch.float32, device=device)
+            signal_batch = torch.tensor(signals[start:stop], dtype=torch.float32, device=device)
+            metric_batch = torch.tensor(metrics[start:stop], dtype=torch.float32, device=device)
+            logits = model(image=image_batch, signal=signal_batch, metrics=metric_batch)
             probabilities.append(torch.sigmoid(logits).reshape(-1).detach().cpu().numpy())
     if not probabilities:
         return np.asarray([], dtype=np.float32)
@@ -342,18 +550,23 @@ def _prediction_state(probability: float, *, good_threshold: float, bad_threshol
     return "gray"
 
 
-def load_session_inputs(session_dir: Path) -> tuple[np.ndarray, np.ndarray]:
-    """Load Suite2p ``meanImg`` and original Suite2p ``stat.npy`` rows."""
+def load_session_inputs(session_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray | None, np.ndarray | None]:
+    """Load Suite2p ``meanImg``, original ``stat.npy``, and optional raw traces."""
 
-    ops_path = session_dir / "suite2p" / "plane0" / "ops.npy"
-    stat_path = session_dir / "suite2p" / "plane0" / "stat.npy"
+    plane_dir = session_dir / "suite2p" / "plane0"
+    ops_path = plane_dir / "ops.npy"
+    stat_path = plane_dir / "stat.npy"
     if not ops_path.exists():
         raise FileNotFoundError(f"Missing Suite2p ops file: {ops_path}")
     if not stat_path.exists():
         raise FileNotFoundError(f"Missing Suite2p stat file: {stat_path}")
     ops = np.load(ops_path, allow_pickle=True).item()
     stat = np.load(stat_path, allow_pickle=True)
-    return np.asarray(ops["meanImg"]), stat
+    fluo_path = plane_dir / "F.npy"
+    neuropil_path = plane_dir / "Fneu.npy"
+    fluo = np.load(fluo_path, mmap_mode="r") if fluo_path.exists() else None
+    neuropil = np.load(neuropil_path, mmap_mode="r") if neuropil_path.exists() else None
+    return np.asarray(ops["meanImg"]), stat, fluo, neuropil
 
 
 def predict_session(
@@ -379,15 +592,31 @@ def predict_session(
     )
     if not selection.model_path.exists():
         raise FileNotFoundError(f"ROI model score checkpoint does not exist: {selection.model_path}")
-    mean_img, stat = load_session_inputs(session_dir)
-    model, device = _load_model(selection.model_path)
+    mean_img, stat, fluo, neuropil = load_session_inputs(session_dir)
+    model_info = _load_model(selection.model_path)
     predictions: list[RoiModelScorePrediction] = []
     roi_ids = np.arange(len(stat), dtype=np.int64)
     patches = np.stack(
         [make_stat_two_channel_patch(mean_img, stat[int(roi_id)], patch_size=patch_size) for roi_id in roi_ids],
         axis=0,
     )
-    probabilities = _predict_probabilities(model, device, patches, batch_size=batch_size)
+    if model_info["kind"] == "multimodal_v2":
+        if fluo is None or neuropil is None:
+            raise FileNotFoundError("Multimodal ROI model scoring requires suite2p/plane0/F.npy and Fneu.npy.")
+        signals = np.empty((len(roi_ids), 2, TRACE_LENGTH), dtype=np.float32)
+        metrics = np.empty((len(roi_ids), V2_NUM_METRICS), dtype=np.float32)
+        for row, roi_id in enumerate(roi_ids):
+            fluo_trace = _downsample_trace(fluo[int(roi_id)], TRACE_LENGTH)
+            neuropil_trace = _downsample_trace(neuropil[int(roi_id)], TRACE_LENGTH)
+            signals[row, 0] = _robust_normalize_trace(fluo_trace)
+            signals[row, 1] = _robust_normalize_trace(neuropil_trace)
+            metrics[row] = _compute_v2_metrics(stat[int(roi_id)], fluo[int(roi_id)], neuropil[int(roi_id)])
+        metrics = (metrics - model_info["metric_mean"]) / model_info["metric_std"]
+        probabilities = _predict_multimodal_probabilities(model_info, patches, signals, metrics, batch_size=batch_size)
+    else:
+        probabilities = _predict_image_probabilities(
+            model_info["model"], model_info["device"], patches, batch_size=batch_size
+        )
     for roi_id, probability in zip(roi_ids, probabilities):
         suite2p_roi = int(roi_id)
         predictions.append(
@@ -440,6 +669,25 @@ def save_predictions(
         h5.attrs["bad_threshold"] = float(bad_threshold)
         h5.attrs["patch_size"] = int(patch_size)
         h5.attrs["batch_size"] = int(batch_size)
+    return output
+
+
+def save_predictions_csv(
+    session_dir: Path | str,
+    predictions: list[RoiModelScorePrediction],
+    *,
+    output_name: str = "roi_model_scores.csv",
+) -> Path:
+    """Save model predictions as a flat CSV suitable for reviewer custom-metric upload."""
+
+    session_dir = Path(session_dir).expanduser().resolve()
+    output = session_dir / output_name
+    with output.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(["suite2p_index", "roi_model_score_probability", "roi_model_score_state"])
+        for prediction in predictions:
+            suite2p_roi = "" if prediction.suite2p_roi is None else int(prediction.suite2p_roi)
+            writer.writerow([suite2p_roi, f"{prediction.probability:.8g}", prediction.state])
     return output
 
 
@@ -529,9 +777,11 @@ def run(
         patch_size=patch_size,
         batch_size=batch_size,
     )
+    csv_path = save_predictions_csv(session_dir, predictions)
     label_path = update_roi_label_h5(session_dir, predictions)
     counts = {state: sum(1 for prediction in predictions if prediction.state == state) for state in ("good", "bad", "gray")}
     print(f"Saved ROI model scores: {prediction_path}")
+    print(f"Saved ROI model score CSV: {csv_path}")
     print(f"Updated ROI labels: {label_path}")
     print(f"ROI model score target: {selection.target_structure or 'unspecified'} ({selection.model_path})")
     print(f"Good: {counts['good']} Bad: {counts['bad']} Gray: {counts['gray']}")

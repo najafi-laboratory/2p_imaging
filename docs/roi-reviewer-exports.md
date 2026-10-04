@@ -116,7 +116,10 @@ residual structure relative to the dF/F trace. If inferred-spike outputs are not
 available for a session, those controls may be disabled or marked as
 unavailable. **Model derived metrics** are loaded from optional trained-model
 score files and should be interpreted only for the anatomical target structure
-the model was trained on.
+the model was trained on. **Uploaded / custom ROI metrics** are optional
+ROI-level numeric values supplied by the user either when generating the HTML or
+from inside the reviewer. They can be sorted, filtered, plotted, and exported
+like built-in metrics as long as they have one value per ROI.
 
 The **Read more** controls document where each metric category comes from and
 how the reviewer interprets the values. **Distribution** controls reveal
@@ -517,10 +520,10 @@ JSON** saves the active metric thresholds for reuse or documentation.
 **Open ROI metric spreadsheet** opens a browser table with one row per ROI. It
 is a review and audit view of the same ROI metrics used by the filtering and
 sorting controls, plus the current manual label state. The table includes the
-original Suite2p ROI index, manual label, optional cell-type label, morphology
-metrics, fluorescence trace metrics, inferred-spike metrics when available, and
-a reason column summarizing why the ROI is included or which active thresholds
-or labels currently mark it as failing.
+original Suite2p ROI index, manual label, optional categorical ROI variable,
+morphology metrics, fluorescence trace metrics, inferred-spike metrics when
+available, and a reason column summarizing why the ROI is included or which
+active thresholds or labels currently mark it as failing.
 
 The spreadsheet is generated from the current reviewer state at the moment the
 button is clicked. If you label ROIs as Good, Bad, Unsure, or Not labeled, those
@@ -534,14 +537,54 @@ same metric-spreadsheet CSV available from the **Save Labels** dialog under
 **Export metric spreadsheet CSV**. The CSV is useful when you want a static copy
 of the table for analysis, review notes, or provenance.
 
+#### 12.2. Custom ROI metrics
+
+Custom ROI metrics can be embedded when generating a reviewer:
+
+```bash
+python -m utils_2p.processing_summary /path/to/session \
+  --custom-roi-metrics /path/to/custom_roi_metrics.csv
+```
+
+The flag can be repeated for multiple files. Generation accepts `.csv`, `.tsv`,
+`.json`, `.npy`, and `.npz`. CSV/TSV/JSON files may include a `suite2p_index`,
+`roi`, `roi_index`, or `index` column to map rows to original ROI indices. If no
+index column is present, rows are assumed to already be in the reviewer ROI
+order. Numeric columns become custom metrics; non-numeric columns are ignored.
+
+Inside the reviewer, use **Load custom ROI metrics file** in the **Uploaded /
+Custom ROI Metrics** section to add CSV/TSV/JSON metrics after the HTML has
+opened. Browser upload does not currently support `.npy`/`.npz` because those
+formats do not reliably preserve column names in a user-readable way.
+
+Example CSV:
+
+```csv
+suite2p_index,my_metric,another_metric
+0,0.52,10
+1,0.81,12
+2,0.34,8
+```
+
+Example JSON:
+
+```json
+{
+  "my_metric": [0.52, 0.81, 0.34],
+  "another_metric": [10, 12, 8]
+}
+```
+
 Current exported fields:
 
 | Column | Type | Description |
 | --- | --- | --- |
 | `suite2p_index` | integer | Original Suite2p ROI index for this row. |
 | `manual_label` | string | Current manual label: `good`, `bad`, `unsure`, or `not labeled`. |
-| `cell_type_label` | string | Optional cell-type or indicator label when available; otherwise unset/unknown. |
-| `cell_type_code` | nullable integer | Numeric cell-type code when available. Blank in the CSV when unavailable. |
+| `category_label` | string | Optional categorical ROI variable label when available; otherwise unset/unknown. |
+| `category_code` | nullable integer/float | Numeric category code when available. Blank in the CSV when unavailable. |
+| `roi_model_score_state` | nullable string | Optional model-derived label state when ROI model scores are available. |
+| `roi_model_score_probability` | nullable float | Optional model-derived probability score. |
 | `footprint` | float | Suite2p footprint metric when available. Exported for reference but not used by the current QC filter controls. |
 | `skew` | float | Fluorescence trace skew metric used by QC filters. |
 | `aspect_ratio` | float | Morphology aspect-ratio metric. |
@@ -550,11 +593,11 @@ Current exported fields:
 | `roi_area_px` | float | ROI area in pixels. |
 | `snr_95_50` | float | Fluorescence trace SNR based on high-percentile versus median signal. |
 | `caiman_exceptional_event_snr` | float | CaImAn-style large-transient SNR metric. |
-| `autocorr_efold_time_seconds` | float | Fluorescence autocorrelation e-fold time in seconds when present. Exported for reference but not used by the current QC filter controls. |
 | `inferred_spike_snr` | nullable float | Event-triggered inferred-spike SNR when inferred spikes are available. |
 | `inferred_spike_rise_tau_seconds` | nullable float | Inferred-spike event rise time metric in seconds. |
 | `inferred_spike_decay_tau_seconds` | nullable float | Inferred-spike event decay/e-fold metric in seconds. |
 | `inferred_spike_residual_gaussian_ks` | nullable float | Gaussian-fit KS distance for event-window residuals. Lower is closer to Gaussian. |
+| `custom_<metric_key>` | nullable float | One column per loaded custom ROI metric. Column names are sanitized to be code-friendly. |
 | `reason` | string | Semicolon-separated inclusion/failure notes from the current labels and active thresholds. |
 
 The CSV file is plain text, so downstream tools may infer dtypes differently.
@@ -647,7 +690,7 @@ Native Suite2p inputs:
 | `suite2p/plane0/Fneu.npy` | yes | NumPy array | numeric `(n_rois, n_frames)` | Neuropil fluorescence used for dF/F. |
 | `suite2p/plane0/iscell.npy` | optional | NumPy array | numeric `(n_rois, 2)` | Used for provenance only; the reviewer opens with all ROIs available. |
 | `spikes.h5` or `suite2p/plane0/spikes.h5` | optional | HDF5 | dataset with numeric `(n_rois, n_frames)` inferred-spike amplitudes | Enables inferred-spike trace overlays and inferred-spike QC metrics. |
-| `masks.h5` or `roi_cell_type_labels.npy` | optional | HDF5 or NumPy array | one label per ROI | Enables cell-type/indicator labels. |
+| `masks.h5` or `roi_cell_type_labels.npy` | optional | HDF5 or NumPy array | one categorical label per ROI | Enables categorical ROI variables such as cell type or indicator calls. |
 | `roi_model_scores.h5` | optional | HDF5 | one model score per ROI | Enables model-derived metric filtering/sorting. Current packaged model is for cerebellar dendrite ROIs unless another model is supplied. |
 
 External-ROI inputs:
@@ -815,14 +858,14 @@ Older sessions may instead store preset metadata in
 `qc_results/qc_parameters.json`. `masks.h5` is optional and supplies
 anatomical images when available.
 
-### Optional cell-type or indicator labels
+### Optional categorical ROI variables
 
-The reviewer can display, filter, sort, and export optional cell-type or
-indicator labels. These are separate from manual ROI QC labels. They are meant
-for labels such as red/inhibitory versus non-red/excitatory status, or an
-equivalent binary indicator classification from upstream processing.
+The reviewer can display, filter, sort, and export one optional categorical ROI
+variable. This variable is separate from manual ROI QC labels. It can represent
+cell type, indicator status, experimental class, or any other per-ROI category
+encoded with numeric codes and human-readable labels.
 
-When generating the summary, the script looks for precomputed cell-type labels
+When generating the summary, the script looks for precomputed categorical labels
 in this order:
 
 ```text
@@ -834,8 +877,9 @@ in this order:
 └── masks.h5    # optional dataset named "labels"
 ```
 
-The preferred file is `roi_cell_type_labels.npy`. It should be a one-dimensional
-NumPy array with one value per original Suite2p ROI:
+For current pipeline outputs, the preferred precomputed file is
+`roi_cell_type_labels.npy`. It should be a one-dimensional NumPy array with one
+value per original Suite2p ROI:
 
 ```text
 shape = (n_rois,)
@@ -844,7 +888,7 @@ ROI index      0      1      2      ...      M
 label code    -1      1    NaN               0
 ```
 
-Supported values are:
+For this legacy cell-type file, supported values are:
 
 | Value | Meaning in reviewer |
 | --- | --- |
@@ -872,44 +916,64 @@ current ROI count, labels are used directly. When the labels appear to be
 indexed to `qc_results/stat.npy`, the summary tries to map them back to the
 original Suite2p ROI order.
 
-Cell-type labels can also be loaded after the HTML is open by using the
-**Load cell-type file** control near the top of the side menu. The upload file
-can be CSV, TSV, or plain text with a delimited table. It must contain a header
-row and these columns:
+Categorical variables can also be loaded after the HTML is open by using
+**Upload categorical variable** near the top of the side menu. The upload file
+can be CSV, TSV, JSON, or plain text with a delimited table. CSV/TSV/plain-text
+files must contain a header row and at least one of these column pairs:
+
+```text
+category_code,category_label
+```
+
+The older names are still accepted:
 
 ```text
 cell_type_code,cell_type_label
 ```
 
-It may also contain one of these index columns:
+If only `category_label` is present, the viewer assigns numeric category codes
+within the open browser session. Upload files may also contain one of these
+index columns:
 
 ```text
 suite2p_index
 roi
+roi_index
 index
 ```
 
 When an index column is present, rows are mapped by original Suite2p ROI index.
 When no index column is present, row order is used and the file must contain
-exactly one data row per ROI in the reviewer. `cell_type_code` accepts `-1`,
-`0`, or `1`. `cell_type_label` accepts equivalent text labels such as
+exactly one data row per ROI in the reviewer. Legacy `cell_type_code` accepts
+`-1`, `0`, or `1`. `cell_type_label` accepts equivalent text labels such as
 `excitatory`, `excitatory/non-red`, `non-red`, `exc`, `inhibitory`,
 `inhibitory/red`, `red`, `inh`, `unsure`, `uncertain`, or `unknown`.
+Generic `category_code` accepts any numeric code and displays the corresponding
+`category_label` in the filter, sort, and spreadsheet outputs.
 
 Example indexed CSV:
 
 ```csv
-suite2p_index,cell_type_code,cell_type_label
+suite2p_index,category_code,category_label
 0,1,inhibitory/red
 1,-1,excitatory/non-red
 2,0,unsure
 3,,unknown
 ```
 
-Uploaded cell-type labels update the current browser session immediately and
-are included in the ROI metric spreadsheet. To preserve them in a reviewed HTML
-copy, use **Save Labels** and then **Save current state into HTML** after
-uploading.
+Example JSON:
+
+```json
+[
+  {"suite2p_index": 0, "category_code": 1, "category_label": "inhibitory/red"},
+  {"suite2p_index": 1, "category_code": -1, "category_label": "excitatory/non-red"}
+]
+```
+
+Uploaded categorical variables update the current browser session immediately
+and are included in the ROI metric spreadsheet as `category_label` and
+`category_code`. To preserve them in a reviewed HTML copy, use **Save Labels**
+and then **Save current state into HTML** after uploading.
 
 ### Generate locally
 
@@ -918,6 +982,30 @@ python -m utils_2p.processing_summary /path/to/processed/session
 ```
 
 The PDF and interactive HTML are written into the processed session directory.
+
+To package the HTML, PDF, and any large sidecar `.npy` files together for
+download or sharing, add `--archive-output`:
+
+```bash
+python -m utils_2p.processing_summary \
+  /path/to/processed/session \
+  --output-dir /path/to/summary_exports \
+  --archive-output
+```
+
+This writes outputs into a session-named folder and creates a zip archive:
+
+```text
+/path/to/summary_exports/
+├── <session>/
+│   ├── <session>_interactive_fov_roi_dff.html
+│   ├── <session>_processing_summary.pdf
+│   └── <session>_dff.npy        # if needed for large sessions
+└── <session>_preprocessing_summary.zip
+```
+
+The zip keeps the session folder as the top-level directory, so after
+extracting it the HTML can still find sidecar files by relative path.
 
 To force a specific legacy input layout:
 
