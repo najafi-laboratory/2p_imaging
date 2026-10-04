@@ -21,7 +21,6 @@ import numpy as np
 from PIL import Image
 from scipy import sparse
 from scipy.ndimage import gaussian_filter
-from scipy.special import ndtr
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -379,10 +378,10 @@ def _load_cell_type_labels(
 
     path = session_dir / "masks.h5"
     if not path.exists():
-        return [None] * n_rois, "No cell-type labels loaded; masks.h5 or roi_cell_type_labels.npy was not found."
+        return [None] * n_rois, "not loaded"
     with h5py.File(path, "r") as h5:
         if "labels" not in h5:
-            return [None] * n_rois, "No cell-type labels loaded; masks.h5 does not contain a labels dataset."
+            return [None] * n_rois, "not loaded"
         labels = np.asarray(h5["labels"], dtype=np.float64).reshape(-1)
     if labels.shape != (n_rois,):
         qc_stat_path = session_dir / "qc_results" / "stat.npy"
@@ -658,7 +657,6 @@ def _all_rois_filter() -> dict[str, float | int | None]:
         "oasisRiseTauMax": None,
         "oasisDecayTauMin": None,
         "oasisDecayTauMax": None,
-        "oasisResidualKsMax": None,
         "cellTypeFilter": None,
         "roiModelScoreProbabilityMin": None,
         "roiModelScoreProbabilityMax": None,
@@ -685,7 +683,6 @@ def _morphology_preset_payload() -> dict[str, dict[str, float | int | None]]:
             "oasisRiseTauMax": None,
             "oasisDecayTauMin": None,
             "oasisDecayTauMax": None,
-            "oasisResidualKsMax": None,
             "cellTypeFilter": None,
             "roiModelScoreProbabilityMin": None,
             "roiModelScoreProbabilityMax": None,
@@ -1081,76 +1078,6 @@ def _load_custom_roi_metrics(
     return _merge_custom_metric_payloads(payloads, n_rois)
 
 
-def _event_window_residuals(trace: np.ndarray, spikes: np.ndarray, threshold: float) -> np.ndarray:
-    event_frames = np.flatnonzero(np.isfinite(spikes) & (spikes > threshold))
-    if event_frames.size == 0:
-        return np.array([], dtype=np.float32)
-    trace = np.asarray(trace, dtype=np.float64)
-    n_frames = trace.shape[0]
-    marked = np.zeros(n_frames, dtype=bool)
-    for frame in event_frames:
-        start = max(0, int(frame) - 3)
-        stop = min(n_frames, int(frame) + 4)
-        marked[start:stop] = True
-    frames = np.flatnonzero(marked)
-    if frames.size == 0:
-        return np.array([], dtype=np.float32)
-    radius = 8
-    valid = np.isfinite(trace)
-    filled = np.where(valid, trace, 0.0)
-    padded_sum = np.concatenate(([0.0], np.cumsum(filled, dtype=np.float64)))
-    padded_count = np.concatenate(([0], np.cumsum(valid.astype(np.int64))))
-    starts = np.maximum(0, frames - radius)
-    stops = np.minimum(n_frames, frames + radius + 1)
-    sums = padded_sum[stops] - padded_sum[starts]
-    counts = padded_count[stops] - padded_count[starts]
-    keep = (counts > 0) & valid[frames]
-    if not np.any(keep):
-        return np.array([], dtype=np.float32)
-    residuals = trace[frames[keep]] - sums[keep] / counts[keep]
-    return residuals.astype(np.float32, copy=False)
-
-
-def _gaussian_ks_distance(values: np.ndarray) -> float:
-    values = np.asarray(values, dtype=np.float64)
-    values = values[np.isfinite(values)]
-    if values.size < 10:
-        return np.nan
-    mean = float(np.mean(values))
-    sd = float(np.std(values, ddof=1))
-    if not np.isfinite(sd) or sd <= 0:
-        return np.nan
-    sorted_values = np.sort(values)
-    gaussian_cdf = ndtr((sorted_values - mean) / sd)
-    empirical_hi = np.arange(1, sorted_values.size + 1, dtype=np.float64) / sorted_values.size
-    empirical_lo = np.arange(0, sorted_values.size, dtype=np.float64) / sorted_values.size
-    return float(np.max(np.maximum(np.abs(empirical_hi - gaussian_cdf), np.abs(gaussian_cdf - empirical_lo))))
-
-
-def _best_oasis_residual_threshold(
-    trace: np.ndarray, spikes: np.ndarray, default_threshold: float
-) -> tuple[float, float, int]:
-    finite_spikes = spikes[np.isfinite(spikes) & (spikes > 0)]
-    if finite_spikes.size == 0:
-        return np.nan, np.nan, 0
-    candidates = {float(default_threshold)}
-    for quantile in (0.5, 0.6, 0.7, 0.8, 0.9, 0.95):
-        candidates.add(float(np.nanquantile(finite_spikes, quantile)))
-    best_threshold = np.nan
-    best_ks = np.nan
-    best_count = 0
-    for threshold in sorted(value for value in candidates if np.isfinite(value) and value >= 0):
-        residuals = _event_window_residuals(trace, spikes, threshold)
-        ks = _gaussian_ks_distance(residuals)
-        if not np.isfinite(ks):
-            continue
-        if not np.isfinite(best_ks) or ks < best_ks:
-            best_ks = ks
-            best_threshold = float(threshold)
-            best_count = int(residuals.size)
-    return best_threshold, best_ks, best_count
-
-
 def _oasis_event_waveform_metrics(
     trace: np.ndarray,
     spikes: np.ndarray,
@@ -1200,7 +1127,7 @@ def _oasis_event_waveform_metrics(
     return float(snr), rise_tau, decay_tau
 
 
-def _add_oasis_residual_metrics(
+def _add_oasis_event_metrics(
     dff_metrics: list[dict[str, float | None]],
     dff: np.ndarray | None,
     dff_sidecar_path: Path | None,
@@ -1217,14 +1144,10 @@ def _add_oasis_residual_metrics(
         return dff_metrics
     n_rois = min(len(dff_metrics), int(source.shape[0]), int(oasis_spikes.shape[0]))
     for roi in range(n_rois):
-        threshold, ks, count = _best_oasis_residual_threshold(
-            np.asarray(source[roi], dtype=np.float32),
-            np.asarray(oasis_spikes[roi], dtype=np.float32),
-            default_threshold,
-        )
+        threshold = float(default_threshold)
+        if not np.isfinite(threshold):
+            threshold = 0.0
         dff_metrics[roi]["oasis_optimal_threshold"] = float(threshold) if np.isfinite(threshold) else None
-        dff_metrics[roi]["oasis_event_residual_ks"] = float(ks) if np.isfinite(ks) else None
-        dff_metrics[roi]["oasis_event_residual_count"] = float(count)
         if np.isfinite(threshold):
             snr, rise_tau, decay_tau = _oasis_event_waveform_metrics(
                 np.asarray(source[roi], dtype=np.float32),
@@ -1911,13 +1834,11 @@ def _write_html(
         '<div id="oasisDiagnosticsHelp" class="info-box" hidden>'
         '<p><strong>Average transient:</strong> dF/F windows around inferred spikes are baseline-subtracted and averaged for the selected ROI.</p>'
         '<p><strong>Exponential model:</strong> a simple decay curve is drawn from the average transient peak using the empirical e-fold time, where the average transient falls to 1/e of its peak amplitude.</p>'
-        '<p><strong>Gaussian residual KS:</strong> event-window residuals are compared with a fitted Gaussian CDF; lower KS distance means the residuals are closer to Gaussian.</p>'
         '<p><strong>Amplitude threshold:</strong> only inferred spike amplitudes above the selected threshold contribute to the average transient.</p>'
         '</div>'
         '<div class="oasis-diagnostics-body">'
         '<div class="note" id="oasisDiagnosticsSummary">Inferred spikes not loaded for this session.</div>'
         '<canvas id="oasisTransientCanvas"></canvas>'
-        '<canvas id="oasisGaussianCanvas"></canvas>'
         '</div>'
         '</div>'
     )
@@ -2057,6 +1978,16 @@ button.unlabeled.active {{ background: #667085; }}
 input, select {{ border: 1px solid #d0d5dd; border-radius: 6px; padding: 5px 7px; width: 82px; }}
 .filter-controls input {{ width: 100%; }}
 .filter-controls select {{ width: 100%; }}
+.category-filter-options {{ display: grid; gap: 5px; margin-top: 8px; padding: 8px; border: 1px solid #eaecf0; border-radius: 7px; background: #fff; }}
+.category-filter-options label {{ display: flex; gap: 6px; align-items: center; color: #475467; font-size: 14px; }}
+.category-filter-options input {{ width: auto; margin: 0; }}
+.custom-upload-type {{ display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; }}
+.custom-upload-type label {{ display: flex; gap: 6px; align-items: center; }}
+.custom-upload-type input, #customRoiUploadFile {{ width: auto; }}
+.auto-file-list {{ margin: 6px 0 0; padding-left: 18px; color: #475467; font-size: 13px; }}
+.category-label-editor {{ display: grid; gap: 6px; margin-top: 8px; }}
+.category-label-editor label {{ display: grid; grid-template-columns: minmax(90px, .35fr) minmax(180px, 1fr); gap: 8px; align-items: center; color: #475467; }}
+.category-label-editor input {{ width: 100%; }}
 canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5dd; box-sizing: border-box; }}
 #stackCanvas {{ height: 560px; cursor: grab; }}
 #stackCanvas.dragging {{ cursor: grabbing; }}
@@ -2070,7 +2001,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
 .oasis-diagnostics.minimized {{ display: none; }}
 .oasis-diagnostics .note {{ margin-bottom: 6px; }}
 #oasisTransientCanvas {{ height: 220px; }}
-#oasisGaussianCanvas {{ height: 190px; margin-top: 6px; }}
 .oasis-panel {{ margin-top: 10px; }}
 .oasis-toggle {{ display: flex; gap: 6px; align-items: center; font-weight: 700; }}
 .oasis-toggle input {{ width: auto; }}
@@ -2112,7 +2042,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <button id="closeMorphologyDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
     </div>
     <div class="dialog-section">
-      <div id="targetStructureSummary" class="title"></div>
       <div class="filter-summary" id="filterSummary"></div>
       <div class="note">These preset thresholds preview pass/fail counts; labels change only when Apply Filters is clicked.</div>
       <div class="filter-controls metric-filter-controls">
@@ -2139,10 +2068,10 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <p><strong>Suggested filter values are computed from the ROIs embedded in this HTML.</strong></p>
         <p><strong>Connectivity:</strong> suggested max is the 75th percentile of connectivity values.</p>
         <p><strong>ROI area:</strong> suggested min/max are the 25th and 75th percentiles across ROIs.</p>
-        <p><strong>Categorical ROI variables:</strong> no numeric threshold is suggested; choose a category if categorical labels are loaded or uploaded.</p>
+        <p><strong>Categorical ROI variables:</strong> no numeric threshold is suggested; choose one or more loaded categories by label/value.</p>
         <p><strong>SNR: 95/50 percentile:</strong> suggested min is the mean SNR value across ROIs.</p>
         <p><strong>SNR: CaImAn:</strong> suggested min is the mean large-transient score across ROIs.</p>
-        <p><strong>Inferred spike metrics:</strong> suggested SNR min is the mean value, suggested rise/decay tau min/max are the 25th and 75th percentiles, and suggested residual Gaussian-fit max is the 75th percentile.</p>
+        <p><strong>Inferred spike metrics:</strong> suggested SNR min is the mean value, and suggested rise/decay tau min/max are the 25th and 75th percentiles.</p>
         <p><strong>Uploaded / custom ROI metrics:</strong> suggested min/max are the 25th and 75th percentiles across finite ROI values.</p>
       </div>
       <div class="filter-controls">
@@ -2166,8 +2095,8 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <div id="cellTypeMetricSources" class="info-box" hidden>
         <p>Categorical ROI variables can be loaded from pipeline outputs or uploaded as a table. Use columns <code>category_code</code> and <code>category_label</code>, or legacy columns <code>cell_type_code</code> and <code>cell_type_label</code>. Optional <code>suite2p_index</code>, <code>roi</code>, or <code>index</code> maps rows by original ROI index.</p>
       </div>
-      <div class="filter-controls">
-        <label>Categorical variable <select id="cellTypeFilter"><option value="">Not Used</option></select></label>
+      <div class="category-filter-options" id="cellTypeFilterOptions">
+        <span class="note">No categorical ROI variable loaded.</span>
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Model Derived Metrics</span>
@@ -2210,7 +2139,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <div id="inferredSpikeMetricSources" class="info-box" hidden>
         <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/processing_summary.py#L470-L556" target="_blank" rel="noopener noreferrer">Inferred spike metric calculation code</a>: metrics are calculated from dF/F windows around thresholded inferred spike amplitudes.</p>
         <p>The current pipeline can generate inferred spike amplitudes with Suite2p/OASIS, but these reviewer metrics only require an ROI-by-frame inferred-spike amplitude array in the expected format.</p>
-        <p>For each ROI, the default inferred-spike threshold is selected from the configured stage threshold plus the 50th, 60th, 70th, 80th, 90th, and 95th percentiles of positive inferred-spike amplitudes. The selected threshold is the candidate that minimizes the Gaussian-fit KS distance of residuals from frames within ±3 frames of thresholded inferred spikes.</p>
+        <p>For each ROI, inferred-spike metrics are computed from dF/F windows around inferred-spike amplitudes above the configured summary-generation threshold. Changing the viewer threshold updates the selected ROI display diagnostics.</p>
       </div>
       <div class="filter-controls">
         <label>Inferred spike SNR min <span class="threshold-default" id="oasisEventSnrDefault"></span><input id="oasisEventSnrMin" type="number" step="0.01" placeholder="Not Used"></label>
@@ -2222,9 +2151,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <label>Inferred spike decay tau min (s) <span class="threshold-default" id="oasisDecayTauMinDefault"></span><input id="oasisDecayTauMin" type="number" step="0.01" placeholder="Not Used"></label>
         <label>Inferred spike decay tau max (s) <span class="threshold-default" id="oasisDecayTauMaxDefault"></span><input id="oasisDecayTauMax" type="number" step="0.01" placeholder="Not Used"></label>
         <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="oasis_decay_tau_seconds" data-min="oasisDecayTauMin" data-max="oasisDecayTauMax" aria-label="Inferred spike decay tau distribution"></canvas></details>
-        <label>Inferred spike residual Gaussian-fit distance max <span class="threshold-default" id="oasisResidualKsDefault"></span><input id="oasisResidualKsMax" type="number" step="0.01" placeholder="Not Used"></label>
-        <span></span>
-        <details class="metric-histogram-panel"><summary>Show distribution</summary><canvas class="metric-histogram" data-metric="oasis_event_residual_ks" data-max="oasisResidualKsMax" aria-label="Inferred spike residual Gaussian-fit distance distribution"></canvas></details>
       </div>
       <div class="filter-subsection-title source-heading">
         <span>Uploaded / Custom ROI Metrics</span>
@@ -2235,8 +2161,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <p>CSV/TSV columns other than the optional index column become metric names. JSON may be an object of <code>{{"metric_name": [values...]}}</code> or a list of row objects.</p>
       </div>
       <div class="filter-controls">
-        <input id="customMetricFile" type="file" accept=".csv,.tsv,.json" style="display:none;">
-        <button id="loadCustomMetricFile">Load custom ROI metrics file</button>
         <span id="customMetricStatus" class="note"></span>
       </div>
       <div id="customMetricFilterControls" class="filter-controls"></div>
@@ -2299,7 +2223,6 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <label><input type="checkbox" name="sortMetric" value="oasis_event_snr"> Inferred spike SNR</label>
           <label><input type="checkbox" name="sortMetric" value="oasis_rise_tau_seconds"> Inferred spike rise tau</label>
           <label><input type="checkbox" name="sortMetric" value="oasis_decay_tau_seconds"> Inferred spike decay tau</label>
-          <label><input type="checkbox" name="sortMetric" value="oasis_event_residual_ks"> Inferred spike residual Gaussian-fit distance</label>
           <div class="sort-metric-group">Model Derived Metrics</div>
           <label><input type="checkbox" name="sortMetric" value="roi_model_score_probability"> ROI model score probability</label>
           <div id="customSortMetrics"></div>
@@ -2373,6 +2296,40 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
       <button id="closeLabelAllDialog" type="button">Close</button>
     </div>
   </dialog>
+  <dialog id="customRoiUploadDialog">
+    <div class="dialog-header">
+      <div class="dialog-title">Upload Custom ROI Metric or Label</div>
+      <button id="closeCustomRoiUploadDialogTop" class="dialog-close" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="dialog-section">
+      <div class="dialog-section-title">Automatically Loaded / Embedded Files</div>
+      <ul id="autoLoadedFileList" class="auto-file-list"></ul>
+    </div>
+    <div class="dialog-section">
+      <div class="dialog-section-title">Upload File</div>
+      <div class="custom-upload-type">
+        <label><input type="radio" name="customUploadKind" value="numeric" checked> Numerical metric</label>
+        <label><input type="radio" name="customUploadKind" value="categorical"> Categorical label</label>
+      </div>
+      <input id="customRoiUploadFile" type="file" accept=".csv,.tsv,.txt,.json">
+      <button id="applyCustomRoiUpload" type="button">Load selected file</button>
+      <div id="customRoiUploadStatus" class="note"></div>
+      <div class="info-box">
+        <p><strong>Numerical metric:</strong> CSV/TSV columns other than optional <code>suite2p_index</code>, <code>roi</code>, <code>roi_index</code>, or <code>index</code> become sortable/filterable metrics. JSON may be an object of metric arrays or row objects.</p>
+        <p><strong>Categorical label:</strong> use <code>category_code</code>/<code>category_label</code>, or legacy <code>cell_type_code</code>/<code>cell_type_label</code>. If labels are missing, edit them below after loading.</p>
+        <p>Each file must provide one value per original ROI, or use a Suite2p index column to map rows to the original ROI indices. The viewer reports an error if the row/value count cannot match the ROI count.</p>
+        <p>Suggested location: keep upload files in the same folder as this HTML and its sidecar files. Browsers do not allow a page to force the file picker to open in a specific folder.</p>
+      </div>
+    </div>
+    <div class="dialog-section" id="categoryLabelEditorSection" hidden>
+      <div class="dialog-section-title">Categorical Value Labels</div>
+      <div class="note">Edit labels for each unique categorical value. These labels are used in the filter menu, sort readouts, and spreadsheet export.</div>
+      <div id="categoryLabelEditor" class="category-label-editor"></div>
+    </div>
+    <div class="dialog-actions">
+      <button id="closeCustomRoiUploadDialog" type="button">Close</button>
+    </div>
+  </dialog>
   <div class="review-main">
     <div class="viewer-column">
       <div class="fov-row">
@@ -2402,9 +2359,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <div id="oasisThresholdInfo" class="info-box" hidden>
           <p>Inferred spikes are loaded as an ROI-by-frame amplitude array. The current pipeline can produce that array with Suite2p's OASIS deconvolution, but the viewer only requires the same array shape and semantics.</p>
           <p>The underlying values are inferred spike amplitudes, not spike probabilities. Larger values mean the inference method assigned a stronger spike-like transient at that frame.</p>
-          <p>The amplitude threshold is a viewer-side cutoff: frames with inferred spike amplitude above the selected threshold are drawn as red dots on the dF/F trace. The default per ROI is the precomputed threshold whose inferred-spike-window residuals had the smallest distance to a fitted Gaussian among tested candidate thresholds.</p>
-          <p>Those candidate thresholds are the configured spike-inference stage threshold plus the 50th, 60th, 70th, 80th, 90th, and 95th percentiles of positive inferred-spike amplitudes for the selected ROI.</p>
-          <p>The sortable residual Gaussian-fit metric is that minimized distance. Lower values mean the inferred-spike-window residuals were closer to Gaussian under the best tested threshold.</p>
+          <p>The amplitude threshold is a viewer-side cutoff: frames with inferred spike amplitude above the selected threshold are drawn as red dots on the dF/F trace and are used for average-transient/tau summaries. The reset value is the threshold stored with the inferred-spike file or summary-generation stage.</p>
           <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/deconvolution/" target="_blank" rel="noopener noreferrer">Suite2p spike deconvolution / OASIS documentation</a></p>
           <p><a class="docs-link" href="https://doi.org/10.1371/journal.pcbi.1005423" target="_blank" rel="noopener noreferrer">Original OASIS deconvolution paper</a></p>
         </div>
@@ -2430,11 +2385,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
           <details class="panel label-controls menu-card" open>
             <summary>Upload ROI Variables</summary>
             <div class="menu-card-content">
-              <div class="note" id="cellTypeLabelStatus"></div>
-              <input id="cellTypeFile" type="file" accept=".csv,.tsv,.txt,.json" style="display:none;">
-              <button id="loadCellTypeFile" type="button">Upload categorical variable</button>
-              <button id="loadNumericMetricFileSide" type="button">Upload numerical variable</button>
-              <div class="note">Categorical tables use <code>category_code</code>/<code>category_label</code> columns. Numerical tables are added to the custom metric section. Both may include <code>suite2p_index</code>, <code>roi</code>, or <code>index</code>.</div>
+              <button id="openCustomRoiUploadDialog" type="button">Upload Custom ROI Metric or Label</button>
             </div>
           </details>
           <details class="panel morphology-card menu-card" open>
@@ -2546,15 +2497,7 @@ function targetStructureLabel(name) {{
   if (name === "cerebellum_lax") return "dendrite_relaxed";
   return name;
 }}
-document.getElementById("targetStructureSummary").textContent = `Pipeline target structure: ${{targetStructureLabel(data.targetStructure)}}; no ROI filter is applied on load.`;
-document.getElementById("targetStructureInline").textContent = `Pipeline target structure: ${{targetStructureLabel(data.targetStructure)}}; default view includes all Suite2p ROIs.`;
-const roiModelScoreInfo = (data.roiModelScores || []).find(item => item && item.model_target_structure);
-if (roiModelScoreInfo) {{
-  const modelTarget = targetStructureLabel(roiModelScoreInfo.model_target_structure || "unspecified");
-  const modelSource = roiModelScoreInfo.model_source ? ` via ${{roiModelScoreInfo.model_source}}` : "";
-  document.getElementById("targetStructureSummary").textContent += ` ROI model score target: ${{modelTarget}}${{modelSource}}.`;
-  document.getElementById("targetStructureInline").textContent += ` ROI model score target: ${{modelTarget}}${{modelSource}}.`;
-}}
+document.getElementById("targetStructureInline").textContent = "";
 document.getElementById("roiInput").max = Math.max(...data.suite2pIndices);
 const sessionDurationSec = (data.nFrames - 1) / data.frameRate;
 document.getElementById("timeStart").max = sessionDurationSec.toFixed(3);
@@ -2615,7 +2558,6 @@ let oasisEventThreshold = Number(data.oasisEventThreshold ?? 0.05);
 let showInferredSpikes = true;
 let oasisSpikeMin = 0;
 let oasisSpikeMax = 1;
-let oasisResidualCache = new Map();
 let oasisDiagnosticsCache = new Map();
 function configureOasisThresholdControls() {{
   const sp = spikeTrace(selected);
@@ -2663,7 +2605,6 @@ function setDffFromArrayBuffer(arrayBuffer, silent = false) {{
     data.nRois = parsed.shape[0];
     data.nFrames = parsed.shape[1];
   }}
-  oasisResidualCache.clear();
   oasisDiagnosticsCache.clear();
   if (!silent) {{
     document.getElementById("traceLoadNote").textContent = `Loaded dF/F file with ${{data.nRois}} ROIs x ${{data.nFrames}} frames.`;
@@ -2683,6 +2624,34 @@ function updateSidecarLoadNote() {{
   }}
   if (parts.length) {{
     note.textContent = `${{parts.join("; ")}}. If auto-loading is blocked, use the buttons above to select the matching .npy file(s).`;
+  }}
+}}
+function renderAutoLoadedFileList() {{
+  const list = document.getElementById("autoLoadedFileList");
+  if (!list) return;
+  const items = [];
+  if (data.dffStorageMode === "embedded") items.push("dF/F traces embedded in HTML");
+  if (data.dffStorageMode === "file" && data.dffSidecarName) items.push(`dF/F sidecar: ${{data.dffSidecarName}}`);
+  if (data.oasisAvailable) {{
+    if (data.oasisStorageMode === "embedded") items.push("inferred spikes embedded in HTML");
+    else if (data.oasisSidecarName) items.push(`inferred-spikes sidecar: ${{data.oasisSidecarName}}`);
+  }}
+  if (data.roiModelScoreSource && !String(data.roiModelScoreSource).startsWith("No ")) items.push(`ROI model scores: ${{data.roiModelScoreSource}}`);
+  if (data.cellTypeLabelSource && !["not loaded", "none"].includes(String(data.cellTypeLabelSource).toLowerCase())) items.push(`categorical ROI labels: ${{data.cellTypeLabelSource}}`);
+  for (const definition of customMetricDefinitions()) {{
+    if (definition.source) items.push(`custom metric ${{definition.label}}: ${{definition.source}}`);
+  }}
+  list.textContent = "";
+  if (!items.length) {{
+    const item = document.createElement("li");
+    item.textContent = "No optional ROI metric/label files are embedded or auto-loaded.";
+    list.appendChild(item);
+    return;
+  }}
+  for (const text of items) {{
+    const item = document.createElement("li");
+    item.textContent = text;
+    list.appendChild(item);
   }}
 }}
 async function loadSidecarByRelativeName(sidecarName, setter, label) {{
@@ -2724,7 +2693,6 @@ function setOasisFromArrayBuffer(arrayBuffer, silent = false) {{
     data.nRois = parsed.shape[0];
     data.nFrames = parsed.shape[1];
   }}
-  oasisResidualCache.clear();
   oasisDiagnosticsCache.clear();
   document.getElementById("traceOasisControls").classList.add("visible");
   configureOasisThresholdControls();
@@ -2736,35 +2704,83 @@ function setOasisFromArrayBuffer(arrayBuffer, silent = false) {{
   draw();
 }}
 function updateCellTypeLabelStatus() {{
-  const status = document.getElementById("cellTypeLabelStatus");
-  if (!status) return;
-  const loaded = Array.isArray(data.cellTypeLabels) && data.cellTypeLabels.some(value => value !== null && value !== undefined);
-  status.textContent = loaded
-    ? `Categorical ROI variable loaded from ${{data.cellTypeLabelSource}}.`
-    : data.cellTypeLabelSource;
   updateCategoricalFilterOptions();
+  renderCategoryLabelEditor();
+  renderAutoLoadedFileList();
 }}
 function updateCategoricalFilterOptions() {{
-  const select = document.getElementById("cellTypeFilter");
-  if (!select) return;
-  const current = select.value;
-  select.textContent = "";
-  const notUsed = document.createElement("option");
-  notUsed.value = "";
-  notUsed.textContent = "Not Used";
-  select.appendChild(notUsed);
+  const container = document.getElementById("cellTypeFilterOptions");
+  if (!container) return;
+  const current = new Set(readCategoryFilter());
+  container.textContent = "";
   const values = Array.from(new Set((data.cellTypeLabels || []).filter(value => value !== null && value !== undefined).map(value => String(value)))).sort((a, b) => Number(a) - Number(b));
-  for (const value of values) {{
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = categoryLabelName(Number(value));
-    select.appendChild(option);
+  if (!values.length) {{
+    const note = document.createElement("span");
+    note.className = "note";
+    note.textContent = "No categorical ROI variable loaded.";
+    container.appendChild(note);
+    return;
   }}
-  const notLoaded = document.createElement("option");
-  notLoaded.value = "not_loaded";
-  notLoaded.textContent = "not loaded";
-  select.appendChild(notLoaded);
-  if ([...select.options].some(option => option.value === current)) select.value = current;
+  const note = document.createElement("span");
+  note.className = "note";
+  note.textContent = "If no categories are checked, the categorical filter is not used.";
+  container.appendChild(note);
+  for (const value of values) {{
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.className = "cell-type-filter-checkbox";
+    input.value = value;
+    input.checked = current.has(value);
+    input.addEventListener("change", evaluateFilter);
+    label.appendChild(input);
+    label.appendChild(document.createTextNode(` ${{categoryLabelName(Number(value))}} (${{value}})`));
+    container.appendChild(label);
+  }}
+  const notLoadedLabel = document.createElement("label");
+  const notLoadedInput = document.createElement("input");
+  notLoadedInput.type = "checkbox";
+  notLoadedInput.className = "cell-type-filter-checkbox";
+  notLoadedInput.value = "not_loaded";
+  notLoadedInput.checked = current.has("not_loaded");
+  notLoadedInput.addEventListener("change", evaluateFilter);
+  notLoadedLabel.appendChild(notLoadedInput);
+  notLoadedLabel.appendChild(document.createTextNode(" not loaded"));
+  container.appendChild(notLoadedLabel);
+}}
+function readCategoryFilter() {{
+  return Array.from(document.querySelectorAll(".cell-type-filter-checkbox:checked")).map(input => String(input.value));
+}}
+function writeCategoryFilter(values) {{
+  const selected = new Set(Array.isArray(values) ? values.map(value => String(value)) : (values ? [String(values)] : []));
+  document.querySelectorAll(".cell-type-filter-checkbox").forEach(input => {{
+    input.checked = selected.has(String(input.value));
+  }});
+}}
+function renderCategoryLabelEditor() {{
+  const section = document.getElementById("categoryLabelEditorSection");
+  const editor = document.getElementById("categoryLabelEditor");
+  if (!section || !editor) return;
+  const values = Array.from(new Set((data.cellTypeLabels || []).filter(value => value !== null && value !== undefined).map(value => String(value)))).sort((a, b) => Number(a) - Number(b));
+  editor.textContent = "";
+  section.hidden = values.length === 0;
+  for (const value of values) {{
+    const label = document.createElement("label");
+    const span = document.createElement("span");
+    span.textContent = `Value ${{value}}`;
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = data.categoryLabelMap?.[String(value)] || `category ${{value}}`;
+    input.addEventListener("change", () => {{
+      data.categoryLabelMap[String(value)] = input.value.trim() || `category ${{value}}`;
+      updateCategoricalFilterOptions();
+      updateSortCurrent();
+      draw();
+    }});
+    label.appendChild(span);
+    label.appendChild(input);
+    editor.appendChild(label);
+  }}
 }}
 function parseDelimitedRows(text) {{
   const delimiter = text.includes("\\t") && !text.includes(",") ? "\\t" : ",";
@@ -2892,6 +2908,7 @@ function loadCustomMetricText(text, sourceName) {{
   evaluateFilter();
   updateSortMetricHandlers();
   document.getElementById("customMetricStatus").textContent = `${{data.customRoiMetrics.definitions.length}} custom metric(s) loaded.`;
+  renderAutoLoadedFileList();
 }}
 function categoryCodeFromLabel(label, labelToCode) {{
   const text = String(label ?? "").trim();
@@ -2952,6 +2969,7 @@ function loadCategoryRows(rowObjects, sourceName) {{
   data.cellTypeLabels = nextLabels;
   data.categoryLabelMap = {{...data.categoryLabelMap, ...labelMap}};
   data.cellTypeLabelSource = sourceName;
+  renderCategoryLabelEditor();
 }}
 function loadCellTypeTableText(text, sourceName) {{
   if (sourceName.toLowerCase().endsWith(".json")) {{
@@ -3144,7 +3162,6 @@ function metricValue(roi, metric) {{
   if (metric && metric.startsWith("custom:")) return customMetricValue(roi, metric.slice("custom:".length));
   if (metric === "snr_95_50" || metric === "event_snr") return dffMetric(roi, "snr_95_50", "event_snr");
   if (metric === "andrea_postdoc_snr") return dffMetric(roi, "andrea_postdoc_snr");
-  if (metric === "oasis_event_residual_ks") return dffMetric(roi, "oasis_event_residual_ks");
   if (metric === "oasis_event_snr") return dffMetric(roi, "oasis_event_snr");
   if (metric === "oasis_rise_tau_seconds") return dffMetric(roi, "oasis_rise_tau_seconds");
   if (metric === "oasis_decay_tau_seconds") return dffMetric(roi, "oasis_decay_tau_seconds");
@@ -3166,7 +3183,6 @@ function metricLabel(metric) {{
   }}
   if (metric === "snr_95_50" || metric === "event_snr") return "SNR: 95/50 percentile";
   if (metric === "andrea_postdoc_snr") return "SNR: CaImAn (large-transient score)";
-  if (metric === "oasis_event_residual_ks") return "inferred spike residual Gaussian-fit distance";
   if (metric === "oasis_event_snr") return "inferred spike SNR";
   if (metric === "oasis_rise_tau_seconds") return "inferred spike rise tau";
   if (metric === "oasis_decay_tau_seconds") return "inferred spike decay tau";
@@ -3220,7 +3236,6 @@ function updateMetricDefaults() {{
   const oasisSnr = finiteMetricValues("oasis_event_snr");
   const oasisRiseTau = finiteMetricValues("oasis_rise_tau_seconds");
   const oasisDecayTau = finiteMetricValues("oasis_decay_tau_seconds");
-  const oasisResidualKs = finiteMetricValues("oasis_event_residual_ks");
   const roiModelProbability = finiteMetricValues("roi_model_score_probability");
   const selectedPreset = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.all_rois || {{}};
   setSuggestedThreshold("skewMin", selectedPreset.skewMin ?? mean(skew));
@@ -3239,7 +3254,6 @@ function updateMetricDefaults() {{
   setSuggestedThreshold("oasisRiseTauMax", percentile(oasisRiseTau, 0.75));
   setSuggestedThreshold("oasisDecayTauMin", percentile(oasisDecayTau, 0.25));
   setSuggestedThreshold("oasisDecayTauMax", percentile(oasisDecayTau, 0.75));
-  setSuggestedThreshold("oasisResidualKsMax", percentile(oasisResidualKs, 0.75));
   setSuggestedThreshold("roiModelScoreProbabilityMin", mean(roiModelProbability));
   setSuggestedThreshold("roiModelScoreProbabilityMax", percentile(roiModelProbability, 0.75));
   for (const definition of customMetricDefinitions()) {{
@@ -3264,7 +3278,6 @@ function updateMetricDefaults() {{
   document.getElementById("oasisDecayTauMaxDefault").textContent = oasisDecayTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisDecayTauMax)}})` : "";
   document.getElementById("roiModelScoreProbabilityMinDefault").textContent = roiModelProbability.length ? `(suggested min: ${{fmt(suggestedThresholds.roiModelScoreProbabilityMin)}})` : "";
   document.getElementById("roiModelScoreProbabilityMaxDefault").textContent = roiModelProbability.length ? `(suggested max: ${{fmt(suggestedThresholds.roiModelScoreProbabilityMax)}})` : "";
-  document.getElementById("oasisResidualKsDefault").textContent = oasisResidualKs.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisResidualKsMax)}})` : "";
   configureOasisFilterControls();
 }}
 function configureOasisFilterControls() {{
@@ -3274,7 +3287,6 @@ function configureOasisFilterControls() {{
     ["oasisRiseTauMax", "oasis_rise_tau_seconds"],
     ["oasisDecayTauMin", "oasis_decay_tau_seconds"],
     ["oasisDecayTauMax", "oasis_decay_tau_seconds"],
-    ["oasisResidualKsMax", "oasis_event_residual_ks"],
   ];
   for (const [inputId, metric] of oasisMetricIds) {{
     const input = document.getElementById(inputId);
@@ -3501,7 +3513,7 @@ function setSelected(roi) {{
   if (data.oasisAvailable) setOasisThreshold(selectedOasisDefaultThreshold(), false);
   document.getElementById("roiInput").value = suite2pRoi;
   document.getElementById("roiDetailsSummary").textContent = "Selected ROI Details";
-  document.getElementById("readout").textContent = `category ${{cellType}}${{roiModelText}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | inferred spike residual Gaussian-fit distance ${{fmt(dffMetricValue(dffMetrics, "oasis_event_residual_ks"))}}`;
+  document.getElementById("readout").textContent = `category ${{cellType}}${{roiModelText}} | area ${{fmt(dffMetrics.roi_area)}} px | skew ${{fmt(metrics.skew)}} connect ${{metrics.connect}} aspect ${{fmt(metrics.aspect)}} compact ${{fmt(metrics.compact)}} | SNR: 95/50 percentile ${{fmt(snr9550)}} | SNR: CaImAn (large-transient score) ${{fmt(postdocSnr)}} | inferred spike SNR ${{fmt(dffMetricValue(dffMetrics, "oasis_event_snr"))}} | rise tau ${{fmt(dffMetricValue(dffMetrics, "oasis_rise_tau_seconds"))}} s | decay tau ${{fmt(dffMetricValue(dffMetrics, "oasis_decay_tau_seconds"))}} s`;
   document.getElementById("traceTitle").textContent = `Selected ROI - ${{ROI_INDEX_LABEL}} ${{suite2pRoi}}/${{data.nRois}}, Current Sort ${{currentSortPositionText()}}`;
   document.querySelectorAll(".roi").forEach(c => c.classList.toggle("selected", Number(c.dataset.roi) === selected));
   updateLabelControls();
@@ -3629,8 +3641,7 @@ function readFilter() {{
     oasisEventSnrMin: filterValue("oasisEventSnrMin"),
     oasisRiseTauMin: filterValue("oasisRiseTauMin"), oasisRiseTauMax: filterValue("oasisRiseTauMax"),
     oasisDecayTauMin: filterValue("oasisDecayTauMin"), oasisDecayTauMax: filterValue("oasisDecayTauMax"),
-    oasisResidualKsMax: filterValue("oasisResidualKsMax"),
-    cellTypeFilter: filterString("cellTypeFilter"),
+    cellTypeFilter: readCategoryFilter(),
     roiModelScoreProbabilityMin: filterValue("roiModelScoreProbabilityMin"),
     roiModelScoreProbabilityMax: filterValue("roiModelScoreProbabilityMax"),
     customMetrics: readCustomMetricFilters(),
@@ -3654,7 +3665,7 @@ function normalizeFilter(filter) {{
     const value = Number(filter[key]);
     normalized[key] = Number.isFinite(value) ? value : null;
   }}
-  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"]) {{
+  for (const key of ["eventSnrMin","eventSnrMax","andreaPostdocSnrMin","andreaPostdocSnrMax","roiAreaMin","roiAreaMax","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"]) {{
     if (filter[key] === null || filter[key] === undefined || String(filter[key]).trim() === "") {{
       normalized[key] = null;
       continue;
@@ -3663,8 +3674,10 @@ function normalizeFilter(filter) {{
     normalized[key] = Number.isFinite(value) ? value : null;
     if ((key.endsWith("Max")) && normalized[key] === 0) normalized[key] = null;
   }}
-  const cellTypeFilter = filter.cellTypeFilter === null || filter.cellTypeFilter === undefined ? "" : String(filter.cellTypeFilter).trim();
-  normalized.cellTypeFilter = cellTypeFilter || null;
+  const rawCellTypeFilter = Array.isArray(filter.cellTypeFilter)
+    ? filter.cellTypeFilter
+    : (filter.cellTypeFilter === null || filter.cellTypeFilter === undefined || String(filter.cellTypeFilter).trim() === "" ? [] : [filter.cellTypeFilter]);
+  normalized.cellTypeFilter = rawCellTypeFilter.map(value => String(value)).filter(value => value.trim() !== "");
   normalized.customMetrics = {{}};
   const customMetrics = filter.customMetrics || {{}};
   for (const definition of customMetricDefinitions()) {{
@@ -3691,6 +3704,7 @@ function writeFilter(filter) {{
     if (minInput) minInput.value = bounds.min === null || bounds.min === undefined ? "" : bounds.min;
     if (maxInput) maxInput.value = bounds.max === null || bounds.max === undefined ? "" : bounds.max;
   }}
+  writeCategoryFilter(normalized.cellTypeFilter || []);
   evaluateFilter();
 }}
 function populatePresetSelect(selectedName = data.targetStructure) {{
@@ -3736,12 +3750,11 @@ function passesFilter(roi, metrics, filter) {{
   const oasisEventSnr = dffMetricValue(dffMetrics, "oasis_event_snr");
   const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
   const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
-  const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
   const roiModelProbability = metricValue(roi, "roi_model_score_probability");
-  const cellTypeFilter = filter.cellTypeFilter;
+  const cellTypeFilter = Array.isArray(filter.cellTypeFilter) ? filter.cellTypeFilter : [];
   const cellTypeValue = data.cellTypeLabels?.[roi];
-  const cellTypePass = !cellTypeFilter || (
-    cellTypeFilter === "not_loaded" ? (cellTypeValue === null || cellTypeValue === undefined) : Number(cellTypeValue) === Number(cellTypeFilter)
+  const cellTypePass = !cellTypeFilter.length || cellTypeFilter.some(value =>
+    value === "not_loaded" ? (cellTypeValue === null || cellTypeValue === undefined) : Number(cellTypeValue) === Number(value)
   );
   const customMetricPass = customMetricDefinitions().every(definition => {{
     const bounds = filter.customMetrics?.[definition.key] || {{}};
@@ -3762,7 +3775,6 @@ function passesFilter(roi, metrics, filter) {{
     passesUpper(oasisRiseTau, filter.oasisRiseTauMax) &&
     passesLower(oasisDecayTau, filter.oasisDecayTauMin) &&
     passesUpper(oasisDecayTau, filter.oasisDecayTauMax) &&
-    passesUpper(oasisResidualKs, filter.oasisResidualKsMax) &&
     passesLower(roiModelProbability, filter.roiModelScoreProbabilityMin) &&
     passesUpper(roiModelProbability, filter.roiModelScoreProbabilityMax) &&
     cellTypePass &&
@@ -3776,9 +3788,8 @@ function morphologyReasons(metrics, dffMetrics, filter, roi = null) {{
   const oasisEventSnr = dffMetricValue(dffMetrics, "oasis_event_snr");
   const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
   const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
-  const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
   const roiModelProbability = metricValue(roi, "roi_model_score_probability");
-  const cellTypeFilter = filter.cellTypeFilter;
+  const cellTypeFilter = Array.isArray(filter.cellTypeFilter) ? filter.cellTypeFilter : [];
   if (roi === null || roi === undefined) roi = data.dffMetrics.indexOf(dffMetrics);
   if (!passesLower(metrics.skew, filter.skewMin)) reasons.push(`skew ${{fmt(metrics.skew)}} below ${{filter.skewMin}}`);
   if (!passesUpper(metrics.skew, filter.skewMax)) reasons.push(`skew ${{fmt(metrics.skew)}} above ${{filter.skewMax}}`);
@@ -3796,13 +3807,17 @@ function morphologyReasons(metrics, dffMetrics, filter, roi = null) {{
   if (!passesUpper(oasisRiseTau, filter.oasisRiseTauMax)) reasons.push(`inferred spike rise tau ${{fmt(oasisRiseTau)}} above ${{filter.oasisRiseTauMax}}`);
   if (!passesLower(oasisDecayTau, filter.oasisDecayTauMin)) reasons.push(`inferred spike decay tau ${{fmt(oasisDecayTau)}} below ${{filter.oasisDecayTauMin}}`);
   if (!passesUpper(oasisDecayTau, filter.oasisDecayTauMax)) reasons.push(`inferred spike decay tau ${{fmt(oasisDecayTau)}} above ${{filter.oasisDecayTauMax}}`);
-  if (!passesUpper(oasisResidualKs, filter.oasisResidualKsMax)) reasons.push(`inferred spike residual Gaussian-fit distance ${{fmt(oasisResidualKs)}} above ${{filter.oasisResidualKsMax}}`);
   if (!passesLower(roiModelProbability, filter.roiModelScoreProbabilityMin)) reasons.push(`ROI model score probability ${{fmt(roiModelProbability)}} below ${{filter.roiModelScoreProbabilityMin}}`);
   if (!passesUpper(roiModelProbability, filter.roiModelScoreProbabilityMax)) reasons.push(`ROI model score probability ${{fmt(roiModelProbability)}} above ${{filter.roiModelScoreProbabilityMax}}`);
-  if (cellTypeFilter) {{
+  if (cellTypeFilter.length) {{
     const cellTypeValue = data.cellTypeLabels?.[roi];
-    const passesCellType = cellTypeFilter === "not_loaded" ? (cellTypeValue === null || cellTypeValue === undefined) : Number(cellTypeValue) === Number(cellTypeFilter);
-    if (!passesCellType) reasons.push(`category ${{cellTypeLabelName(cellTypeValue)}} does not match ${{cellTypeFilter === "not_loaded" ? "not loaded" : cellTypeLabelName(Number(cellTypeFilter))}}`);
+    const passesCellType = cellTypeFilter.some(value =>
+      value === "not_loaded" ? (cellTypeValue === null || cellTypeValue === undefined) : Number(cellTypeValue) === Number(value)
+    );
+    if (!passesCellType) {{
+      const selectedLabels = cellTypeFilter.map(value => value === "not_loaded" ? "not loaded" : cellTypeLabelName(Number(value))).join(", ");
+      reasons.push(`category ${{cellTypeLabelName(cellTypeValue)}} does not match selected categories (${{selectedLabels}})`);
+    }}
   }}
   for (const definition of customMetricDefinitions()) {{
     const bounds = filter.customMetrics?.[definition.key] || {{}};
@@ -4178,7 +4193,7 @@ function drawMotionDrift() {{
   const n = Math.min(motionX.length, motionY.length, data.nFrames);
   const xs = Math.max(0, Math.min(n - 1, Math.floor(x0)));
   const xe = Math.max(xs, Math.min(n - 1, Math.ceil(x1)));
-  function drawPanel(values, top, title, color) {{
+  function drawPanel(values, top, title, color, showXLabel = false) {{
     const ph = panelH;
     let lo = Infinity, hi = -Infinity;
     for (let f = xs; f <= xe; f++) {{
@@ -4189,7 +4204,7 @@ function drawMotionDrift() {{
     const pad = Math.max((hi - lo) * 0.08, 0.5); lo -= pad; hi += pad;
     const xOf = f => l + (f - x0) / (x1 - x0) * pw;
     const yOf = v => top + (1 - (v - lo) / (hi - lo)) * ph;
-    drawAxes(ctx, w, h, l, top, pw, ph, "time (s)", "shift (px)");
+    drawAxes(ctx, w, h, l, top, pw, ph, showXLabel ? "time (s)" : "", "shift (px)", {{ xLabelY: top + ph + 34 * (window.devicePixelRatio || 1) }});
     drawTimeGrid(ctx, l, top, pw, ph);
     const zeroY = yOf(0);
     if (zeroY >= top && zeroY <= top + ph) {{
@@ -4248,8 +4263,8 @@ function drawMotionDrift() {{
       ctx.fillText(value.toFixed(1), l - 8, yOf(value));
     }}
   }}
-  drawPanel(motionX, t, "X shift per frame", "#2563eb");
-  drawPanel(motionY, t + panelH + gap, "Y shift per frame", "#dc2626");
+  drawPanel(motionX, t, "X shift per frame", "#2563eb", false);
+  drawPanel(motionY, t + panelH + gap, "Y shift per frame", "#dc2626", true);
 }}
 function drawMotionDistribution() {{
   const canvas = document.getElementById("motionDistributionCanvas");
@@ -4374,66 +4389,16 @@ function drawMotionDistribution() {{
   drawCdfPanel(l + panelW + gap, panelW, "Signed shift CDF", xValues, yValues, "x shift", "y shift", false);
   drawCdfPanel(l + 2 * (panelW + gap), panelW, "Absolute shift CDF", absXValues, absYValues, "|x shift|", "|y shift|", true);
 }}
-function gaussianPdf(x, mean, sd) {{
-  if (!Number.isFinite(sd) || sd <= 0) return 0;
-  const z = (x - mean) / sd;
-  return Math.exp(-0.5 * z * z) / (sd * Math.sqrt(2 * Math.PI));
-}}
-function erfApprox(x) {{
-  const sign = x < 0 ? -1 : 1;
-  x = Math.abs(x);
-  const a1 = 0.254829592, a2 = -0.284496736, a3 = 1.421413741, a4 = -1.453152027, a5 = 1.061405429, p = 0.3275911;
-  const t = 1 / (1 + p * x);
-  const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-x * x);
-  return sign * y;
-}}
-function normalCdf(x, mean, sd) {{
-  if (!Number.isFinite(sd) || sd <= 0) return NaN;
-  return 0.5 * (1 + erfApprox((x - mean) / (sd * Math.SQRT2)));
-}}
 function diagnosticMean(values) {{
   let sum = 0, n = 0;
   for (const value of values) if (Number.isFinite(value)) {{ sum += value; n++; }}
   return n ? sum / n : NaN;
-}}
-function diagnosticSd(values, center) {{
-  let sum = 0, n = 0;
-  for (const value of values) if (Number.isFinite(value)) {{ const d = value - center; sum += d * d; n++; }}
-  return n > 1 ? Math.sqrt(sum / (n - 1)) : NaN;
 }}
 function diagnosticMedian(values) {{
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (!sorted.length) return NaN;
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
-}}
-function oasisResidualSummary(roi, threshold) {{
-  const key = `${{roi}}:${{Number(threshold).toPrecision(8)}}`;
-  if (oasisResidualCache.has(key)) return oasisResidualCache.get(key);
-  const tr = trace(roi), sp = spikeTrace(roi);
-  if (!tr || !sp) return null;
-  const eventFrames = new Uint8Array(data.nFrames);
-  let eventCount = 0;
-  for (let f=0; f<data.nFrames; f++) {{
-    if (Number.isFinite(sp[f]) && sp[f] > threshold) {{
-      eventCount++;
-      const start = Math.max(0, f - 3), stop = Math.min(data.nFrames - 1, f + 3);
-      for (let g=start; g<=stop; g++) eventFrames[g] = 1;
-    }}
-  }}
-  const eventResiduals = [];
-  const radius = Math.max(2, Math.round(data.frameRate * 0.25));
-  for (let f=0; f<data.nFrames; f++) {{
-    if (!eventFrames[f]) continue;
-    let sum = 0, n = 0;
-    const start = Math.max(0, f - radius), stop = Math.min(data.nFrames - 1, f + radius);
-    for (let g=start; g<=stop; g++) {{ const v=tr[g]; if (Number.isFinite(v)) {{ sum += v; n++; }} }}
-    if (!n || !Number.isFinite(tr[f])) continue;
-    eventResiduals.push(tr[f] - sum / n);
-  }}
-  const summary = {{eventCount, eventResiduals}};
-  oasisResidualCache.set(key, summary);
-  return summary;
 }}
 function selectedOasisDiagnostics(roi, threshold) {{
   const key = `${{roi}}:${{Number(threshold).toPrecision(8)}}`;
@@ -4452,7 +4417,7 @@ function selectedOasisDiagnostics(roi, threshold) {{
     last = f;
   }}
   if (!events.length) {{
-    const empty = {{events, waveform: [], times: [], expModel: [], expCdf: [], obsCdf: [], residuals: [], gaussianCdf: [], residualCdf: [], expKs: NaN, gaussianKs: NaN, tau: NaN}};
+    const empty = {{events, waveform: [], times: [], expModel: [], tau: NaN}};
     oasisDiagnosticsCache.set(key, empty);
     return empty;
   }}
@@ -4505,39 +4470,7 @@ function selectedOasisDiagnostics(roi, threshold) {{
     if (!Number.isFinite(tau) || tau <= 0) return NaN;
     return (Number.isFinite(baselineTail) ? baselineTail : 0) + amplitude * Math.exp(-(times[i] - times[peakIndex]) / tau);
   }});
-  const obsCdf = [];
-  const expCdf = [];
-  let expKs = NaN;
-  if (Number.isFinite(amplitude) && amplitude > 0 && Number.isFinite(tau) && tau > 0) {{
-    let maxDiff = 0;
-    for (let i = peakIndex; i < waveform.length; i++) {{
-      const observed = Math.min(1, Math.max(0, (peak - waveform[i]) / amplitude));
-      const model = Math.min(1, Math.max(0, 1 - Math.exp(-(times[i] - times[peakIndex]) / tau)));
-      obsCdf.push([times[i] - times[peakIndex], observed]);
-      expCdf.push([times[i] - times[peakIndex], model]);
-      if (Number.isFinite(observed) && Number.isFinite(model)) maxDiff = Math.max(maxDiff, Math.abs(observed - model));
-    }}
-    expKs = maxDiff;
-  }}
-  const residualSummary = oasisResidualSummary(roi, threshold);
-  const residuals = residualSummary ? residualSummary.eventResiduals.filter(Number.isFinite).sort((a, b) => a - b) : [];
-  const residualMean = diagnosticMean(residuals);
-  const residualSd = diagnosticSd(residuals, residualMean);
-  const residualCdf = [];
-  const gaussianCdf = [];
-  let gaussianKs = NaN;
-  if (residuals.length >= 4 && Number.isFinite(residualSd) && residualSd > 0) {{
-    let maxDiff = 0;
-    for (let i = 0; i < residuals.length; i++) {{
-      const empirical = residuals.length === 1 ? 1 : i / (residuals.length - 1);
-      const model = normalCdf(residuals[i], residualMean, residualSd);
-      residualCdf.push([residuals[i], empirical]);
-      gaussianCdf.push([residuals[i], model]);
-      if (Number.isFinite(model)) maxDiff = Math.max(maxDiff, Math.abs(empirical - model));
-    }}
-    gaussianKs = maxDiff;
-  }}
-  const diagnostics = {{events, waveform, times, expModel, expCdf, obsCdf, residuals, gaussianCdf, residualCdf, expKs, gaussianKs, tau}};
+  const diagnostics = {{events, waveform, times, expModel, tau}};
   oasisDiagnosticsCache.set(key, diagnostics);
   return diagnostics;
 }}
@@ -4557,15 +4490,11 @@ function drawLineSeries(ctx, series, xOf, yOf, color, lineWidth = 1.5) {{
 function drawOasisDiagnostics() {{
   const summary = document.getElementById("oasisDiagnosticsSummary");
   const transientCanvas = document.getElementById("oasisTransientCanvas");
-  const gaussianCanvas = document.getElementById("oasisGaussianCanvas");
-  if (!summary || !transientCanvas || !gaussianCanvas) return;
-  fit(transientCanvas); fit(gaussianCanvas);
+  if (!summary || !transientCanvas) return;
+  fit(transientCanvas);
   const transientCtx = transientCanvas.getContext("2d");
-  const gaussianCtx = gaussianCanvas.getContext("2d");
   transientCtx.clearRect(0, 0, transientCanvas.width, transientCanvas.height);
   transientCtx.fillStyle = "#fff"; transientCtx.fillRect(0, 0, transientCanvas.width, transientCanvas.height);
-  gaussianCtx.clearRect(0, 0, gaussianCanvas.width, gaussianCanvas.height);
-  gaussianCtx.fillStyle = "#fff"; gaussianCtx.fillRect(0, 0, gaussianCanvas.width, gaussianCanvas.height);
   if (!data.oasisAvailable || !dff || !oasisSpikes) {{
     summary.textContent = "Inferred spikes and dF/F must be loaded to show selected ROI fit metrics.";
     return;
@@ -4575,7 +4504,7 @@ function drawOasisDiagnostics() {{
     summary.textContent = `No inferred spikes pass amplitude threshold ${{fmt(oasisEventThreshold)}} for this ROI.`;
     return;
   }}
-  summary.textContent = `${{diagnostics.events.length}} inferred spikes at amplitude threshold ${{fmt(oasisEventThreshold)}} | empirical e-fold tau ${{fmt(diagnostics.tau)}} s | Gaussian residual KS ${{fmt(diagnostics.gaussianKs)}}`;
+  summary.textContent = `${{diagnostics.events.length}} inferred spikes at amplitude threshold ${{fmt(oasisEventThreshold)}} | empirical e-fold tau ${{fmt(diagnostics.tau)}} s`;
 
   let w = transientCanvas.width, h = transientCanvas.height, l = 64, r = 14, t = 34, b = 50, pw = w - l - r, ph = h - t - b;
   const finiteWave = diagnostics.waveform.filter(Number.isFinite);
@@ -4594,28 +4523,6 @@ function drawOasisDiagnostics() {{
   drawLineSeries(transientCtx, diagnostics.times.map((time, i) => [time, diagnostics.expModel[i]]), xOf, yOf, "#dc2626", 1.4);
   transientCtx.fillStyle = "#1d4ed8"; transientCtx.fillText("avg transient", l + 12, t - 18);
   transientCtx.fillStyle = "#dc2626"; transientCtx.fillText(`exp tau=${{fmt(diagnostics.tau)}}s`, l + 12, t - 4);
-
-  w = gaussianCanvas.width; h = gaussianCanvas.height; l = 82; r = 18; t = 30; b = 56; pw = w - l - r; ph = h - t - b;
-  gaussianCtx.fillStyle = "#475467"; gaussianCtx.textAlign = "left"; gaussianCtx.textBaseline = "top"; gaussianCtx.font = `${{11 * (window.devicePixelRatio || 1)}}px Arial`;
-  gaussianCtx.fillText("Event-window residual CDF vs fitted Gaussian", l + 4, 5);
-  if (diagnostics.residualCdf.length && diagnostics.gaussianCdf.length) {{
-    const xs = diagnostics.residuals;
-    let lo = xs[0], hi = xs[xs.length - 1];
-    if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {{ lo = -1; hi = 1; }}
-    const pad = Math.max((hi - lo) * 0.08, 0.01);
-    lo -= pad; hi += pad;
-    const xOfResidual = x => l + (x - lo) / (hi - lo) * pw;
-    const yOfCdf = y => t + (1 - y) * ph;
-    drawAxes(gaussianCtx, w, h, l, t, pw, ph, "residual dF/F", "cumulative fraction", {{ xLabelY: h - 18, yLabelX: 16 }});
-    drawNumericTicks(gaussianCtx, l, t, pw, ph, lo, hi, 0, 1, 6, 4);
-    drawLineSeries(gaussianCtx, diagnostics.residualCdf, xOfResidual, yOfCdf, "#059669", 1.4);
-    drawLineSeries(gaussianCtx, diagnostics.gaussianCdf, xOfResidual, yOfCdf, "#7c3aed", 1.4);
-    gaussianCtx.fillStyle = "#059669"; gaussianCtx.fillText("residuals", l + 28, t + 8);
-    gaussianCtx.fillStyle = "#7c3aed"; gaussianCtx.fillText(`Gaussian fit, KS=${{fmt(diagnostics.gaussianKs)}}`, l + 28, t + 24);
-  }} else {{
-    gaussianCtx.fillStyle = "#475467"; gaussianCtx.textAlign = "center"; gaussianCtx.textBaseline = "middle";
-    gaussianCtx.fillText("Not enough residual samples for Gaussian KS CDF.", l + pw / 2, t + ph / 2);
-  }}
 }}
 function drawSelectedTraceAndOasis() {{ drawTrace(); drawOasisDiagnostics(); }}
 function draw() {{ drawSelectedTraceAndOasis(); drawStack(); drawMotionDrift(); drawMotionDistribution(); }}
@@ -4697,8 +4604,7 @@ document.getElementById("closeSortDialog").addEventListener("click", () => {{
 document.getElementById("closeSortDialogTop").addEventListener("click", () => closeDialog(sortDialog));
 const dffFileInput = document.getElementById("dffFile");
 const oasisFileInput = document.getElementById("oasisFile");
-const cellTypeFileInput = document.getElementById("cellTypeFile");
-const customMetricFileInput = document.getElementById("customMetricFile");
+const customRoiUploadFileInput = document.getElementById("customRoiUploadFile");
 document.getElementById("loadDffFile").addEventListener("click", () => dffFileInput.click());
 dffFileInput.addEventListener("change", () => {{
   const file = dffFileInput.files && dffFileInput.files[0];
@@ -4727,31 +4633,36 @@ oasisFileInput.addEventListener("change", () => {{
   }};
   reader.readAsArrayBuffer(file);
 }});
-document.getElementById("loadCellTypeFile").addEventListener("click", () => cellTypeFileInput.click());
-cellTypeFileInput.addEventListener("change", () => {{
-  const file = cellTypeFileInput.files && cellTypeFileInput.files[0];
-  if (!file) return;
-  const reader = new FileReader();
-  reader.onload = () => {{
-    try {{
-      loadCellTypeTableText(String(reader.result || ""), file.name);
-    }} catch (error) {{
-      alert(`Could not load categorical variable file: ${{error.message}}`);
-    }}
-  }};
-  reader.readAsText(file);
+const customRoiUploadDialog = document.getElementById("customRoiUploadDialog");
+document.getElementById("openCustomRoiUploadDialog").addEventListener("click", () => {{
+  renderAutoLoadedFileList();
+  renderCategoryLabelEditor();
+  document.getElementById("customRoiUploadStatus").textContent = "";
+  if (typeof customRoiUploadDialog.showModal === "function") customRoiUploadDialog.showModal();
+  else customRoiUploadDialog.setAttribute("open", "");
 }});
-document.getElementById("loadCustomMetricFile").addEventListener("click", () => customMetricFileInput.click());
-document.getElementById("loadNumericMetricFileSide").addEventListener("click", () => customMetricFileInput.click());
-customMetricFileInput.addEventListener("change", () => {{
-  const file = customMetricFileInput.files && customMetricFileInput.files[0];
-  if (!file) return;
+document.getElementById("closeCustomRoiUploadDialog").addEventListener("click", () => closeDialog(customRoiUploadDialog));
+document.getElementById("closeCustomRoiUploadDialogTop").addEventListener("click", () => closeDialog(customRoiUploadDialog));
+document.getElementById("applyCustomRoiUpload").addEventListener("click", () => {{
+  const file = customRoiUploadFileInput.files && customRoiUploadFileInput.files[0];
+  const status = document.getElementById("customRoiUploadStatus");
+  if (!file) {{
+    status.textContent = "Choose a CSV, TSV, TXT, or JSON file first.";
+    return;
+  }}
+  const kind = document.querySelector('input[name="customUploadKind"]:checked')?.value || "numeric";
   const reader = new FileReader();
   reader.onload = () => {{
     try {{
-      loadCustomMetricText(String(reader.result || ""), file.name);
+      if (kind === "categorical") {{
+        loadCellTypeTableText(String(reader.result || ""), file.name);
+        status.textContent = `Loaded categorical ROI variable from ${{file.name}}.`;
+      }} else {{
+        loadCustomMetricText(String(reader.result || ""), file.name);
+        status.textContent = `Loaded numerical ROI metric(s) from ${{file.name}}.`;
+      }}
     }} catch (error) {{
-      document.getElementById("customMetricStatus").textContent = `Could not load custom metrics: ${{error.message}}`;
+      status.textContent = `Could not load ${{kind === "categorical" ? "categorical ROI variable" : "numerical ROI metric"}}: ${{error.message}}`;
     }}
   }};
   reader.readAsText(file);
@@ -4782,7 +4693,6 @@ function metricSpreadsheetRows() {{
     const oasisEventSnr = dffMetricValue(dffMetrics, "oasis_event_snr");
     const oasisRiseTau = dffMetricValue(dffMetrics, "oasis_rise_tau_seconds");
     const oasisDecayTau = dffMetricValue(dffMetrics, "oasis_decay_tau_seconds");
-    const oasisResidualKs = dffMetricValue(dffMetrics, "oasis_event_residual_ks");
     const cellTypeCode = data.cellTypeLabels?.[roi] ?? null;
     const roiModelScore = data.roiModelScores?.[roi] || null;
     const roiModelScoreState = roiModelScore?.state === "gray" ? "unsure" : roiModelScore?.state ?? "";
@@ -4814,7 +4724,6 @@ function metricSpreadsheetRows() {{
       oasisEventSnr,
       oasisRiseTau,
       oasisDecayTau,
-      oasisResidualKs,
       customMetrics,
       fail: {{
         skew: !(passesLower(metrics.skew, filter.skewMin) && passesUpper(metrics.skew, filter.skewMax)),
@@ -4827,7 +4736,6 @@ function metricSpreadsheetRows() {{
         oasisEventSnr: !passesLower(oasisEventSnr, filter.oasisEventSnrMin),
         oasisRiseTau: !(passesLower(oasisRiseTau, filter.oasisRiseTauMin) && passesUpper(oasisRiseTau, filter.oasisRiseTauMax)),
         oasisDecayTau: !(passesLower(oasisDecayTau, filter.oasisDecayTauMin) && passesUpper(oasisDecayTau, filter.oasisDecayTauMax)),
-        oasisResidualKs: !passesUpper(oasisResidualKs, filter.oasisResidualKsMax),
         roiModelScoreProbability: !(passesLower(roiModelScore?.probability, filter.roiModelScoreProbabilityMin) && passesUpper(roiModelScore?.probability, filter.roiModelScoreProbabilityMax)),
         customMetrics: customMetricFail,
       }},
@@ -4837,11 +4745,11 @@ function metricSpreadsheetRows() {{
 }}
 function metricSpreadsheetCsv(rowsData = metricSpreadsheetRows()) {{
   const customHeaders = customMetricDefinitions().map(definition => `custom_${{definition.key}}`);
-  const csvHeader = ["suite2p_index","manual_label","category_label","category_code","roi_model_score_state","roi_model_score_probability","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","caiman_exceptional_event_snr","inferred_spike_snr","inferred_spike_rise_tau_seconds","inferred_spike_decay_tau_seconds","inferred_spike_residual_gaussian_ks", ...customHeaders, "reason"];
+  const csvHeader = ["suite2p_index","manual_label","category_label","category_code","roi_model_score_state","roi_model_score_probability","footprint","skew","aspect_ratio","compact","connectivity","roi_area_px","snr_95_50","caiman_exceptional_event_snr","inferred_spike_snr","inferred_spike_rise_tau_seconds","inferred_spike_decay_tau_seconds", ...customHeaders, "reason"];
   const csvRows = rowsData.map(row => [
     row.suite2p, row.label, row.categoryLabel, row.categoryCode ?? "", row.roiModelScoreState, fmt(row.roiModelScoreProbability), fmt(row.footprint), fmt(row.skew), fmt(row.aspect), fmt(row.compact),
     row.connectivity, fmt(row.roiArea), fmt(row.snr9550), fmt(row.postdocSnr),
-    fmt(row.oasisEventSnr), fmt(row.oasisRiseTau), fmt(row.oasisDecayTau), fmt(row.oasisResidualKs),
+    fmt(row.oasisEventSnr), fmt(row.oasisRiseTau), fmt(row.oasisDecayTau),
     ...customMetricDefinitions().map(definition => fmt(row.customMetrics[definition.key])),
     row.reason,
   ].map(csvEscape).join(","));
@@ -4875,13 +4783,12 @@ function openMetricSpreadsheet() {{
     td(fmt(row.oasisEventSnr), row.fail.oasisEventSnr) +
     td(fmt(row.oasisRiseTau), row.fail.oasisRiseTau) +
     td(fmt(row.oasisDecayTau), row.fail.oasisDecayTau) +
-    td(fmt(row.oasisResidualKs), row.fail.oasisResidualKs) +
     customMetricDefinitions().map(definition => td(fmt(row.customMetrics[definition.key]), row.fail.customMetrics[definition.key])).join("") +
     td(row.reason)
   }}</tr>`).join("");
   const csv = metricSpreadsheetCsv(rowsData);
   const win = window.open("", "_blank");
-  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:nth-child(3),.metric-table td:nth-child(4),.metric-table td:nth-child(5),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><p>category_label_source: ${{data.cellTypeLabelSource || "not loaded"}}</p><p>roi_model_score_label_source: ${{data.roiModelLabelSource || "not loaded"}}</p><p>roi_model_score_source: ${{data.roiModelScoreSource || "not loaded"}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>manual_label</th><th>category_label</th><th>category_code</th><th>roi_model_score_state</th><th>roi_model_score_probability</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>caiman_exceptional_event_snr</th><th>inferred_spike_snr</th><th>inferred_spike_rise_tau_seconds</th><th>inferred_spike_decay_tau_seconds</th><th>inferred_spike_residual_gaussian_ks</th>${{customHeaders}}<th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
+  win.document.write(`<!doctype html><title>${{data.session}} ROI metrics</title><style>body{{font-family:Arial,sans-serif;margin:20px}}button{{margin:8px 0 12px;padding:6px 10px}}.metric-table-wrap{{max-height:80vh;overflow:auto;border:1px solid #d0d5dd}}.metric-table{{border-collapse:collapse;width:100%;font-size:12px}}.metric-table th,.metric-table td{{border:1px solid #e5e7eb;padding:4px 7px;text-align:right;white-space:nowrap}}.metric-table th{{position:sticky;top:0;background:#f8fafc;z-index:1}}.metric-table td:nth-child(1),.metric-table td:nth-child(2),.metric-table td:nth-child(3),.metric-table td:nth-child(4),.metric-table td:nth-child(5),.metric-table td:last-child{{text-align:left}}.metric-fail,.label-bad{{background:rgba(248,113,113,.28)}}.label-good{{background:rgba(34,197,94,.28)}}.label-unsure{{background:rgba(250,204,21,.28)}}</style><h1>${{data.session}} ROI metric spreadsheet</h1><p>target_structure: ${{data.targetStructure}}</p><p>category_label_source: ${{data.cellTypeLabelSource || "not loaded"}}</p><p>roi_model_score_label_source: ${{data.roiModelLabelSource || "not loaded"}}</p><p>roi_model_score_source: ${{data.roiModelScoreSource || "not loaded"}}</p><button id="downloadCsv">Download CSV</button><div class="metric-table-wrap"><table class="metric-table"><thead><tr><th>suite2p_index</th><th>manual_label</th><th>category_label</th><th>category_code</th><th>roi_model_score_state</th><th>roi_model_score_probability</th><th>footprint</th><th>skew</th><th>aspect_ratio</th><th>compact</th><th>connectivity</th><th>roi_area_px</th><th>snr_95_50</th><th>caiman_exceptional_event_snr</th><th>inferred_spike_snr</th><th>inferred_spike_rise_tau_seconds</th><th>inferred_spike_decay_tau_seconds</th>${{customHeaders}}<th>reason</th></tr></thead><tbody>${{rows}}</tbody></table></div><script>const csv = ${{JSON.stringify(csv)}}; document.getElementById("downloadCsv").addEventListener("click", () => {{ const blob = new Blob([csv], {{type: "text/csv"}}); const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "${{data.session}}_roi_metric_spreadsheet.csv"; a.click(); URL.revokeObjectURL(a.href); }});<\\/script>`);
   win.document.close();
 }}
 function saveMetricSpreadsheet() {{
@@ -5079,7 +4986,7 @@ if (oasisDiagnosticsPanel && toggleOasisDiagnostics) {{
     requestAnimationFrame(draw);
   }});
 }}
-["skewMin","skewMax","maxConnect","aspectMin","aspectMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","oasisResidualKsMax","cellTypeFilter","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"].forEach(id => {{
+["skewMin","skewMax","maxConnect","aspectMin","aspectMax","compactMin","compactMax","roiAreaMin","roiAreaMax","eventSnrMin","andreaPostdocSnrMin","oasisEventSnrMin","oasisRiseTauMin","oasisRiseTauMax","oasisDecayTauMin","oasisDecayTauMax","roiModelScoreProbabilityMin","roiModelScoreProbabilityMax"].forEach(id => {{
   const element = document.getElementById(id);
   if (!element) return;
   element.addEventListener("change", evaluateFilter);
@@ -5238,7 +5145,7 @@ def create_preprocessing_summary(
     oasis_storage_mode = "none"
     oasis_sidecar_name = None
     if oasis_spikes is not None:
-        dff_metrics = _add_oasis_residual_metrics(
+        dff_metrics = _add_oasis_event_metrics(
             dff_metrics,
             dff,
             dff_sidecar_path,
