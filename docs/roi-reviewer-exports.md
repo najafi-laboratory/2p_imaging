@@ -111,8 +111,8 @@ trace metrics** are computed from each ROI's dF/F trace and are intended to
 identify weak trace structure, trace-quality values outside the expected range,
 or fluorescence dynamics that do not fit the target ROI class. **Inferred spike
 metrics** are computed from inferred-spike outputs when available
-and describe whether inferred events have reasonable amplitude, timing, and
-residual structure relative to the dF/F trace. If inferred-spike outputs are not
+and describe inferred-spike amplitude and event-triggered timing summaries
+relative to the dF/F trace. If inferred-spike outputs are not
 available for a session, those controls may be disabled or marked as
 unavailable. **Model derived metrics** are loaded from optional trained-model
 score files and should be interpreted only for the anatomical target structure
@@ -209,7 +209,7 @@ combined with equal weight into a single score across all ROIs. The sort order
 can be set to lowest-first or highest-first for the final metric or combined
 score.
 
-When selecting multiple metrics, choose metrics whose direction has the same practical meaning. For example, a lower inferred-spike residual Gaussian-fit distance is generally better, so ascending order usually makes sense for that metric. A higher SNR is generally better, so descending order usually makes sense for SNR. Combining those two directly can be counterproductive because the current sorter does not automatically flip metric directions before combining them. Support may be added later for automatically coherent combinations of metrics with opposite preferred directions, but the current reviewer leaves that choice to the user.
+When selecting multiple metrics, choose metrics whose direction has the same practical meaning. For example, a higher SNR is generally better, while a shorter or longer empirical tau may not have the same biological interpretation across datasets. Combining metrics with opposite preferred directions can be counterproductive because the current sorter does not automatically flip metric directions before combining them. Support may be added later for automatically coherent combinations of metrics with opposite preferred directions, but the current reviewer leaves that choice to the user.
 
 
 ### 7. Selected ROI dF/F and OASIS overlay
@@ -225,10 +225,9 @@ period across the selected trace, stacked traces, and motion plots.
 When inferred-spike data are available, **inferred spikes** can be toggled on or
 off over the dF/F trace. The amplitude threshold slider and number input control
 which inferred-spike amplitudes are displayed. **Reset to ROI default** restores
-the precomputed ROI-specific threshold where the event-window residuals most
-closely resemble Gaussian noise. The **Show inferred spike fit metrics** button
-and section 8 provide more detail on how that threshold and its diagnostics are
-interpreted.
+the precomputed ROI-specific threshold stored by the inferred-spike summary
+stage. The **Show inferred spike fit metrics** button and section 8 provide
+more detail on how the event-triggered transient diagnostics are interpreted.
 
 #### 7.1. dF/F and inferred-spike input format
 
@@ -344,29 +343,12 @@ waveform. It is the event amplitude divided by the standard deviation of the
 pre-event baseline in the average event window. Higher values indicate events
 that stand out more clearly from the pre-event baseline.
 
-The **residual dF/F** values are local deviations of the dF/F trace around
-threshold-passing events. Around each event frame, the viewer marks a small
-event window and compares each marked dF/F sample with a local moving average.
-Those differences form the residual distribution shown in the lower diagnostic
-plot.
-
-The **Gaussian fit, KS** value summarizes how close the event-window residuals
-are to a fitted Gaussian distribution. The viewer fits the Gaussian using the
-residual mean and standard deviation, builds the empirical cumulative
-distribution of the residuals, and reports the largest vertical distance
-between the empirical CDF and fitted Gaussian CDF. This is a
-[Kolmogorov-Smirnov distance](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats.kstest.html)-style
-goodness-of-fit statistic. Lower values mean the residual distribution is
-closer to Gaussian under this simple check; higher values indicate heavier
-tails, skew, artifacts, overlapping events, or other structure left in the
-event-window residuals.
-
-The **Reset to ROI default** threshold uses a precomputed per-ROI threshold
-chosen from candidate inferred-spike amplitude cutoffs. For each candidate, the
-summary code calculates event-window residuals and the Gaussian KS distance.
-The default is the candidate threshold with the smallest finite residual
-Gaussian-fit distance. This makes the default a data-driven display/QC
-threshold, not a claim that the chosen events are all true spikes.
+The **Reset to ROI default** threshold restores the ROI-specific inferred-spike
+amplitude threshold stored by the summary-generation stage. The threshold
+controls which inferred-spike samples are drawn as red points on the selected
+dF/F trace and which samples contribute to the average transient diagnostics.
+It is a display/QC threshold, not a claim that the selected events are all true
+spikes.
 
 The current diagnostics make several practical assumptions. Inferred-spike
 inputs are treated as nonnegative event amplitudes from OASIS or a compatible
@@ -376,11 +358,8 @@ alignable across events for the same ROI, so averaging them produces an
 interpretable transient shape. The decay summary assumes that the average event
 response has a positive peak and approximately monotonic decay after that peak;
 strongly multiphasic, overlapping, saturated, or motion-contaminated events can
-therefore make tau values misleading. The Gaussian residual metric assumes that,
-after local event structure is removed, residual deviations around events should
-look roughly Gaussian. KS distance also depends on the number and distribution
-of residual samples, so sessions or ROIs with very few usable events may have
-missing or unstable diagnostics.
+therefore make tau values misleading. Sessions or ROIs with very few
+threshold-passing inferred spikes may have missing or unstable diagnostics.
 
 ### 9. Stacked dF/F traces
 
@@ -552,10 +531,14 @@ The flag can be repeated for multiple files. Generation accepts `.csv`, `.tsv`,
 index column is present, rows are assumed to already be in the reviewer ROI
 order. Numeric columns become custom metrics; non-numeric columns are ignored.
 
-Inside the reviewer, use **Load custom ROI metrics file** in the **Uploaded /
-Custom ROI Metrics** section to add CSV/TSV/JSON metrics after the HTML has
-opened. Browser upload does not currently support `.npy`/`.npz` because those
-formats do not reliably preserve column names in a user-readable way.
+Inside the reviewer, use **Upload Custom ROI Metric or Label** to add a file
+after the HTML has opened. Choose **Numerical metric** for per-ROI numeric
+columns that should appear in the custom metric section. Choose
+**Categorical label** for per-ROI category codes and labels that should appear
+as selectable category values in the filter and sort dialogs. Browser upload
+supports CSV, TSV, JSON, and delimited text files; it does not currently
+support `.npy`/`.npz` because those formats do not reliably preserve column
+names in a user-readable way.
 
 Example CSV:
 
@@ -596,7 +579,6 @@ Current exported fields:
 | `inferred_spike_snr` | nullable float | Event-triggered inferred-spike SNR when inferred spikes are available. |
 | `inferred_spike_rise_tau_seconds` | nullable float | Inferred-spike event rise time metric in seconds. |
 | `inferred_spike_decay_tau_seconds` | nullable float | Inferred-spike event decay/e-fold metric in seconds. |
-| `inferred_spike_residual_gaussian_ks` | nullable float | Gaussian-fit KS distance for event-window residuals. Lower is closer to Gaussian. |
 | `custom_<metric_key>` | nullable float | One column per loaded custom ROI metric. Column names are sanitized to be code-friendly. |
 | `reason` | string | Semicolon-separated inclusion/failure notes from the current labels and active thresholds. |
 
@@ -917,9 +899,10 @@ indexed to `qc_results/stat.npy`, the summary tries to map them back to the
 original Suite2p ROI order.
 
 Categorical variables can also be loaded after the HTML is open by using
-**Upload categorical variable** near the top of the side menu. The upload file
-can be CSV, TSV, JSON, or plain text with a delimited table. CSV/TSV/plain-text
-files must contain a header row and at least one of these column pairs:
+**Upload Custom ROI Metric or Label** and selecting **Categorical label**. The
+upload file can be CSV, TSV, JSON, or plain text with a delimited table.
+CSV/TSV/plain-text files must contain a header row and at least one of these
+column pairs:
 
 ```text
 category_code,category_label
@@ -932,8 +915,10 @@ cell_type_code,cell_type_label
 ```
 
 If only `category_label` is present, the viewer assigns numeric category codes
-within the open browser session. Upload files may also contain one of these
-index columns:
+within the open browser session. If category codes are supplied without labels,
+the upload dialog shows one editable label field for each unique value so the
+reviewer can name categories before applying them. Upload files may also
+contain one of these index columns:
 
 ```text
 suite2p_index
