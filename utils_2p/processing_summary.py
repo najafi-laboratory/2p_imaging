@@ -2054,7 +2054,7 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <span>Morphology Metrics</span>
         <button class="info-button" type="button" data-info-target="morphologyMetricSources" aria-expanded="false">Read more</button>
         <button class="info-button" type="button" data-info-target="metricDistributionInfo" aria-expanded="false">Distribution Plot Info</button>
-        <button class="info-button" type="button" data-info-target="metricSuggestionSources" aria-expanded="false">Suggested Thresholds Info</button>
+        <button class="info-button" type="button" data-info-target="metricReferenceSources" aria-expanded="false">Reference Values Info</button>
       </div>
       <div id="morphologyMetricSources" class="info-box" hidden>
         <p><a class="docs-link" href="https://suite2p.readthedocs.io/en/latest/outputs/#statnpy-fields" target="_blank" rel="noopener noreferrer">Suite2p stat.npy field definitions</a>: <code>aspect_ratio</code> and <code>compact</code> are Suite2p ROI shape statistics.</p>
@@ -2062,17 +2062,17 @@ canvas {{ width: 100%; display: block; background: #fff; border: 1px solid #d0d5
         <p><a class="docs-link" href="https://github.com/najafi-laboratory/2p_imaging/blob/main/utils_2p/roi_labels.py#L76-L91" target="_blank" rel="noopener noreferrer">Connectivity calculation code</a>: number of 4-connected components in each ROI pixel mask.</p>
       </div>
       <div id="metricDistributionInfo" class="info-box" hidden>
-        <p>Distribution plots are hidden by default. When opened, each plot shows metric values across ROIs. With no threshold values entered, vertical lines reflect the active target-structure threshold, the mean for unthresholded Suite2p fields, or suggested min/max values for computed metrics. As threshold fields are updated the lines update to the new values.</p>
+        <p>Distribution plots are hidden by default. When opened, each plot shows metric values across ROIs. With no threshold values entered, vertical lines reflect the active target-structure threshold, the mean for unthresholded Suite2p fields, or the reference value for computed metrics. As threshold fields are updated the lines update to the new values.</p>
       </div>
-      <div id="metricSuggestionSources" class="info-box" hidden>
-        <p><strong>Suggested filter values are computed from the ROIs embedded in this HTML.</strong></p>
-        <p><strong>Connectivity:</strong> suggested max is the 75th percentile of connectivity values.</p>
-        <p><strong>ROI area:</strong> suggested min/max are the 25th and 75th percentiles across ROIs.</p>
-        <p><strong>Categorical ROI variables:</strong> no numeric threshold is suggested; choose one or more loaded categories by label/value.</p>
-        <p><strong>SNR: 95/50 percentile:</strong> suggested min is the mean SNR value across ROIs.</p>
-        <p><strong>SNR: CaImAn:</strong> suggested min is the mean large-transient score across ROIs.</p>
-        <p><strong>Inferred spike metrics:</strong> suggested SNR min is the mean value, and suggested rise/decay tau min/max are the 25th and 75th percentiles.</p>
-        <p><strong>Uploaded / custom ROI metrics:</strong> suggested min/max are the 25th and 75th percentiles across finite ROI values.</p>
+      <div id="metricReferenceSources" class="info-box" hidden>
+        <p><strong>Reference values beside each field are computed from the ROIs embedded in this HTML.</strong> They describe this session's distribution so a candidate cut can be judged against it; they are not recommended thresholds.</p>
+        <p><strong>Connectivity:</strong> the reference value is the 75th percentile of connectivity values.</p>
+        <p><strong>ROI area:</strong> the reference values are the 25th and 75th percentiles across ROIs.</p>
+        <p><strong>Categorical ROI variables:</strong> no numeric reference value is shown; choose one or more loaded categories by label/value.</p>
+        <p><strong>SNR: 95/50 percentile:</strong> the reference value is the mean SNR across ROIs.</p>
+        <p><strong>SNR: CaImAn:</strong> the reference value is the mean large-transient score across ROIs.</p>
+        <p><strong>Inferred spike metrics:</strong> the SNR reference value is the mean, and the rise and decay tau reference values are the 25th and 75th percentiles.</p>
+        <p><strong>Uploaded / custom ROI metrics:</strong> the reference values are the 25th and 75th percentiles across finite ROI values.</p>
       </div>
       <div class="filter-controls">
         <label>Aspect min <input id="aspectMin" type="number" step="0.01" placeholder="Not Used"></label>
@@ -3221,9 +3221,16 @@ function mean(values) {{
   const finite = values.filter(Number.isFinite);
   return finite.length ? finite.reduce((total, value) => total + value, 0) / finite.length : NaN;
 }}
-const suggestedThresholds = {{}};
-function setSuggestedThreshold(inputId, value) {{
-  suggestedThresholds[inputId] = Number.isFinite(value) ? value : NaN;
+const referenceStatistics = {{}};
+const referenceStatisticLabels = {{}};
+function referenceText(inputId) {{
+  const value = referenceStatistics[inputId];
+  if (!Number.isFinite(value)) return "";
+  return `(${{referenceStatisticLabels[inputId] || "reference"}}: ${{fmt(value)}})`;
+}}
+function setReferenceStatistic(inputId, value, label) {{
+  referenceStatistics[inputId] = Number.isFinite(value) ? value : NaN;
+  if (label) referenceStatisticLabels[inputId] = label;
 }}
 function updateMetricDefaults() {{
   const skew = finiteMetricValues("skew");
@@ -3238,46 +3245,46 @@ function updateMetricDefaults() {{
   const oasisDecayTau = finiteMetricValues("oasis_decay_tau_seconds");
   const roiModelProbability = finiteMetricValues("roi_model_score_probability");
   const selectedPreset = data.morphologyPresets[data.targetStructure] || data.morphologyPresets.all_rois || {{}};
-  setSuggestedThreshold("skewMin", selectedPreset.skewMin ?? mean(skew));
-  setSuggestedThreshold("skewMax", selectedPreset.skewMax ?? mean(skew));
-  setSuggestedThreshold("aspectMin", selectedPreset.aspectMin ?? mean(aspect));
-  setSuggestedThreshold("aspectMax", selectedPreset.aspectMax ?? mean(aspect));
-  setSuggestedThreshold("compactMin", selectedPreset.compactMin ?? mean(compact));
-  setSuggestedThreshold("compactMax", selectedPreset.compactMax ?? mean(compact));
-  setSuggestedThreshold("maxConnect", percentile(connect, 0.75));
-  setSuggestedThreshold("roiAreaMin", percentile(roiArea, 0.25));
-  setSuggestedThreshold("roiAreaMax", percentile(roiArea, 0.75));
-  setSuggestedThreshold("eventSnrMin", mean(snr9550));
-  setSuggestedThreshold("andreaPostdocSnrMin", mean(caiman));
-  setSuggestedThreshold("oasisEventSnrMin", mean(oasisSnr));
-  setSuggestedThreshold("oasisRiseTauMin", percentile(oasisRiseTau, 0.25));
-  setSuggestedThreshold("oasisRiseTauMax", percentile(oasisRiseTau, 0.75));
-  setSuggestedThreshold("oasisDecayTauMin", percentile(oasisDecayTau, 0.25));
-  setSuggestedThreshold("oasisDecayTauMax", percentile(oasisDecayTau, 0.75));
-  setSuggestedThreshold("roiModelScoreProbabilityMin", mean(roiModelProbability));
-  setSuggestedThreshold("roiModelScoreProbabilityMax", percentile(roiModelProbability, 0.75));
+  setReferenceStatistic("skewMin", selectedPreset.skewMin ?? mean(skew), "preset or mean");
+  setReferenceStatistic("skewMax", selectedPreset.skewMax ?? mean(skew), "preset or mean");
+  setReferenceStatistic("aspectMin", selectedPreset.aspectMin ?? mean(aspect), "preset or mean");
+  setReferenceStatistic("aspectMax", selectedPreset.aspectMax ?? mean(aspect), "preset or mean");
+  setReferenceStatistic("compactMin", selectedPreset.compactMin ?? mean(compact), "preset or mean");
+  setReferenceStatistic("compactMax", selectedPreset.compactMax ?? mean(compact), "preset or mean");
+  setReferenceStatistic("maxConnect", percentile(connect, 0.75), "75th pct");
+  setReferenceStatistic("roiAreaMin", percentile(roiArea, 0.25), "25th pct");
+  setReferenceStatistic("roiAreaMax", percentile(roiArea, 0.75), "75th pct");
+  setReferenceStatistic("eventSnrMin", mean(snr9550), "mean");
+  setReferenceStatistic("andreaPostdocSnrMin", mean(caiman), "mean");
+  setReferenceStatistic("oasisEventSnrMin", mean(oasisSnr), "mean");
+  setReferenceStatistic("oasisRiseTauMin", percentile(oasisRiseTau, 0.25), "25th pct");
+  setReferenceStatistic("oasisRiseTauMax", percentile(oasisRiseTau, 0.75), "75th pct");
+  setReferenceStatistic("oasisDecayTauMin", percentile(oasisDecayTau, 0.25), "25th pct");
+  setReferenceStatistic("oasisDecayTauMax", percentile(oasisDecayTau, 0.75), "75th pct");
+  setReferenceStatistic("roiModelScoreProbabilityMin", mean(roiModelProbability), "mean");
+  setReferenceStatistic("roiModelScoreProbabilityMax", percentile(roiModelProbability, 0.75), "75th pct");
   for (const definition of customMetricDefinitions()) {{
     const values = finiteMetricValues(`custom:${{definition.key}}`);
     const ids = customMetricFilterIds(definition.key);
-    setSuggestedThreshold(ids.min, percentile(values, 0.25));
-    setSuggestedThreshold(ids.max, percentile(values, 0.75));
+    setReferenceStatistic(ids.min, percentile(values, 0.25), "25th pct");
+    setReferenceStatistic(ids.max, percentile(values, 0.75), "75th pct");
     const minDefault = document.getElementById(`${{ids.min}}Default`);
     const maxDefault = document.getElementById(`${{ids.max}}Default`);
-    if (minDefault) minDefault.textContent = values.length ? `(suggested min: ${{fmt(suggestedThresholds[ids.min])}})` : "";
-    if (maxDefault) maxDefault.textContent = values.length ? `(suggested max: ${{fmt(suggestedThresholds[ids.max])}})` : "";
+    if (minDefault) minDefault.textContent = values.length ? referenceText(ids.min) : "";
+    if (maxDefault) maxDefault.textContent = values.length ? referenceText(ids.max) : "";
   }}
-  document.getElementById("maxConnectDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.maxConnect)}})`;
-  document.getElementById("roiAreaMinDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.roiAreaMin)}})`;
-  document.getElementById("roiAreaMaxDefault").textContent = `(suggested max: ${{fmt(suggestedThresholds.roiAreaMax)}})`;
-  document.getElementById("eventSnrDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.eventSnrMin)}})`;
-  document.getElementById("andreaPostdocSnrDefault").textContent = `(suggested min: ${{fmt(suggestedThresholds.andreaPostdocSnrMin)}})`;
-  document.getElementById("oasisEventSnrDefault").textContent = oasisSnr.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisEventSnrMin)}})` : "";
-  document.getElementById("oasisRiseTauMinDefault").textContent = oasisRiseTau.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisRiseTauMin)}})` : "";
-  document.getElementById("oasisRiseTauMaxDefault").textContent = oasisRiseTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisRiseTauMax)}})` : "";
-  document.getElementById("oasisDecayTauMinDefault").textContent = oasisDecayTau.length ? `(suggested min: ${{fmt(suggestedThresholds.oasisDecayTauMin)}})` : "";
-  document.getElementById("oasisDecayTauMaxDefault").textContent = oasisDecayTau.length ? `(suggested max: ${{fmt(suggestedThresholds.oasisDecayTauMax)}})` : "";
-  document.getElementById("roiModelScoreProbabilityMinDefault").textContent = roiModelProbability.length ? `(suggested min: ${{fmt(suggestedThresholds.roiModelScoreProbabilityMin)}})` : "";
-  document.getElementById("roiModelScoreProbabilityMaxDefault").textContent = roiModelProbability.length ? `(suggested max: ${{fmt(suggestedThresholds.roiModelScoreProbabilityMax)}})` : "";
+  document.getElementById("maxConnectDefault").textContent = referenceText("maxConnect");
+  document.getElementById("roiAreaMinDefault").textContent = referenceText("roiAreaMin");
+  document.getElementById("roiAreaMaxDefault").textContent = referenceText("roiAreaMax");
+  document.getElementById("eventSnrDefault").textContent = referenceText("eventSnrMin");
+  document.getElementById("andreaPostdocSnrDefault").textContent = referenceText("andreaPostdocSnrMin");
+  document.getElementById("oasisEventSnrDefault").textContent = oasisSnr.length ? referenceText("oasisEventSnrMin") : "";
+  document.getElementById("oasisRiseTauMinDefault").textContent = oasisRiseTau.length ? referenceText("oasisRiseTauMin") : "";
+  document.getElementById("oasisRiseTauMaxDefault").textContent = oasisRiseTau.length ? referenceText("oasisRiseTauMax") : "";
+  document.getElementById("oasisDecayTauMinDefault").textContent = oasisDecayTau.length ? referenceText("oasisDecayTauMin") : "";
+  document.getElementById("oasisDecayTauMaxDefault").textContent = oasisDecayTau.length ? referenceText("oasisDecayTauMax") : "";
+  document.getElementById("roiModelScoreProbabilityMinDefault").textContent = roiModelProbability.length ? referenceText("roiModelScoreProbabilityMin") : "";
+  document.getElementById("roiModelScoreProbabilityMaxDefault").textContent = roiModelProbability.length ? referenceText("roiModelScoreProbabilityMax") : "";
   configureOasisFilterControls();
 }}
 function configureOasisFilterControls() {{
@@ -3297,7 +3304,7 @@ function configureOasisFilterControls() {{
     if (!available) input.value = "";
   }}
 }}
-function updateSuite2pSuggestedThresholds(filter) {{
+function updateSuite2pPresetThresholds(filter) {{
   const fallback = {{
     skewMin: mean(finiteMetricValues("skew")),
     skewMax: mean(finiteMetricValues("skew")),
@@ -3307,7 +3314,7 @@ function updateSuite2pSuggestedThresholds(filter) {{
     compactMax: mean(finiteMetricValues("compact")),
   }};
   for (const id of ["skewMin","skewMax","aspectMin","aspectMax","compactMin","compactMax"]) {{
-    setSuggestedThreshold(id, filter && filter[id] !== null && filter[id] !== undefined ? filter[id] : fallback[id]);
+    setReferenceStatistic(id, filter && filter[id] !== null && filter[id] !== undefined ? filter[id] : fallback[id]);
   }}
 }}
 function drawMetricHistogram(canvas) {{
@@ -3355,8 +3362,8 @@ function drawMetricHistogram(canvas) {{
   function thresholdInfo(inputId, label) {{
     if (!inputId) return;
     const activeValue = filterValue(inputId);
-    const suggestedValue = suggestedThresholds[inputId];
-    const value = Number.isFinite(activeValue) ? activeValue : suggestedValue;
+    const referenceValue = referenceStatistics[inputId];
+    const value = Number.isFinite(activeValue) ? activeValue : referenceValue;
     return {{value, label, active: Number.isFinite(activeValue)}};
   }}
   const minThreshold = thresholdInfo(canvas.dataset.min, "min");
@@ -3723,7 +3730,7 @@ function loadSelectedPreset() {{
   const [kind, name] = document.getElementById("filterPreset").value.split(":", 2);
   const preset = kind === "built-in" ? data.morphologyPresets[name] : customPresets[name];
   if (preset) {{
-    updateSuite2pSuggestedThresholds(preset);
+    updateSuite2pPresetThresholds(preset);
     writeFilter(preset);
   }}
 }}
