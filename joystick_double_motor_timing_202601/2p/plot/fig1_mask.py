@@ -323,23 +323,31 @@ class plotter_main_masks:
         ax.axis('off')
         ax.set_title('ROI masks')
     
+    def _plot_panels(self, axs, panels):
+        for ax, (plot, args, kwargs) in zip(axs, panels):
+            plot(ax, *args, **kwargs)
+
     def all_1chan(self, axs):
-        self.plot_func(axs[0], 'mean')
-        self.plot_func_masks_color(axs[1])
-        self.plot_func(axs[2], 'mean', with_mask=False)
-        self.plot_func(axs[3], 'max', with_mask=False)
-        self.plot_func(axs[4], 'fuse', with_mask=False)
+        self._plot_panels(axs, [
+            (self.plot_func, ('mean',), {}),
+            (self.plot_func_masks_color, (), {}),
+            (self.plot_func, ('mean',), {'with_mask': False}),
+            (self.plot_func, ('max',), {'with_mask': False}),
+            (self.plot_func, ('fuse',), {'with_mask': False}),
+        ])
 
     def all_2chan(self, axs):
-        self.plot_func(axs[0], 'fuse')
-        self.plot_func_masks(axs[1])
-        self.plot_anat_cellpose(axs[2])
-        self.plot_masks_superimpose(axs[3])
-        self.plot_anat(axs[4])
-        self.plot_anat_label_masks(axs[5])
-        self.plot_superimpose(axs[6], 'fuse')
-        self.plot_shared_masks(axs[7])
-        self.plot_func(axs[8], 'mean', with_mask=False)
-        self.plot_anat(axs[9], with_mask=False)
-        self.plot_func(axs[10], 'max', with_mask=False)
-        self.plot_superimpose(axs[11], 'fuse', with_mask=False)
+        self._plot_panels(axs, [
+            (self.plot_func, ('fuse',), {}),
+            (self.plot_func_masks, (), {}),
+            (self.plot_anat_cellpose, (), {}),
+            (self.plot_masks_superimpose, (), {}),
+            (self.plot_anat, (), {}),
+            (self.plot_anat_label_masks, (), {}),
+            (self.plot_superimpose, ('fuse',), {}),
+            (self.plot_shared_masks, (), {}),
+            (self.plot_func, ('mean',), {'with_mask': False}),
+            (self.plot_anat, (), {'with_mask': False}),
+            (self.plot_func, ('max',), {'with_mask': False}),
+            (self.plot_superimpose, ('fuse',), {'with_mask': False}),
+        ])

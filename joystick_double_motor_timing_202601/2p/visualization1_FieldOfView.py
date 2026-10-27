@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-import warnings
-warnings.filterwarnings('ignore')
-
 import gc
 import os
 import matplotlib.pyplot as plt
@@ -15,8 +12,7 @@ from plot.misc import plot_surgery_window
 
 def run(session_config_list, smooth, cate_list):
     size_scale = 3
-    [list_labels, list_masks, list_neural_trials, list_move_offset
-     ] = read_all(session_config_list, smooth)
+    list_labels, list_masks, list_neural_trials = read_all(session_config_list, smooth)
     def plot_window():
         title = 'surgery window'
         print('-----------------------------------------------')
@@ -45,6 +41,11 @@ def run(session_config_list, smooth, cate_list):
         plt.close(fig)
         return [filename, n_row, n_col, title]
     def plot_masks():
+        session_idx = next((i for i, masks in enumerate(list_masks)
+                            if masks[0] is not None), None)
+        if session_idx is None:
+            print('Skipping imaging FOV: no sessions have spatial FOV data')
+            return None
         title = 'imaging fov'
         print('-----------------------------------------------')
         print(title)
@@ -54,18 +55,40 @@ def run(session_config_list, smooth, cate_list):
         fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
         gs = GridSpec(n_row, n_col, figure=fig)
         plotter = plotter_main_masks(
-            list_labels[0],
-            list_masks[0][0],
-            list_masks[0][1],
-            list_masks[0][2],
-            list_masks[0][3],
-            list_masks[0][4])
-        try:
+            list_labels[session_idx],
+            list_masks[session_idx][0],
+            list_masks[session_idx][1],
+            list_masks[session_idx][2],
+            list_masks[session_idx][3],
+            list_masks[session_idx][4])
+        def plot_panels(axs, panels):
+            for ax, (plot, args, kwargs) in zip(axs, panels):
+                plot(ax, *args, **kwargs)
+        if list_masks[session_idx][3] is not None and list_masks[session_idx][4] is not None:
             mask_axs = [plt.subplot(gs[i:i+2, j:j+2]) for j in range(0,12,2) for i in [0,2]]
-            plotter.all_2chan(mask_axs)
-        except:
+            plot_panels(mask_axs, [
+                (plotter.plot_func, ('fuse',), {}),
+                (plotter.plot_func_masks, (), {}),
+                (plotter.plot_anat_cellpose, (), {}),
+                (plotter.plot_masks_superimpose, (), {}),
+                (plotter.plot_anat, (), {}),
+                (plotter.plot_anat_label_masks, (), {}),
+                (plotter.plot_superimpose, ('fuse',), {}),
+                (plotter.plot_shared_masks, (), {}),
+                (plotter.plot_func, ('mean',), {'with_mask': False}),
+                (plotter.plot_anat, (), {'with_mask': False}),
+                (plotter.plot_func, ('max',), {'with_mask': False}),
+                (plotter.plot_superimpose, ('fuse',), {'with_mask': False}),
+            ])
+        else:
             mask_axs = [plt.subplot(gs[0:2, j:j+2]) for j in range(0,10,2)]
-            plotter.all_1chan(mask_axs)
+            plot_panels(mask_axs, [
+                (plotter.plot_func, ('mean',), {}),
+                (plotter.plot_func_masks_color, (), {}),
+                (plotter.plot_func, ('mean',), {'with_mask': False}),
+                (plotter.plot_func, ('max',), {'with_mask': False}),
+                (plotter.plot_func, ('fuse',), {'with_mask': False}),
+            ])
         fig.set_size_inches(n_col*size_scale, n_row*size_scale)
         fig.savefig(os.path.join('results', 'temp_'+session_config_list['subject_name'], filename+'.svg'), dpi=300, format='svg')
         plt.close(fig)
@@ -92,5 +115,5 @@ def run(session_config_list, smooth, cate_list):
         plot_masks(),
         plot_example_traces(),
         ]
-    return fig_all
+    return [fig for fig in fig_all if fig is not None]
 

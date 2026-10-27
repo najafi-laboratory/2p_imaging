@@ -11,6 +11,9 @@ from datetime import datetime
 from modules import Trialization
 from modules.ReadResults import read_ops
 
+# Manual QC labels to include in downstream processing (0 = Bad, 1 = Good, 2 = Unsure).
+roi_manual_label_list = [1,2]
+
 def combine_session_config_list(session_config_list):
     list_session_data_path = []
     for sc in session_config_list['list_config']:
@@ -30,6 +33,7 @@ from webpage import pack_webpage_main
 
 def run(session_config_list, cate_list):
     smooth = False
+    session_config_list['roi_manual_label_list'] = roi_manual_label_list
 
     print('===============================================')
     print('============ Start Processing Data ============')
@@ -57,8 +61,8 @@ def run(session_config_list, cate_list):
     print('===============================================')
     print('======== plotting representative masks ========')
     print('===============================================')
-    #fn1 = visualization1_FieldOfView.run(session_config_list, smooth, cate_list)
-    fn1 = []
+    fn1 = visualization1_FieldOfView.run(session_config_list, smooth, cate_list)
+    #fn1 = []
     
     print('===============================================')
     print('======== plotting behavior performance ========')
@@ -69,8 +73,8 @@ def run(session_config_list, cate_list):
     print('===============================================')
     print('========== plotting state alignments ==========')
     print('===============================================')
-    #fn3 = visualization3_StateAlignments.run(session_config_list, smooth, cate_list)
-    fn3 = []
+    fn3 = visualization3_StateAlignments.run(session_config_list, smooth, cate_list)
+    #fn3 = []
     
     print('===============================================')
     print('============== plotting modeling ==============')
@@ -101,7 +105,7 @@ def run(session_config_list, cate_list):
 
 if __name__ == "__main__":
     COMMANDLINE_MODE = 0
-    cate_list = [[-1,1,2]]
+    cate_list = [[-1], [1]]
     from session_configs import all_config_list
     
     if COMMANDLINE_MODE:
@@ -118,19 +122,72 @@ if __name__ == "__main__":
                 run(session_config_list, cate_list)
 
     else:
-
-        session_config_test = {
+        session_config_YH33VT = {
             'list_session_name' : {
-                'YH30VT_20260219_joystick' : 'double',
-                'YH30VT_20260224_joystick' : 'double',
+                '20260523' : 'double',
+                '20260524' : 'double',
+                '20260530' : 'double',
+                '20260606' : 'double',
+                '20260607' : 'double',
+                '20260608' : 'double',
+                '20260614' : 'double',
                 },
-            'session_folder' : 'test',
+            'session_folder' : 'YH33VT',
             'sig_tag' : 'all',
             'force_label' : None,
             }
+        session_config_YH45VT = {
+            'list_session_name' : {
+                'YH45_20260818_joystick' : 'double',
+                'YH45_20260831_joystick' : 'double',
+                'YH45_20260901_joystick' : 'double',
+                'YH45_20260915_joystick' : 'double',
+                'YH45_20260916_joystick' : 'double',
+                },
+            'session_folder' : 'YH45VT',
+            'sig_tag' : 'all',
+            'force_label' : None,
+            }
+        session_config_YH53WT = {
+            'list_session_name' : {
+                'YH53_20260814_joystick' : 'double',
+                'YH53_20260816_joystick' : 'double',
+                'YH53_20260817_joystick' : 'double',
+                'YH53_20260819_joystick' : 'double',
+                'YH53_20260820_joystick' : 'double',
+                'YH53_20260826_joystick' : 'double',
+                'YH53_20260827_joystick' : 'double',
+                },
+            'session_folder' : 'YH53WT',
+            'sig_tag' : 'all',
+            'force_label' : None,
+            }
+        session_config_YH58LG = {
+            'list_session_name' : {
+                '20260812' : 'double',
+                '20260813' : 'double',
+                '20260814' : 'double',
+                '20260817' : 'double',
+                '20260818' : 'double',
+                '20260825' : 'double',
+                '20260827' : 'double',
+                '20260828' : 'double',
+                '20260829' : 'double',
+                '20260831' : 'double',
+                '20260901' : 'double',
+                '20260902' : 'double',
+                },
+            'session_folder' : 'YH58LG',
+            'sig_tag' : 'all',
+            'force_label' : None,
+            }
+        
         session_config_list_test = {
             'list_config': [
-                session_config_test,
+                #session_config_YH33VT,
+                #session_config_YH45VT,
+                #session_config_YH53WT,
+                #session_config_YH58LG,
                 ],
             'label_names' : {
                 '-1':'Exc',
@@ -138,61 +195,10 @@ if __name__ == "__main__":
                 '2':'Inh_SST',
                 },
             'subject_name' : 'test',
-            'output_filename' : 'test_double'
+            'output_filename' : 'test'
             }
         
-        session_config_YH33 = {
-            'list_session_name' : {
-                '20260122' : 'single',
-                '20260523' : 'single',
-                '20260524' : 'single',
-                '20260607' : 'single',
-                #'20260612' : 'single',
-                #'20260614' : 'single',
-                },
-            'session_folder' : 'YH33',
-            'sig_tag' : 'all',
-            'force_label' : None,
-            }
-        session_config_YH39LG = {
-            'list_session_name' : {
-                '20260611' : 'double',
-                #'20260612' : 'double',
-                #'20260615' : 'double',
-                #'20260617' : 'double',
-                #'20260618' : 'double',
-                },
-            'session_folder' : 'YH39LG',
-            'sig_tag' : 'all',
-            'force_label' : None,
-            }
-        session_config_YH40LG = {
-            'list_session_name' : {
-                '20260611' : 'double',
-                #'20260612' : 'double',
-                '20260615' : 'double',
-                '20260617' : 'double',
-                #'20260618' : 'double',
-                },
-            'session_folder' : 'YH40LG',
-            'sig_tag' : 'all',
-            'force_label' : None,
-            }
-        session_config_list_test = {
-            'list_config': [
-                session_config_YH33,
-                #session_config_YH39LG,
-                #session_config_YH40LG,
-                ],
-            'label_names' : {
-                '-1':'Exc',
-                '1':'Inh_VIP',
-                '2':'Inh_SST',
-                },
-            'subject_name' : 'test_fp',
-            'output_filename' : 'test_fp'
-            }
-        
+        run(session_config_list_test, cate_list)
         
         '''
         

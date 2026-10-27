@@ -1,72 +1,71 @@
 #!/usr/bin/env python3
 
 import numpy as np
-from modules.Alignment import run_sess_alignment
 
-alignment=run_sess_alignment(list_neural_trials)
+from utils import get_mean_sem, plot_mean_sem, adjust_layout_neu, add_legend
 
-list_states = [
-    'state_vis1',
-    'state_press1',
-    'state_retract1',
-    'state_delay',
-    'state_press2',
-    'state_retract2',
-    'state_reward',
-    'state_iti'
-    ]
 
-filter_outcome = [
+LIST_STATES = [
+    'state_vis1', 'state_press1', 'state_press2', 'state_reward',
+]
+OUTCOMES = [
     'reward',
     'early_2nd_press',
+    #'late_2nd_press'
+    ]
+COLORS = [
+    'mediumseagreen',
+    'dodgerblue',
+    #'lightcoral'
     ]
 
-colors = ['mediumseagreen', 'coral']
 
-fig, axs = plt.subplots(3, 8, figsize=(24, 8), layout='tight')
-
-for i,state in enumerate(list_states):
-    neu_time = alignment[state]['neu_time']
-    if not np.isnan(np.sum(neu_time)):
-        
-        for ai, (out, color) in enumerate(zip(filter_outcome, colors)):
-            
-            list_js_rot = alignment[state]['list_js_rot']
-            list_outcome = alignment[state]['list_outcome']
-            list_js_rot = [j[o==out,:] for j,o in zip(list_js_rot, list_outcome)]
-            js_rot = np.concatenate(list_js_rot,axis=0)
-            m, s = get_mean_sem(js_rot)
-            if not np.isnan(np.nansum(m)):
-                plot_mean_sem(axs[0,i],neu_time, m, s, color)
-                adjust_layout_neu(axs[0,i])
-                axs[0,i].set_xlim([-2000,2000])
-                axs[0,i].axvline(0, color='black', lw=1, linestyle='--')
-                axs[0,i].set_ylabel('Joystick deflection (deg)')
-                axs[0,i].set_title(state)
-                
-            list_js_rot = alignment[state]['list_js_rot']
-            list_outcome = alignment[state]['list_outcome']
-            list_js_rot = [j[o==out,:] for j,o in zip(list_js_rot, list_outcome)]
-            js_rot = np.diff(np.concatenate(list_js_rot,axis=0), prepend=0)
-            m, s = get_mean_sem(js_rot)
-            if not np.isnan(np.nansum(m)):
-                plot_mean_sem(axs[1,i],neu_time, m, s, color)
-                adjust_layout_neu(axs[1,i])
-                axs[1,i].set_xlim([-2000,2000])
-                axs[1,i].axvline(0, color='black', lw=1, linestyle='--')
-                axs[1,i].set_ylabel('Joystick deflection velocity (deg)')
-                axs[1,i].set_title(state)
-            
-            list_neu_seq = alignment[state]['list_neu_seq']
-            list_outcome = alignment[state]['list_outcome']
-            list_neu_seq = [ns[o==out,:,:] for ns,o in zip(list_neu_seq, list_outcome)]
-            neu_seq = np.concatenate([ns[:,:,:].reshape(-1, len(neu_time)) for ns in list_neu_seq],axis=0)
-            m, s = get_mean_sem(neu_seq)
-            if not np.isnan(np.nansum(m)):
-                plot_mean_sem(axs[2,i],neu_time, m, s, color)
-                adjust_layout_neu(axs[2,i])
-                axs[2,i].set_xlabel('Time since state start (ms)')
-                axs[2,i].set_xlim([-2000,2000])
-                axs[2,i].axvline(0, color='black', lw=1, linestyle='--')
-    
-add_legend(axs[0,-1], colors, filter_outcome, None, None, None, 'upper right')
+def plot_state_alignments(axs, alignment, list_labels, list_trial_labels,
+                          cate_list, label_names, trial_type, states=None,
+                          list_lick_labels=None):
+    states = LIST_STATES if states is None else states
+    xlim = [-2000, 2000]
+    row_labels = ['Joystick deflection (deg)'] + [
+        ' + '.join(label_names[str(c)] for c in cate) + ' dF/F'
+        for cate in cate_list]
+    for ci, state in enumerate(states):
+        aligned = alignment[state]
+        session_labels = list_lick_labels if state == 'state_lick' else list_trial_labels
+        time = aligned['neu_time']
+        window = np.isfinite(time) & (time >= xlim[0]) & (time <= xlim[1])
+        for ri, ylabel in enumerate(row_labels):
+            ax = axs[ri, ci]
+            adjust_layout_neu(ax)
+            ax.set_xlim(xlim)
+            ax.axvline(0, color='black', lw=1, linestyle='--')
+            if ci == 0:
+                ax.set_ylabel(ylabel)
+            if ri == 0:
+                ax.set_title(state)
+            if ri == len(row_labels)-1:
+                ax.set_xlabel('Time since lick (ms)' if state == 'state_lick'
+                              else 'Time since state start (ms)')
+            if not np.any(window):
+                continue
+            for outcome, color in zip(OUTCOMES, COLORS):
+                samples = []
+                for si, trial_labels in enumerate(session_labels):
+                    trials = ((np.asarray(trial_labels['trial_type']) == trial_type)
+                              & (aligned['list_outcome'][si] == outcome))
+                    if not np.any(trials):
+                        continue
+                    if ri == 0:
+                        data = aligned['list_js_rot'][si][trials][:, window]
+                    else:
+                        neurons = np.isin(list_labels[si], cate_list[ri-1])
+                        if not np.any(neurons):
+                            continue
+                        data = aligned['list_neu_seq'][si][np.ix_(trials, neurons, window)]
+                        data = data.reshape(-1, window.sum())
+                    samples.append(data)
+                if samples:
+                    data = np.concatenate(samples, axis=0)
+                    if np.any(np.isfinite(data)):
+                        mean, sem = get_mean_sem(data)
+                        plot_mean_sem(ax, time[window], mean, sem, color)
+    add_legend(axs[0, -1], COLORS, OUTCOMES, None, None, None, 'upper right')

@@ -88,6 +88,9 @@ def read_masks(ops):
     mm_path, file_path = get_memmap_path(ops, 'masks.h5')
     with h5py.File(file_path, 'r') as f:
         labels     = create_memmap(f['labels'],     'int8',    os.path.join(mm_path, 'labels.mmap'))
+        # Photometry exports contain 1-D dummy arrays, not spatial FOV data.
+        if f['masks_func'].ndim != 2:
+            return [labels, None, None, None, None, None]
         masks      = create_memmap(f['masks_func'], 'float32', os.path.join(mm_path, 'masks_func.mmap'))
         mean_func  = create_memmap(f['mean_func'],  'float32', os.path.join(mm_path, 'mean_func.mmap'))
         max_func   = create_memmap(f['max_func'],   'float32', os.path.join(mm_path, 'max_func.mmap'))
@@ -175,162 +178,146 @@ def read_neural_trials(ops, smooth):
 
 # read bpod session data.
 def read_bpod_mat_data(ops, session_start_time):
-    def _check_keys(d):
-        for key in d:
-            if isinstance(d[key], sio.matlab.mat_struct):
-                d[key] = _todict(d[key])
-        return d
-    def _todict(matobj):
-        d = {}
-        for strg in matobj._fieldnames:
-            elem = matobj.__dict__[strg]
-            if isinstance(elem, sio.matlab.mat_struct):
-                d[strg] = _todict(elem)
-            elif isinstance(elem, np.ndarray):
-                d[strg] = _tolist(elem)
-            else:
-                d[strg] = elem
-        return d
-    def _tolist(ndarray):
-        elem_list = []
-        if ndarray.ndim == 0:
-            return ndarray
-        for sub_elem in ndarray:
-            if isinstance(sub_elem, sio.matlab.mat_struct):
-                elem_list.append(_todict(sub_elem))
-            elif isinstance(sub_elem, np.ndarray):
-                elem_list.append(_tolist(sub_elem))
-            else:
-                elem_list.append(sub_elem)
-        return elem_list
-    # labeling every trials for a subject
-    def states_labeling(trial_states):
-        if 'Reward' in trial_states.keys() and not np.isnan(trial_states['Reward'][0]):
-            outcome = 'reward'
-        elif 'DidNotPress1' in trial_states.keys() and not np.isnan(trial_states['DidNotPress1'][0]):
-            outcome = 'no_1st_press'
-        elif 'DidNotPress2' in trial_states.keys() and not np.isnan(trial_states['DidNotPress2'][0]):
-            outcome = 'no_2nd_press'
-        elif 'EarlyPress2' in trial_states.keys() and not np.isnan(trial_states['EarlyPress2'][0]):
-            outcome = 'early_2nd_press'
-        elif 'LatePress2' in trial_states.keys() and not np.isnan(trial_states['LatePress2'][0]):
-            outcome = 'late_2nd_press'
-        else:
-            outcome = 'other'
-        return outcome
-    # find state timing.
-    def get_state(trial_state_dict, target_state, trial_start):
-        if target_state in trial_state_dict:
-            time_state = 1000*np.array(trial_state_dict[target_state]) + trial_start
-        else:
-            time_state = np.array([np.nan, np.nan])
-        return time_state
-    # read raw data.
+    # simplify_cells handles MATLAB structs/cells, including single-trial sessions.
     raw = sio.loadmat(
         os.path.join(ops['save_path0'], 'bpod_session_data.mat'),
-        struct_as_record=False, squeeze_me=True)
-    raw = _check_keys(raw)['SessionData']
-    trial_labels = dict()
-    n_trials = raw['nTrials']
-    trial_states = [raw['RawEvents']['Trial'][ti]['States'] for ti in range(n_trials)]
-    trial_events = [raw['RawEvents']['Trial'][ti]['Events'] for ti in range(n_trials)]
-    # trial start time stamps.
-    trial_labels['time_trial_start'] = 1000*np.array(raw['TrialStartTimestamp']).reshape(-1)
-    # trial end time stamps.
-    trial_labels['time_trial_end'] = 1000*np.array(raw['TrialEndTimestamp']).reshape(-1)
-    # correct timestamps starting from session start.
-    trial_labels['time_trial_end'] = trial_labels['time_trial_end'] - trial_labels['time_trial_start'][0] + session_start_time
-    trial_labels['time_trial_start'] = trial_labels['time_trial_start'] - trial_labels['time_trial_start'][0] + session_start_time
-    # trial type.
-    trial_labels['trial_type'] = np.array(raw['TrialTypes']).reshape(-1)
-    trial_labels['probe_trial'] = np.array(raw['ProbeTrial']).reshape(-1)
-    # press delay.
-    trial_labels['delay'] = 1000*np.array(raw['PrePress2Delay']).reshape(-1)
-    # trial outcomes.
-    trial_labels['outcome'] = np.array([states_labeling(ts) for ts in trial_states], dtype='object')
-    # visual cue 1.
-    trial_labels['state_vis1'] = np.array([
-        get_state(trial_states[ti], 'VisualStimulus1', trial_labels['time_trial_start'][ti])
-        for ti in range(n_trials)] + ['yicong_forever'], dtype='object')[:-1]
-    # press 1.
-    trial_labels['state_press1'] = np.array([
-        get_state(trial_states[ti], 'Press1', trial_labels['time_trial_start'][ti])
-        for ti in range(n_trials)] + ['yicong_forever'], dtype='object')[:-1]
-    # retract 1.
-    trial_labels['state_retract1'] = np.array([
-        get_state(trial_states[ti], 'LeverRetract1', trial_labels['time_trial_start'][ti])
-        for ti in range(n_trials)] + ['yicong_forever'], dtype='object')[:-1]
-    # delay.
-    state_delay_st = np.stack([get_state(trial_states[ti], 'PrePress2Delay', trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    state_delay_vg = np.stack([get_state(trial_states[ti], 'PreVis2Delay', trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    trial_labels['state_delay'] = np.array([
-        r for r in np.nanmax(np.stack([state_delay_st, state_delay_vg]), axis=0)] + ['yicong_forever'], dtype='object')[:-1]
-    # visual cue 2.
-    trial_labels['state_vis2'] = np.array([
-        get_state(trial_states[ti], 'VisualStimulus2', trial_labels['time_trial_start'][ti])
-        for ti in range(n_trials)] + ['yicong_forever'], dtype='object')[:-1]
-    # press 2.
-    state_press2       = np.stack([get_state(trial_states[ti], 'Press2',      trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    state_early_press2 = np.stack([get_state(trial_states[ti], 'EarlyPress2', trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    state_late_press2  = np.stack([get_state(trial_states[ti], 'LatePress2',  trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    trial_labels['state_press2'] = np.array([
-        r for r in np.nanmax(np.stack([state_press2, state_early_press2, state_late_press2]), axis=0)] + ['yicong_forever'], dtype='object')[:-1]
-    # retract 2.
-    trial_labels['state_retract2'] = np.array([
-        get_state(trial_states[ti], 'LeverRetractFinal', trial_labels['time_trial_start'][ti])
-        for ti in range(n_trials)] + ['yicong_forever'], dtype='object')[:-1]
-    # reward.
-    trial_labels['state_reward'] = np.array([
-        get_state(trial_states[ti], 'Reward', trial_labels['time_trial_start'][ti])
-        for ti in range(n_trials)] + ['yicong_forever'], dtype='object')[:-1]
-    # iti.
-    iti_punish = np.stack([get_state(trial_states[ti], 'Punish_ITI', trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    iti_reward = np.stack([get_state(trial_states[ti], 'ITI', trial_labels['time_trial_start'][ti]) for ti in range(n_trials)])
-    trial_labels['state_iti'] = np.array([
-        r for r in np.nanmax(np.stack([iti_punish, iti_reward]), axis=0)] + ['yicong_forever'], dtype='object')[:-1]
-    # licking.
-    lick = []
-    for ti in range(n_trials):
-        if 'Port2In' in trial_events[ti].keys():
-            lick_all = 1000*np.array(trial_events[ti]['Port2In']).reshape(1,-1)
-            lick_label = np.zeros_like(lick_all).reshape(1,-1)
-            lick_label[lick_all>1000*np.array(trial_states[ti]['Reward'][0])] = 1
-            lick.append(np.concatenate((lick_all, lick_label), axis=0))
+        simplify_cells=True)['SessionData']
+    n_trials = int(raw['nTrials'])
+
+    def records(value):
+        return [value] if isinstance(value, dict) else list(value)
+
+    trials = records(raw['RawEvents']['Trial'])[:n_trials]
+    encoders = records(raw['EncoderData'])[:n_trials]
+    settings = records(raw.get('TrialSettings', {}))
+
+    def vector(name, default=np.nan):
+        values = np.asarray(raw.get(name, np.full(n_trials, default))).reshape(-1)
+        return values[:n_trials]
+
+    def state(states, *names):
+        # Select one visited interval; never combine endpoints from different states.
+        for name in names:
+            values = np.asarray(states.get(name, []), dtype=float)
+            if values.size:
+                intervals = values.reshape(-1, 2)
+                valid = intervals[np.isfinite(intervals[:, 0])]
+                if len(valid):
+                    return valid[0].copy()
+        return np.full(2, np.nan)
+
+    starts = vector('TrialStartTimestamp') * 1000
+    offset = session_start_time - starts[0]
+    labels = {
+        'time_trial_start': starts + offset,
+        'time_trial_end': vector('TrialEndTimestamp') * 1000 + offset,
+        'trial_type': vector('TrialTypes'),
+        'probe_trial': vector('ProbeTrialTypes') if 'ProbeTrialTypes' in raw else vector('ProbeTrial', 0),
+        'delay': [], 'outcome': [],
+    }
+    state_names = {
+        'state_vis1': ('SensoryCue1', 'VisualStimulus1'),
+        'state_press1': ('Press1',),
+        'state_retract1': ('LeverRetract1',),
+        'state_delay': ('PrePress2Delay', 'PreVis2Delay'),
+        'state_vis2': ('VisualStimulus2',),
+        'state_press2': ('Press2', 'EarlyPress2', 'Press2Late', 'LatePress2'),
+        'state_retract2': ('RewardLeverRetract', 'LeverRetractFinal'),
+        'state_reward': ('Reward',),
+        'state_iti': ('Punish_ITI', 'ITI'),
+    }
+    for key in (*state_names, 'lick', 'js_rot', 'js_time'):
+        labels[key] = []
+
+    for ti, trial in enumerate(trials):
+        states = trial['States']
+        events = trial.get('Events', {})
+        gui = settings[min(ti, len(settings) - 1)].get('GUI', {})
+        modern = 'SensoryCue1' in states
+        if 'PrePress2Delay' in raw:
+            delay = float(vector('PrePress2Delay')[ti])
         else:
-            lick.append(np.array([[np.nan],[np.nan]]))
-    trial_labels['lick'] = np.array(lick + ['yicong_forever'], dtype='object')[:-1]
-    # joystick deflection.
-    js_rot = []
-    js_time = []
-    for ti in range(n_trials):
-        r = np.array(raw['EncoderData'][ti]['Positions'])
-        t = 1000*np.array(raw['EncoderData'][ti]['Times'])
-        if np.abs(r[0])>0.5 or np.abs(t[0])>1e-5 or len(r)<5:
-            r = np.array([np.nan,np.nan])
-            t = np.array([np.nan,np.nan])
-        js_rot.append(r)
-        js_time.append(t + trial_labels['time_trial_start'][ti])
-    trial_labels['js_rot'] = np.array(js_rot + ['yicong_forever'], dtype='object')[:-1]
-    trial_labels['js_time'] = np.array(js_time + ['yicong_forever'], dtype='object')[:-1]
-    # convert to dataframe.
-    trial_labels = pd.DataFrame(trial_labels)
-    return trial_labels
+            delay = float(gui['ShortDelay_s' if labels['trial_type'][ti] == 1 else 'LongDelay_s'])
+        labels['delay'].append(delay * 1000)
+        outcome = 'other'
+        for names, value in [
+                (('Reward',), 'reward'),
+                (('DidNotPress1',), 'no_1st_press'),
+                (('DidNotPress2',), 'no_2nd_press'),
+                (('EarlyPress2',), 'early_2nd_press'),
+                (('Press2Late', 'LatePress2'), 'late_2nd_press')]:
+            if np.isfinite(state(states, *names)[0]):
+                outcome = value
+                break
+        labels['outcome'].append(outcome)
+        intervals = {key: state(states, *names) for key, names in state_names.items()}
+        if modern:
+            # Delay and cue 2 are driven by global timer 1, not named states.
+            # Assist starts the timer in PrePress2Delay; other trials in WaitForPress2.
+            assist = bool(vector('AssistTrial', 0)[ti])
+            phase = state(states, 'PrePress2Delay' if assist else 'WaitForPress2')[0]
+            cue_start = phase + delay
+            stop = state(states, 'Press2', 'DidNotPress2')[0]
+            intervals['state_delay'] = np.array([phase, min(cue_start, stop)])
+            intervals['state_vis2'] = np.full(2, np.nan)
+            if gui.get('TimingMode') == 1 and np.isfinite(cue_start) and cue_start < stop:
+                duration = float(gui['SensoryCueDuration_s'])
+                intervals['state_vis2'] = np.array([cue_start, min(cue_start + duration, stop)])
+        for key, interval in intervals.items():
+            labels[key].append(interval * 1000 + labels['time_trial_start'][ti])
+
+        lick_times = np.asarray(events.get('Port2In', [np.nan]), dtype=float).reshape(-1) * 1000
+        reward_start = state(states, 'Reward')[0] * 1000
+        # Licks and all other event times use the same session clock.
+        labels['lick'].append(np.vstack((
+            lick_times + labels['time_trial_start'][ti],
+            (lick_times > reward_start).astype(float))))
+        r = np.asarray(encoders[ti]['Positions'], dtype=float).reshape(-1)
+        t = np.asarray(encoders[ti]['Times'], dtype=float).reshape(-1) * 1000
+        if len(r) < 2 or len(r) != len(t) or abs(r[0]) > 0.5 or abs(t[0]) > 1e-5:
+            r = np.full(2, np.nan)
+            t = np.full(2, np.nan)
+        labels['js_rot'].append(r)
+        labels['js_time'].append(t + labels['time_trial_start'][ti])
+    return pd.DataFrame(labels)
 
 # get session results for one subject.
-def read_subject(list_ops, force_label, smooth):
+def read_subject(list_ops, force_label, smooth, roi_manual_label_list=None):
     list_labels = []
     list_masks = []
     list_neural_trials = []
     for ops in tqdm(list_ops):
         if not os.path.exists(os.path.join(ops['save_path0'], 'memmap')):
             os.makedirs(os.path.join(ops['save_path0'], 'memmap'))
-        # masks.
-        labels, masks, mean_func, max_func, mean_anat, masks_anat = read_masks(ops)
         # trials.
         neural_trials = read_neural_trials(ops, smooth)
+        # FOV data is optional; retain trace labels for sessions without masks.
+        if os.path.isfile(os.path.join(ops['save_path0'], 'masks.h5')):
+            labels, masks, mean_func, max_func, mean_anat, masks_anat = read_masks(ops)
+        else:
+            labels = np.full(neural_trials['dff'].shape[0], -1, dtype='int8')
+            masks = mean_func = max_func = mean_anat = masks_anat = None
         # labels.
         if force_label != None:
             labels = np.ones_like(labels) * force_label
+        if roi_manual_label_list is not None:
+            manual_labels = np.load(
+                os.path.join(ops['save_path0'], 'roi_manual_labels.npy'),
+                allow_pickle=False).reshape(-1)
+            if manual_labels.size != labels.size or manual_labels.size != neural_trials['dff'].shape[0]:
+                raise ValueError('ROI QC label count does not match masks/traces in {}'.format(ops['save_path0']))
+            keep = np.isin(manual_labels, roi_manual_label_list)
+            labels = labels.reshape(-1)[keep]
+            neural_trials['dff'] = neural_trials['dff'][keep, :]
+            # Mask IDs are 1-based and must follow the filtered trace order.
+            if masks is not None:
+                if (not np.all(np.isfinite(masks)) or
+                        np.any(masks < 0) or np.any(masks > keep.size) or
+                        np.any(masks != np.floor(masks))):
+                    raise ValueError('FOV mask IDs do not match ROI labels in {}'.format(ops['save_path0']))
+                mask_ids = np.zeros(keep.size + 1, dtype=masks.dtype)
+                mask_ids[np.flatnonzero(keep) + 1] = np.arange(1, np.count_nonzero(keep) + 1)
+                masks = mask_ids[masks.astype(int)]
         # append to list.
         list_labels.append(labels)
         list_masks.append(
@@ -361,7 +348,8 @@ def read_all(session_config_list, smooth):
         labels, masks, neural_trials = read_subject(
              list_ops,
              force_label=session_config_list['list_config'][i]['force_label'],
-             smooth=smooth)
+             smooth=smooth,
+             roi_manual_label_list=session_config_list.get('roi_manual_label_list'))
         # append to list.
         list_labels += labels
         list_masks += masks
