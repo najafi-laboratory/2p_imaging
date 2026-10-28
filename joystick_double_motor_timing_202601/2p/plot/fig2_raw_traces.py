@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 
 import numpy as np
-import matplotlib.ticker as mtick
 
-from utils import norm01
+from utils import norm01, add_ax_ticks
 from utils import get_frame_idx_from_time
 
 # select example neural traces.
@@ -24,11 +23,14 @@ def plot_sess_example_traces(ax, list_labels, list_neural_trials, label_names):
         labels = np.concatenate(list_labels)
         # define layouts.
         ax.axis('off')
-        axs = [ax.inset_axes([ci/len(label_names), 0, 0.8/len(label_names), 1], transform=ax.transAxes)
+        # Reserve inset columns only for categories present in these sessions.
+        label_names = {ci: cn for ci, cn in label_names.items()
+                       if np.any(np.isin(labels, int(ci)))}
+        axs = [ax.inset_axes([0.04 + 1.24*ci/len(label_names), 0.06, 0.98/len(label_names), 0.88], transform=ax.transAxes)
                for ci in range(len(label_names))]
         # find neurons in category.
         for ai, (ci, cn) in enumerate(label_names.items()):
-            idx = np.in1d(labels, int(ci))
+            idx = np.isin(labels, int(ci))
             if np.sum(idx) > 0:
                 cate_dff = sub_dff[idx,:]
                 # correct max number to plot.
@@ -46,6 +48,6 @@ def plot_sess_example_traces(ax, list_labels, list_neural_trials, label_names):
             axs[ai].spines['right'].set_visible(False)
             axs[ai].spines['top'].set_visible(False)
             axs[ai].set_yticks([])
-            axs[ai].set_xlabel('time (ms)')
-            axs[ai].xaxis.set_major_locator(mtick.MaxNLocator(nbins=3))
+            axs[ai].set_xlabel('time (s)')
+            add_ax_ticks(axs[ai], 'x', 8)
     except Exception as e: print(e)

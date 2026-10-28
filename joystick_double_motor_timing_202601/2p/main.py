@@ -150,11 +150,11 @@ if __name__ == "__main__":
             }
         session_config_YH53WT = {
             'list_session_name' : {
-                'YH53_20260814_joystick' : 'double',
+                #'YH53_20260814_joystick' : 'double',
                 'YH53_20260816_joystick' : 'double',
                 'YH53_20260817_joystick' : 'double',
                 'YH53_20260819_joystick' : 'double',
-                'YH53_20260820_joystick' : 'double',
+                #'YH53_20260820_joystick' : 'double',
                 'YH53_20260826_joystick' : 'double',
                 'YH53_20260827_joystick' : 'double',
                 },
@@ -186,7 +186,7 @@ if __name__ == "__main__":
             'list_config': [
                 #session_config_YH33VT,
                 #session_config_YH45VT,
-                #session_config_YH53WT,
+                session_config_YH53WT,
                 #session_config_YH58LG,
                 ],
             'label_names' : {
@@ -194,8 +194,8 @@ if __name__ == "__main__":
                 '1':'Inh_VIP',
                 '2':'Inh_SST',
                 },
-            'subject_name' : 'test',
-            'output_filename' : 'test'
+            'subject_name' : 'YH53WT',
+            'output_filename' : 'YH53WT'
             }
         
         run(session_config_list_test, cate_list)

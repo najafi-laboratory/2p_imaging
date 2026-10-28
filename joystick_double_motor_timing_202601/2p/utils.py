@@ -6,6 +6,7 @@ import tracemalloc
 import numpy as np
 import rastermap as rm
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 import matplotlib.colors as mcolors
 import matplotlib.ticker as mtick
 from datetime import datetime
@@ -799,6 +800,45 @@ def get_random_rotate_mat_3d():
         [2*(x*z-y*w),   2*(y*z+x*w),   1-2*(x*x+y*y)]])
     return rm
 
+def get_figure_layout(n_row, n_col, size_scale, layout):
+    plt.rcParams.update({
+        'font.size': 17,
+        'axes.titlesize': 20,
+        'axes.labelsize': 18,
+        'xtick.labelsize': 16,
+        'ytick.labelsize': 16,
+        'legend.fontsize': 16,
+        'legend.title_fontsize': 17,
+        'figure.titlesize': 22,
+        'figure.labelsize': 18,
+        'axes.titlepad': 10,
+        'axes.labelpad': 7,
+        'xtick.major.pad': 5,
+        'ytick.major.pad': 5,
+        'legend.frameon': False,
+        'figure.subplot.wspace': 0.35,
+        'figure.subplot.hspace': 0.4,
+    })
+    fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout=layout)
+    gs = GridSpec(n_row, n_col, figure=fig)
+    return fig, gs
+
+def add_ax_ticks(ax, axis, nbins, scale=1000):
+    # format millisecond axes as seconds nyaoo~0w0.
+    if axis == 'x':
+        ax.xaxis.set_major_locator(mtick.MaxNLocator(nbins=nbins))
+        ax.xaxis.set_major_formatter(mtick.FuncFormatter(
+            lambda x, pos: '' if (pos - abs(ax.get_xticks()).argmin()) % 2 else f'{x/scale:.1f}'))
+        ax.xaxis.set_minor_locator(mtick.AutoMinorLocator(2))
+        ax.tick_params(axis='x', which='minor', labelbottom=False)
+    if axis == 'y':
+        ax.yaxis.set_major_locator(mtick.MaxNLocator(
+            nbins=nbins, steps=[1, 2, 2.5, 5, 10]))
+        ax.yaxis.set_major_formatter(mtick.FuncFormatter(
+            lambda y, pos: f'{y/scale:g}'))
+        ax.yaxis.set_minor_locator(mtick.AutoMinorLocator(2))
+        ax.tick_params(axis='y', which='minor', labelbottom=False)
+    
 # adjust layout for isi example epoch.
 def adjust_layout_isi_example_epoch(ax, trial_win, bin_win):
     ax.tick_params(tick1On=False)

@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from utils import get_mean_sem, plot_mean_sem, adjust_layout_neu, add_legend
+from utils import get_mean_sem, plot_mean_sem, adjust_layout_neu, add_legend, add_ax_ticks
 
 
 LIST_STATES = [
@@ -37,14 +37,15 @@ def plot_state_alignments(axs, alignment, list_labels, list_trial_labels,
             ax = axs[ri, ci]
             adjust_layout_neu(ax)
             ax.set_xlim(xlim)
+            add_ax_ticks(ax, 'x', 8)
+            add_ax_ticks(ax, 'y', 4, scale=1)
             ax.axvline(0, color='black', lw=1, linestyle='--')
-            if ci == 0:
-                ax.set_ylabel(ylabel)
+            ax.set_ylabel(ylabel if ci == 0 else '')
             if ri == 0:
                 ax.set_title(state)
             if ri == len(row_labels)-1:
-                ax.set_xlabel('Time since lick (ms)' if state == 'state_lick'
-                              else 'Time since state start (ms)')
+                ax.set_xlabel('Time since lick (s)' if state == 'state_lick'
+                              else 'Time since state start (s)')
             if not np.any(window):
                 continue
             for outcome, color in zip(OUTCOMES, COLORS):

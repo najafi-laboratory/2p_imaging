@@ -3,7 +3,7 @@
 import gc
 import os
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
+from utils import get_figure_layout
 
 from modules.ReadResults import read_all
 from plot.fig1_mask import plotter_main_masks
@@ -11,7 +11,7 @@ from plot.fig2_raw_traces import plot_sess_example_traces
 from plot.misc import plot_surgery_window
 
 def run(session_config_list, smooth, cate_list):
-    size_scale = 3
+    size_scale = 2.4
     list_labels, list_masks, list_neural_trials = read_all(session_config_list, smooth)
     def plot_window():
         title = 'surgery window'
@@ -30,8 +30,7 @@ def run(session_config_list, smooth, cate_list):
         img_note = [plt.imread(wp) for wp in path_note]
         n_row = 2
         n_col = 5
-        fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
-        gs = GridSpec(n_row, n_col, figure=fig)
+        fig, gs = get_figure_layout(n_row, n_col, size_scale, 'tight')
         win_ax01 = [plt.subplot(gs[0, i]) for i in range(len(path_window))]
         win_ax02 = [plt.subplot(gs[1, i]) for i in range(len(path_note))]
         plot_surgery_window(win_ax01, img_window)
@@ -52,8 +51,7 @@ def run(session_config_list, smooth, cate_list):
         filename = 'fov_imaging'
         n_row = 4
         n_col = 12
-        fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
-        gs = GridSpec(n_row, n_col, figure=fig)
+        fig, gs = get_figure_layout(n_row, n_col, size_scale, 'tight')
         plotter = plotter_main_masks(
             list_labels[session_idx],
             list_masks[session_idx][0],
@@ -63,7 +61,9 @@ def run(session_config_list, smooth, cate_list):
             list_masks[session_idx][4])
         def plot_panels(axs, panels):
             for ax, (plot, args, kwargs) in zip(axs, panels):
-                plot(ax, *args, **kwargs)
+                ax.axis('off')
+                panel = ax.inset_axes([0.06, 0.08, 0.88, 0.82])
+                plot(panel, *args, **kwargs)
         if list_masks[session_idx][3] is not None and list_masks[session_idx][4] is not None:
             mask_axs = [plt.subplot(gs[i:i+2, j:j+2]) for j in range(0,12,2) for i in [0,2]]
             plot_panels(mask_axs, [
@@ -102,8 +102,7 @@ def run(session_config_list, smooth, cate_list):
         filename = 'fov_example_traces'
         n_row = 12
         n_col = 5
-        fig = plt.figure(figsize=(n_col*size_scale, n_row*size_scale), layout='tight')
-        gs = GridSpec(n_row, n_col, figure=fig)
+        fig, gs = get_figure_layout(n_row, n_col, size_scale, 'tight')
         example_ax = plt.subplot(gs[0:12, 0:4])
         plot_sess_example_traces(example_ax, list_labels, list_neural_trials, session_config_list['label_names'])
         fig.set_size_inches(n_col*size_scale, n_row*size_scale)
